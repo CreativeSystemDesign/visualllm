@@ -139,11 +139,17 @@ function chipEl(model, { inTrack = false, rank = null } = {}) {
   if (inTrack) el.classList.add('in-track')
   if (rank === 1) el.classList.add('is-primary')
 
+  // Cost first. It is the one figure that matters on every single decision,
+  // and it should not be something the eye has to hunt for behind a speed
+  // reading. Gateway lanes have no price at all — the gateway reports health
+  // and throughput and nothing about money — so those simply start at speed.
   const bits = []
-  const tps = fmtTps(model.tps)
-  if (tps) bits.push(tps)
   const price = fmtPrice(model)
   if (price) bits.push(price)
+  // Gateway lanes measure throughput themselves as `tps`; catalog entries carry
+  // the provider's figure as `throughput`. Same number, two sources.
+  const speed = fmtTps(model.tps ?? model.throughput)
+  if (speed) bits.push(speed)
   bits.push(fmtContext(model.context))
   // Show whatever the list is currently ranked by, so the ordering is legible
   // rather than something you have to take on trust.
