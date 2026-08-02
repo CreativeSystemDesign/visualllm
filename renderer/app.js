@@ -1151,13 +1151,32 @@ function bandValue(field, value, banded) {
   return Math.round(value / BAND) * BAND
 }
 
-/** Add a column, reverse it, or drop it — the three-state cycle. */
-function cycleSort(field) {
+/**
+ * LOCKING — why adding a column and pointing it are separate actions.
+ *
+ * This was one overloaded three-state cycle: sort, reverse, remove. Toggling a
+ * direction twice therefore deleted the column, so you could not simply look at
+ * a chain both ways round without rebuilding it. Direction is something you
+ * flip idly while reading; membership is a decision. They should not share a
+ * control.
+ *
+ * So a column is locked into the chain by clicking it, and stays locked —
+ * clicking the label after that only ever reverses it. The padlock on a locked
+ * header removes it, and nothing else does.
+ */
+function lockSort(field) {
   const sorts = state.browse.sorts
   const at = sorts.findIndex((s) => s.field === field)
   if (at < 0) sorts.push({ field, desc: NATURAL_DESC(field) })
-  else if (sorts[at].desc === NATURAL_DESC(field)) sorts[at].desc = !sorts[at].desc
-  else sorts.splice(at, 1)
+  else sorts[at].desc = !sorts[at].desc          // locked: direction only
+}
+
+function unlockSort(field) {
+  const sorts = state.browse.sorts
+  const at = sorts.findIndex((s) => s.field === field)
+  if (at >= 0) sorts.splice(at, 1)
+  // Something has to order the list, so the last column cannot be unlocked
+  // away into nothing.
   if (!sorts.length) sorts.push({ field: 'intelligence', desc: true })
 }
 
@@ -1182,6 +1201,8 @@ function renderBrowseHeader() {
   const sorts = state.browse.sorts
   const rank = (field) => sorts.findIndex((s) => s.field === field)
 
+  const LOCK = '<svg viewBox="0 0 12 12"><rect x="2.5" y="5.5" width="7" height="5" rx="1.2"/><path d="M4.2 5.5V4a1.8 1.8 0 0 1 3.6 0v1.5"/></svg>'
+
   const label = (field, text) => {
     const at = rank(field)
     if (at < 0) return text
@@ -1190,7 +1211,8 @@ function renderBrowseHeader() {
     // below it can order within them. Visible, not magic.
     const band = at < sorts.length - 1 && BANDED.includes(field) ? '≈' : ''
     const order = sorts.length > 1 ? `<span class="sort-rank">${at + 1}</span>` : ''
-    return `${text}${band} ${arrow}${order}`
+    const lock = `<span class="col-lock" data-unlock="${field}" title="Remove from sort">${LOCK}</span>`
+    return `${text}${band} ${arrow}${order}${lock}`
   }
 
   $('bHeader').innerHTML = `
@@ -1198,7 +1220,7 @@ function renderBrowseHeader() {
       <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
         <span class="metric-label">${label('name', 'model')}</span>
       </button>
-      <span class="head-hint">click to sort · again to reverse · again to remove${
+      <span class="head-hint">click to lock a column in · click again to reverse · padlock to remove${
         state.browse.sorts.length > 1 ? ' · ≈ groups similar values' : ''
       }</span>
     </span>
@@ -1288,9 +1310,18 @@ $('browseScrim').addEventListener('click', (event) => {
     return
   }
 
+  // The padlock sits inside the header button, so it has to be checked first —
+  // a click on it reaches both.
+  const lock = event.target.closest('.col-lock')
+  if (lock) {
+    unlockSort(lock.dataset.unlock)
+    renderBrowse()
+    return
+  }
+
   const column = event.target.closest('.col-sort')
   if (column) {
-    cycleSort(column.dataset.sort)
+    lockSort(column.dataset.sort)
     renderBrowse()
     return
   }

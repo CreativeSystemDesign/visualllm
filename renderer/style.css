@@ -1045,3 +1045,26 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   .row-metrics .metric:nth-last-child(2),
   .browse-header .col-sort:nth-last-child(2) { display: none; }   /* hosts */
 }
+
+/* The padlock on a locked column. Absolutely positioned so it cannot change a
+   column's width — the headers have to stay aligned with the values below. */
+.col-sort { position: relative; }
+
+.col-lock {
+  position: absolute;
+  top: -9px; right: -7px;
+  width: 15px; height: 15px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: var(--e1);
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.col-lock svg { width: 8px; height: 8px; stroke-width: 1.6; }
+.col-sort.is-sorted .col-lock { opacity: 0.55; }
+.browse-header:hover .col-sort.is-sorted .col-lock { opacity: 1; }
+.col-lock:hover { box-shadow: var(--in1); }
+
+.col-name .col-lock { top: -4px; right: -18px; }
