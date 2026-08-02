@@ -1121,3 +1121,33 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .match.none { color: var(--text-faint); font-size: 13px; padding-top: 4px; }
 .head-match { padding-bottom: 2px; }
+
+/* --- what a lane was built to be ----------------------------------------- */
+
+/* The criteria the lane's models were found under, in words rather than column
+   labels. A header saying "cheapest · fastest · best at tools" tells you what
+   the lane is for; a list of model ids never does. */
+.lane-criteria {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.crit {
+  flex-shrink: 0;
+  padding: 4px 11px;
+  border-radius: 100px;
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition: color 0.14s var(--ease);
+}
+.lane-criteria:hover .crit { color: var(--accent); }

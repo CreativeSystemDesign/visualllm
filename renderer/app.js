@@ -285,6 +285,9 @@ function laneEl(lane) {
     <button class="lane-url" title="Copy endpoint URL">
       ${ICON.copy}<span class="host">127.0.0.1:4000</span><span>/lane/${lane.slug}/v1</span>
     </button>
+    ${(lane.criteria || []).length ? `<span class="lane-criteria" title="Built by searching for these — click to search again">${
+      lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
+    }</span>` : ''}
     <span class="lane-kind ${lane.computed ? 'computed' : ''}">${
       lane.computed ? lane.kind : 'ordered'
     }</span>
@@ -572,6 +575,15 @@ function endDrag() {
   without.splice(index, 0, model.id)
   lane.members = without
 
+  // A lane takes on the question its first models were found by. Only once —
+  // a later drag from a different search should not silently rewrite what the
+  // lane says it is for.
+  if (!lane.criteria?.length && state.browse.sorts?.length) {
+    lane.criteria = state.browse.sorts
+      .filter((s) => s.field !== 'name')
+      .map(({ field, desc }) => ({ field, desc }))
+  }
+
   if (index === 0) toast(`${model.id} answers first in ${lane.name}`)
   render()
   saveLanes()
@@ -615,6 +627,19 @@ document.addEventListener('click', async (event) => {
     render()
     saveLanes()
     toast(`${lane.name} deleted`)
+    return
+  }
+
+  // The whole point of recording the criteria: ask the same question again
+  // against today's catalog, and see whether something better has appeared.
+  const crit = event.target.closest('.lane-criteria')
+  if (crit) {
+    const lane = state.lanes.find((l) => l.slug === crit.closest('.lane').dataset.lane)
+    if (lane?.criteria?.length) {
+      state.browse.sorts = lane.criteria.map(({ field, desc }) => ({ field, desc }))
+      openBrowse()
+      toast(`Searching again: ${lane.criteria.map(criterionWords).join(' + ')}`)
+    }
     return
   }
 
@@ -926,6 +951,36 @@ $('pDelete').addEventListener('click', async () => {
 })
 
 
+
+/**
+ * What a locked column means in words, per direction.
+ *
+ * The header says "out/M ↑" because it labels a column of numbers. A lane
+ * header has to say "cheapest", because it is describing what the lane is for
+ * and will be read months later by someone who was not there.
+ */
+const CRITERION_WORDS = {
+  price:        ['priciest', 'cheapest'],
+  price_in:     ['priciest input', 'cheapest input'],
+  throughput:   ['slowest', 'fastest'],
+  latency:      ['slowest to start', 'quickest to start'],
+  intelligence: ['least capable', 'smartest'],
+  coding:       ['worst at code', 'best at code'],
+  agentic:      ['worst at tools', 'best at tools'],
+  context:      ['smallest context', 'biggest context'],
+  providers:    ['least hosted', 'most hosted'],
+  created:      ['oldest', 'newest'],
+  name:         ['Z to A', 'A to Z'],
+}
+
+const criterionWords = ({ field, desc }) => {
+  const pair = CRITERION_WORDS[field]
+  if (!pair) return field
+  // `desc` means the high end is good for most columns; for price and latency
+  // the natural direction is already reversed, so the pair is read the same way
+  // either way — index 1 is whatever the user is actually asking for.
+  return desc === NATURAL_DESC(field) ? pair[1] : pair[0]
+}
 
 // ============================================================================
 // THE MODEL BROWSER
@@ -1433,7 +1488,9 @@ document.addEventListener('keydown', (event) => {
 async function saveLanes() {
   try {
     await api.lanesWrite(
-      state.lanes.map(({ slug, name, members }) => ({ slug, name, members }))
+      state.lanes.map(({ slug, name, members, criteria }) => ({
+        slug, name, members, criteria: criteria || [],
+      }))
     )
   } catch (err) {
     toast(`Could not save: ${err}`)

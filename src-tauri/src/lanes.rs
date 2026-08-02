@@ -11,12 +11,33 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// One of the qualities a lane was built to satisfy.
+///
+/// `desc` is which end of that column counted as good — cheap or expensive,
+/// fastest or slowest — so the phrase can be reconstructed exactly.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Criterion {
+    pub field: String,
+    pub desc: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lane {
     pub slug: String,
     pub name: String,
     #[serde(default)]
     pub members: Vec<String>,
+    /// What the lane was built to be: the criteria that were locked in the
+    /// browser when its models were chosen.
+    ///
+    /// This is provenance, and it is the difference between a lane being a
+    /// snapshot and a standing question. Catalogs move constantly — the
+    /// cheapest fast agentic model in March is not the one in September — and a
+    /// lane that remembers its own question can be asked again.
+    ///
+    /// `#[serde(default)]` so lanes saved before this existed still load.
+    #[serde(default)]
+    pub criteria: Vec<Criterion>,
 }
 
 pub fn store_path(dir: &PathBuf) -> PathBuf {
