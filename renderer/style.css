@@ -1091,3 +1091,33 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
    on that column, looking for a way out. */
 .col-sort.is-sorted .col-lock { opacity: 0; }
 .col-sort.is-sorted:hover .col-lock { opacity: 1; }
+
+/* --- the match score ------------------------------------------------------ */
+
+/* With more than one criterion locked, the composite is what the list is
+   actually ordered by. Showing it is not decoration — without it the order
+   looks arbitrary, because no single visible column explains it. */
+.match {
+  flex-shrink: 0;
+  width: 46px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.match-value {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-deep);
+  line-height: 1.1;
+}
+.match-label {
+  display: block;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+.match.none { color: var(--text-faint); font-size: 13px; padding-top: 4px; }
+.head-match { padding-bottom: 2px; }

@@ -55,7 +55,8 @@ const state = {
   pool: [],             // model ids the user kept — the sidebar shows only these
   browse: {             // the browser's own controls, separate from the sidebar's
     search: '',
-    sorts: [{ field: 'intelligence', desc: true }],  // in priority order
+    sorts: [{ field: 'intelligence', desc: true }],  // locked columns = criteria
+    scores: new Map(),
     author: '',
     context: 0,
     price: '',
@@ -989,7 +990,17 @@ function rowEl(model) {
     : model.latency >= 1000 ? `${(model.latency / 1000).toFixed(1)}s`
     : `${Math.round(model.latency)}ms`
 
+  // With two or more criteria the composite is the thing actually being sorted
+  // on, so it has to be visible — otherwise the order looks arbitrary.
+  const criteria = state.browse.sorts.filter((s) => s.field !== 'name')
+  const composite = criteria.length > 1 ? (state.browse.scores || new Map()).get(model.id) : undefined
+  const match = composite === undefined ? ''
+    : composite == null
+      ? `<span class="match none" title="Not enough published data to judge this model on every locked column">—</span>`
+      : `<span class="match"><span class="match-value">${Math.round(composite * 100)}</span><span class="match-label">match</span></span>`
+
   el.innerHTML = `
+    ${match}
     <span class="row-body">
       <span class="row-title">
         <span class="row-name">${model.name || model.id}</span>
@@ -1050,13 +1061,27 @@ function browseMatches() {
     return true
   })
 
+  const nameSort = b.sorts.find((s) => s.field === 'name')
+  const criteria = b.sorts.filter((s) => s.field !== 'name')
+
+  // Name is not a criterion — there is no such thing as being 80th-percentile
+  // alphabetical. Locked alone it sorts; locked alongside others it is ignored.
+  if (!criteria.length) {
+    state.browse.scores = new Map()
+    models.sort((x, y) =>
+      nameSort && !nameSort.desc ? x.id.localeCompare(y.id) : y.id.localeCompare(x.id))
+    return models
+  }
+
+  const scores = scoreModels(models, criteria)
+  state.browse.scores = scores
   models.sort((x, y) => {
-    b.sorts.forEach((s, i) => (s.banded = i < b.sorts.length - 1))
-    for (const { field, desc, banded } of b.sorts) {
-      const verdict = comparator(field, desc, banded)(x, y)
-      if (verdict !== 0) return verdict
-    }
-    return x.id.localeCompare(y.id)   // stable last resort
+    const a = scores.get(x.id)
+    const c = scores.get(y.id)
+    if (a == null && c == null) return x.id.localeCompare(y.id)
+    if (a == null) return 1      // unjudgeable: below everything that could be judged
+    if (c == null) return -1
+    return c - a
   })
   return models
 }
@@ -1077,7 +1102,7 @@ function priceValue(model, field) {
  * 337 models carry no benchmark score, and reversing the sort should not bury
  * every rated model beneath them.
  */
-function comparator(field, desc, banded = false) {
+function comparator(field, desc) {
   return (a, b) => {
     if (field === 'name') {
       return desc ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id)
@@ -1089,8 +1114,8 @@ function comparator(field, desc, banded = false) {
       x = priceValue(a, key)
       y = priceValue(b, key)
     } else {
-      x = bandValue(field, a[field], banded)
-      y = bandValue(field, b[field], banded)
+      x = a[field]
+      y = b[field]
     }
 
     if (x == null && y == null) return 0   // a tie: let the next column decide
@@ -1121,34 +1146,88 @@ function comparator(field, desc, banded = false) {
  * order — a second column is what makes them readable.
  */
 
-/** The direction a column means on its first click. Cheapest and A-Z for money
- *  and names; best-first for anything scored. */
-const NATURAL_DESC = (field) => !['price', 'price_in', 'name'].includes(field)
+/**
+ * CRITERIA, NOT TIE-BREAKERS.
+ *
+ * "The cheapest, fastest, agentic model" is not a chain of tie-breakers. Read
+ * lexicographically it means: sort by price, and if two models cost exactly the
+ * same, consider speed. Price decides everything, speed almost never speaks,
+ * and agentic never does. That is not the question anyone is asking.
+ *
+ * The question is: WHICH MODEL IS GOOD AT ALL OF THESE AT ONCE. So every locked
+ * column is a criterion of equal weight. Each model is ranked into a percentile
+ * on each one, and those percentiles are averaged into a single score.
+ *
+ * Percentile rather than raw scaling, because the ranges are wildly different
+ * and outlier-heavy: one model runs at 2820 tok/s and on a linear scale would
+ * compress every other throughput into the bottom few percent, so speed would
+ * quietly stop counting.
+ *
+ * Consequences worth knowing:
+ *
+ *   * Click order stops mattering. All criteria weigh the same, so the
+ *     first-versus-last confusion cannot arise.
+ *   * One locked column is just a sort. A single percentile ranking averaged
+ *     with nothing is the ordering itself, so nothing is lost.
+ *   * Direction chooses which end of a column counts as good. Price locked
+ *     cheap-first means cheap is good; reverse it and you are asking for the
+ *     premium tier.
+ */
+
+/** Which end of a column counts as good, before the user reverses it. */
+const NATURAL_DESC = (field) =>
+  !['price', 'price_in', 'name', 'latency'].includes(field)
+
+/** The comparable number for a field, or null when it cannot be judged. */
+function criterionValue(model, field) {
+  if (field === 'price') return model.free ? 0 : pricePerMillion(model)
+  if (field === 'price_in') {
+    if (model.free) return 0
+    return model.price_in == null || model.price_in < 0 ? null : model.price_in * 1e6
+  }
+  // Zero means "not published" for these, not "none".
+  if (field === 'providers') return model.providers || null
+  if (field === 'context') return model.context || null
+  return model[field]
+}
 
 /**
- * BANDING — why a second sort column does anything at all.
- *
- * A tiebreaker only fires on an exact tie, and benchmark scores are continuous:
- * 60.7, 59.9, 58.9. No two are equal, so a strict second key never gets a say
- * and appears broken. Adding "cheapest" under "most intelligent" changed
- * nothing at the top of the list, which is where anyone is looking.
- *
- * But "most intelligent, then cheapest" does not mean exact ties to a person.
- * It means: AMONG MODELS OF SIMILAR INTELLIGENCE, SHOW ME THE CHEAPEST. So when
- * a scored column has another column beneath it, its values are rounded into
- * bands of five points. 60.7 and 59.9 land in the same band and price decides
- * between them; a model ten points weaker still sorts below regardless of cost.
- *
- * Only when it is NOT the last key — as the final key, exact order is what you
- * asked for and rounding would only lose detail. The header marks a banded
- * column with `≈` so this is visible rather than magic.
+ * Percentile rank per criterion: 1 is best, 0 is worst, computed only across
+ * the models that actually carry a figure.
  */
-const BANDED = ['intelligence', 'coding', 'agentic']
-const BAND = 5
+function criterionRanks(models, criteria) {
+  const ranks = {}
+  for (const { field, desc } of criteria) {
+    const judged = models
+      .filter((m) => criterionValue(m, field) != null)
+      .sort((a, b) => {
+        const x = criterionValue(a, field)
+        const y = criterionValue(b, field)
+        return desc ? y - x : x - y     // best first
+      })
+    const last = judged.length - 1 || 1
+    ranks[field] = new Map(judged.map((m, i) => [m.id, 1 - i / last]))
+  }
+  return ranks
+}
 
-function bandValue(field, value, banded) {
-  if (!banded || value == null || !BANDED.includes(field)) return value
-  return Math.round(value / BAND) * BAND
+/**
+ * Average the percentiles into one score.
+ *
+ * A model with no figure for a locked criterion scores `null`, not zero. Zero
+ * would rank it worst at something we cannot measure at all — a different and
+ * much more misleading claim. Those sort below everything that could be judged.
+ */
+function scoreModels(models, criteria) {
+  const ranks = criterionRanks(models, criteria)
+  const scores = new Map()
+  for (const m of models) {
+    const parts = criteria.map((c) => ranks[c.field].get(m.id))
+    scores.set(m.id, parts.every((p) => p != null)
+      ? parts.reduce((a, b) => a + b, 0) / parts.length
+      : null)
+  }
+  return scores
 }
 
 /**
@@ -1207,21 +1286,23 @@ function renderBrowseHeader() {
     const at = rank(field)
     if (at < 0) return text
     const arrow = sorts[at].desc ? '↓' : '↑'
-    // `≈` marks a column whose values are grouped into bands so the column
-    // below it can order within them. Visible, not magic.
-    const band = at < sorts.length - 1 && BANDED.includes(field) ? '≈' : ''
-    const order = sorts.length > 1 ? `<span class="sort-rank">${at + 1}</span>` : ''
-    const lock = `<span class="col-lock" data-unlock="${field}" title="Remove from sort">${LOCK}</span>`
-    return `${text}${band} ${arrow}${order}${lock}`
+    // No priority number any more: every locked column weighs the same, so
+    // there is no order to convey.
+    const lock = `<span class="col-lock" data-unlock="${field}" title="Remove from criteria">${LOCK}</span>`
+    return `${text} ${arrow}${lock}`
   }
 
+  const criteriaCount = sorts.filter((s) => s.field !== 'name').length
   $('bHeader').innerHTML = `
+    ${criteriaCount > 1 ? '<span class="match head-match"><span class="match-label">match</span></span>' : ''}
     <span class="row-body">
       <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
         <span class="metric-label">${label('name', 'model')}</span>
       </button>
-      <span class="head-hint">click to lock a column in · click again to reverse · padlock to remove${
-        state.browse.sorts.length > 1 ? ' · ≈ groups similar values' : ''
+      <span class="head-hint">${
+        state.browse.sorts.filter((s) => s.field !== 'name').length > 1
+          ? 'ranked by how well each model does on every locked column at once'
+          : 'click to lock a column in · click again to reverse · padlock to remove'
       }</span>
     </span>
     <span class="row-metrics">
