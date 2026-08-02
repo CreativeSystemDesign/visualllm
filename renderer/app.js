@@ -567,8 +567,8 @@ function resetForm() {
   $('pId').value = ''
   $('pName').value = ''
   $('pKind').value = 'openrouter'
-  $('pUrl').value = ''
-  $('pUrl').placeholder = 'https://openrouter.ai/api/v1'
+  $('pUrl').value = PRESET.openrouter.url
+  $('pUrl').placeholder = PRESET.openrouter.url
   $('pKey').value = ''
   $('pKey').placeholder = 'sk-or-…'
   $('pSave').textContent = 'Save provider'
@@ -676,10 +676,26 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('scrim').hidden) closePanel()
 })
 
+// Each service has a home and a key format. Filling them in beats asking
+// someone to look them up.
+const PRESET = {
+  openrouter: { url: 'https://openrouter.ai/api/v1', key: 'sk-or-…', name: 'OpenRouter' },
+  anthropic:  { url: 'https://api.anthropic.com/v1', key: 'sk-ant-…', name: 'Anthropic' },
+  openai:     { url: 'https://api.openai.com/v1',    key: 'sk-…',     name: 'OpenAI' },
+  compatible: { url: '',                             key: 'sk-…',     name: '' },
+}
+
 $('pKind').addEventListener('change', (e) => {
-  const openrouter = e.target.value === 'openrouter'
-  $('pUrl').placeholder = openrouter ? 'https://openrouter.ai/api/v1' : 'https://api.example.com/v1'
-  if (openrouter && !$('pUrl').value) $('pUrl').value = ''
+  const preset = PRESET[e.target.value] || PRESET.compatible
+  $('pUrl').placeholder = preset.url || 'https://api.example.com/v1'
+  $('pKey').placeholder = preset.key
+  // Only fill what the user has not typed over.
+  if (!state.editing) {
+    const previous = Object.values(PRESET).map((p) => p.url)
+    if (!$('pUrl').value || previous.includes($('pUrl').value)) $('pUrl').value = preset.url
+    const names = Object.values(PRESET).map((p) => p.name).filter(Boolean)
+    if (!$('pName').value || names.includes($('pName').value)) $('pName').value = preset.name
+  }
 })
 
 $('pTest').addEventListener('click', async () => {

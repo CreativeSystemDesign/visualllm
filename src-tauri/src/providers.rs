@@ -16,6 +16,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const OPENROUTER: &str = "https://openrouter.ai/api/v1";
+const OPENAI: &str = "https://api.openai.com/v1";
+const ANTHROPIC: &str = "https://api.anthropic.com/v1";
+
+/// Anthropic is not OpenAI-compatible: the key goes in its own header and the
+/// API is versioned by date rather than by path. Everything else here speaks
+/// Bearer, so this is the one place that has to branch.
+fn authorise(request: reqwest::RequestBuilder, provider: &Provider) -> reqwest::RequestBuilder {
+    if provider.key.is_empty() {
+        return request;
+    }
+    if provider.kind == "anthropic" {
+        request
+            .header("x-api-key", &provider.key)
+            .header("anthropic-version", "2023-06-01")
+    } else {
+        request.bearer_auth(&provider.key)
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Provider {
@@ -183,10 +201,7 @@ pub async fn fetch(provider: &Provider) -> Result<Vec<CatalogModel>, String> {
         provider.base_url.trim_end_matches('/').to_string()
     };
 
-    let mut request = client.get(format!("{base}/models"));
-    if !provider.key.is_empty() {
-        request = request.bearer_auth(&provider.key);
-    }
+    let request = authorise(client.get(format!("{base}/models")), provider);
 
     let resp = request.send().await.map_err(|e| {
         if e.is_connect() {
@@ -199,6 +214,7 @@ pub async fn fetch(provider: &Provider) -> Result<Vec<CatalogModel>, String> {
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
         return Err(match code {
+            401 | 403 if provider.key.is_empty() => "this service needs an API key".to_string(),
             401 | 403 => "the key was rejected".to_string(),
             404 => format!("no /models endpoint at {base}"),
             _ => format!("provider returned {code}"),
@@ -246,9 +262,10 @@ pub fn slug(name: &str, taken: &[Provider]) -> String {
 }
 
 pub fn default_base_url(kind: &str) -> String {
-    if kind == "openrouter" {
-        OPENROUTER.to_string()
-    } else {
-        String::new()
+    match kind {
+        "openrouter" => OPENROUTER.to_string(),
+        "openai" => OPENAI.to_string(),
+        "anthropic" => ANTHROPIC.to_string(),
+        _ => String::new(),
     }
 }
