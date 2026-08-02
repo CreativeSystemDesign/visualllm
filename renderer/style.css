@@ -770,7 +770,7 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 
 /* Wider than the providers panel because this is a shopping surface: hundreds
    of rows, each carrying enough numbers to decide on. */
-.panel-wide { width: min(980px, 100%); height: min(88vh, 900px); }
+.panel-wide { width: min(1500px, 100%); height: min(92vh, 1000px); }
 
 .browse-controls {
   padding: 0 22px 16px;
@@ -1033,3 +1033,15 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .col-name .metric-label { text-align: left; }
 .browse-header .row-body { gap: 1px; }
+
+/* Ten metric columns need the room. The browser is the working surface while
+   it is open, so it takes nearly the whole window. */
+.scrim { padding: 24px; }
+.browse-list { gap: 8px; }
+.row { gap: 14px; }
+.metric { min-width: 50px; }
+
+@media (max-width: 1250px) {
+  .row-metrics .metric:nth-last-child(2),
+  .browse-header .col-sort:nth-last-child(2) { display: none; }   /* hosts */
+}

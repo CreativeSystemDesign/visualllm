@@ -382,6 +382,23 @@ fn lanes_write(app: tauri::AppHandle, lanes: Vec<lanes::Lane>) -> Result<(), Str
     lanes::save(&store_dir(&app)?, &lanes)
 }
 
+/// Throughput and latency, from the cache. Cheap; safe to call on every render.
+#[tauri::command]
+fn stats_read(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let file = providers::stats_read(&store_dir(&app)?);
+    serde_json::to_value(file).map_err(|e| e.to_string())
+}
+
+/// Refresh them. One HTTP call per model — slow, so the UI runs it in the
+/// background and re-renders when it returns rather than waiting on it.
+#[tauri::command]
+async fn stats_refresh(app: tauri::AppHandle) -> Result<usize, String> {
+    let dir = store_dir(&app)?;
+    let models = providers::cache_read(&dir);
+    let configured = providers::load(&dir);
+    Ok(providers::hydrate_stats(&dir, &models, &configured).await)
+}
+
 #[tauri::command]
 fn pool_read(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     Ok(lanes::pool_load(&store_dir(&app)?))
@@ -428,7 +445,9 @@ fn main() {
             lanes_read,
             lanes_write,
             pool_read,
-            pool_write
+            pool_write,
+            stats_read,
+            stats_refresh
         ])
         .run(tauri::generate_context!())
         .expect("failed to start VisualLLM");

@@ -29,6 +29,8 @@ const api = T
       lanesWrite: (lanes) => T.core.invoke('lanes_write', { lanes }),
       poolRead: () => T.core.invoke('pool_read'),
       poolWrite: (ids) => T.core.invoke('pool_write', { ids }),
+      statsRead: () => T.core.invoke('stats_read'),
+      statsRefresh: () => T.core.invoke('stats_refresh'),
     }
   : window.vll
 
@@ -48,6 +50,8 @@ const state = {
 
   providers: [],
   catalog: [],
+  stats: {},
+  statsFetchedAt: 0,
   pool: [],             // model ids the user kept — the sidebar shows only these
   browse: {             // the browser's own controls, separate from the sidebar's
     search: '',
@@ -777,6 +781,35 @@ async function loadProviders() {
   }
 }
 
+function mergeStats() {
+  const stats = state.stats || {}
+  state.catalog.forEach((m) => {
+    const s = stats[m.id]
+    m.throughput = s ? s.throughput : null
+    m.latency = s ? s.latency : null
+    m.providers = s ? s.providers : 0
+  })
+}
+
+async function loadStats({ refresh = false } = {}) {
+  try {
+    if (refresh) {
+      // 337 HTTP calls. Runs in the background; the catalog is already on
+      // screen and simply gains two columns when this returns.
+      const found = await api.statsRefresh()
+      if (found) toast(`Speed data loaded for ${found} models`)
+    }
+    const file = await api.statsRead()
+    state.stats = (file && file.models) || {}
+    state.statsFetchedAt = (file && file.fetched_at) || 0
+    mergeStats()
+    if (!$('browseScrim').hidden) renderBrowse()
+    renderSidebar()
+  } catch (err) {
+    // A missing speed column is survivable; a broken browser is not.
+  }
+}
+
 async function loadCatalog() {
   if (!state.providers.length) {
     state.catalog = []
@@ -793,6 +826,12 @@ async function loadCatalog() {
     state.catalog.forEach((m) => (counts[m.provider_id] = (counts[m.provider_id] || 0) + 1))
     state.catalogErrors.forEach((e) => (counts[e.provider_id] = e.error))
     state.counts = counts
+    mergeStats()
+
+    // Refresh if we have never fetched, or the figures are over an hour old —
+    // they describe the last thirty minutes, so anything older is fiction.
+    const age = Date.now() / 1000 - (state.statsFetchedAt || 0)
+    if (age > 3600) loadStats({ refresh: true })
   } catch (err) {
     state.catalogErrors = [{ provider_name: 'catalog', error: String(err) }]
   }
@@ -945,6 +984,10 @@ function rowEl(model) {
   const outPrice = fmtPrice(model) || '—'
 
   const score = (v) => (v == null ? '—' : Math.round(v))
+  // Latency reads better in seconds past a second; nobody compares 3018ms.
+  const ttft = model.latency == null ? '—'
+    : model.latency >= 1000 ? `${(model.latency / 1000).toFixed(1)}s`
+    : `${Math.round(model.latency)}ms`
 
   el.innerHTML = `
     <span class="row-body">
@@ -962,6 +1005,9 @@ function rowEl(model) {
       ${metric(fmtContext(model.context), 'ctx')}
       ${metric(inPrice, 'in/M')}
       ${metric(outPrice.replace('/M', ''), 'out/M')}
+      ${metric(model.throughput == null ? '—' : Math.round(model.throughput), 'tok/s', model.throughput == null)}
+      ${metric(ttft, 'ttft', model.latency == null)}
+      ${metric(model.providers || '—', 'hosts', !model.providers)}
       ${metric(fmtCreated(model.created), 'age', true)}
     </span>
 
@@ -1122,6 +1168,9 @@ const COLUMNS = [
   ['context', 'ctx'],
   ['price_in', 'in/M'],
   ['price', 'out/M'],
+  ['throughput', 'tok/s'],
+  ['latency', 'ttft'],
+  ['providers', 'hosts'],
   ['created', 'age'],
 ]
 
@@ -1311,6 +1360,7 @@ document.addEventListener('click', async (event) => {
 
 loadLanes()
 loadPool().then(renderSidebar)
+loadStats()
 loadProviders().then(() => {
   renderProviders()
   loadCatalog()

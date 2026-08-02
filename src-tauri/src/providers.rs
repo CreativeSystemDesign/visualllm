@@ -338,3 +338,164 @@ pub fn default_base_url(kind: &str) -> String {
         _ => String::new(),
     }
 }
+
+// ============================================================================
+// ENDPOINT STATISTICS
+// ============================================================================
+//
+// Throughput and latency are not in the model list. They live on a per-model
+// resource — `/models/{id}/endpoints` — one HTTP call each, 337 of them for a
+// full OpenRouter catalog. So they are fetched in the background, cached to
+// disk, and merged in when the browser renders.
+//
+// Two things learned the hard way and worth keeping written down:
+//
+//   * The figures are NULL WITHOUT A KEY. The same request unauthenticated
+//     returns the fields present and empty, which reads exactly like "this
+//     model has no data" rather than "you did not ask properly".
+//
+//   * A model can serve from several providers at very different speeds. We
+//     keep the BEST throughput and the LOWEST latency on offer, because that is
+//     what you get if routing picks well, and it is the number that makes the
+//     column comparable between models.
+
+use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct EndpointStats {
+    /// Best p50 tokens/sec across providers serving this model.
+    pub throughput: Option<f64>,
+    /// Lowest p50 milliseconds to first token across providers.
+    pub latency: Option<f64>,
+    /// How many providers carry it — a rough proxy for how reliably it routes.
+    pub providers: usize,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct StatsFile {
+    pub fetched_at: u64,
+    pub models: HashMap<String, EndpointStats>,
+}
+
+pub fn stats_path(dir: &PathBuf) -> PathBuf {
+    dir.join("endpoint-stats.json")
+}
+
+pub fn stats_read(dir: &PathBuf) -> StatsFile {
+    std::fs::read_to_string(stats_path(dir))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn stats_write(dir: &PathBuf, file: &StatsFile) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    if let Ok(text) = serde_json::to_string(file) {
+        let temp = stats_path(dir).with_extension("json.tmp");
+        if std::fs::write(&temp, text).is_ok() {
+            let _ = std::fs::rename(&temp, stats_path(dir));
+        }
+    }
+}
+
+fn best_stats(body: &Value) -> EndpointStats {
+    let endpoints = body["data"]["endpoints"].as_array();
+    let Some(endpoints) = endpoints else {
+        return EndpointStats::default();
+    };
+
+    let throughput = endpoints
+        .iter()
+        .filter_map(|e| e["throughput_last_30m"]["p50"].as_f64())
+        .fold(None, |best: Option<f64>, v| Some(best.map_or(v, |b| b.max(v))));
+
+    let latency = endpoints
+        .iter()
+        .filter_map(|e| e["latency_last_30m"]["p50"].as_f64())
+        .fold(None, |best: Option<f64>, v| Some(best.map_or(v, |b| b.min(v))));
+
+    EndpointStats { throughput, latency, providers: endpoints.len() }
+}
+
+/// Fetch stats for every model of every provider that can supply them.
+///
+/// Concurrency is capped: 337 simultaneous requests would be throttled, and
+/// being throttled here costs the whole column rather than one row. A failure
+/// on any single model leaves it absent rather than aborting the run — a
+/// partial column is useful, a missing one is not.
+pub async fn hydrate_stats(dir: &PathBuf, models: &[CatalogModel], all: &[Provider]) -> usize {
+    use futures_util::stream::{self, StreamExt};
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+
+    // Only OpenRouter publishes this resource, and only to an authenticated
+    // caller.
+    let usable: Vec<&Provider> = all
+        .iter()
+        .filter(|p| p.kind == "openrouter" && !p.key.is_empty())
+        .collect();
+    if usable.is_empty() {
+        return 0;
+    }
+
+    // Each job owns its provider rather than borrowing one. A borrow here would
+    // have to survive an `.await`, and the compiler cannot prove a reference
+    // lives long enough inside a spawned future — cloning a handful of small
+    // structs is cheaper than the alternative and the error it produces
+    // ("implementation of FnOnce is not general enough") explains nothing.
+    let jobs: Vec<(String, Provider)> = models
+        .iter()
+        .filter_map(|m| {
+            usable
+                .iter()
+                .find(|p| p.id == m.provider_id)
+                .map(|p| (m.id.clone(), (*p).clone()))
+        })
+        .collect();
+
+    let found: Vec<(String, EndpointStats)> = stream::iter(jobs)
+        .map(|(id, provider)| {
+            let client = client.clone();
+            async move {
+                let base = provider.base_url.trim_end_matches('/').to_string();
+                let request =
+                    authorise(client.get(format!("{base}/models/{id}/endpoints")), &provider);
+                let stats = match request.send().await {
+                    Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
+                        Ok(body) => best_stats(&body),
+                        Err(_) => EndpointStats::default(),
+                    },
+                    _ => EndpointStats::default(),
+                };
+                (id, stats)
+            }
+        })
+        .buffer_unordered(6)
+        .collect()
+        .await;
+
+    let mut file = StatsFile {
+        fetched_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        models: HashMap::new(),
+    };
+    let mut with_data = 0;
+    for (id, stats) in found {
+        if stats.throughput.is_some() || stats.latency.is_some() {
+            with_data += 1;
+        }
+        file.models.insert(id, stats);
+    }
+    stats_write(dir, &file);
+    with_data
+}
