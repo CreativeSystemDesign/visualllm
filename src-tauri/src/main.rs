@@ -1,9 +1,40 @@
-// VisualLLM — desktop shell.
-//
-// Every byte of network traffic starts here. The webview has no HTTP of its own
-// and no filesystem: it asks for state, it gets state. That keeps the attack
-// surface to the two commands below and means the gateway needs no CORS policy
-// and no knowledge that this app exists.
+//! VisualLLM — the desktop shell.
+//!
+//! ===========================================================================
+//! HOW A TAURI APP IS PUT TOGETHER
+//! ===========================================================================
+//!
+//! There are two halves that cannot see each other directly:
+//!
+//!   * THE WEBVIEW — `renderer/` — HTML, CSS and JavaScript. It draws
+//!     everything. It has NO network access and NO filesystem access.
+//!
+//!   * THIS FILE — Rust. It owns the disk, the network, and the API keys.
+//!
+//! They talk over a channel Tauri provides. A function marked `#[tauri::command]`
+//! becomes callable from JavaScript, and nothing else is. So the complete list
+//! of things the UI can do is the list of commands in this file — you can read
+//! the entire attack surface in one screen.
+//!
+//! That is not incidental tidiness. This program holds the user's API keys. If
+//! the webview could make its own HTTP calls, then any injected script — a
+//! dependency, a copied snippet, a model name rendered without escaping — could
+//! read a key and post it somewhere. It can't, because there is no code here
+//! that would let it.
+//!
+//! Notice too that keys travel in one direction only. `provider_save` accepts
+//! one; nothing ever sends one back. The UI receives `ProviderView`, a separate
+//! type that holds a masked hint instead of the secret (see `providers.rs`).
+//! The compiler enforces that, so it can't be forgotten in a later edit.
+//!
+//! ===========================================================================
+//! WHAT RUNS WHERE
+//! ===========================================================================
+//!
+//! `main()` does two things: starts the engine (`server.rs`) on a background
+//! task, and opens the window. Both live in this one process, sharing the same
+//! files on disk — which is why a lane you drag is served correctly on the very
+//! next request, with nothing to reload.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -20,6 +51,11 @@ use tauri::Manager;
 
 use providers::{CatalogModel, Provider, ProviderView};
 
+/// Where the old Python gateway lives.
+///
+/// SCAFFOLDING. This app read its lanes from that gateway before it had an
+/// engine of its own. All that remains is the status bar's live health and
+/// throughput readings, and it comes out once the engine reports its own.
 fn gateway_url() -> String {
     std::env::var("VISUALLLM_GATEWAY").unwrap_or_else(|_| "http://127.0.0.1:4000".into())
 }
@@ -182,10 +218,31 @@ async fn read_gateway() -> State {
 
 // ------------------------------------------------------------------ providers
 
+/// Where this app keeps its files — on Linux, ~/.local/share/app.visualllm.
+///
+/// Deliberately not next to the program. A user should be able to delete and
+/// reinstall the app without losing their lanes, and the install directory is
+/// often read-only anyway.
+///
+/// `Result<PathBuf, String>` means this returns EITHER a path OR an error, and
+/// the caller is forced by the compiler to deal with both. The `?` you'll see
+/// elsewhere is shorthand for "if this failed, stop and pass the error up".
 fn store_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
+/// What the form sends when saving a provider.
+///
+/// The interesting field is `key`, and it is `Option<String>` for a reason:
+/// that type carries three distinct meanings a plain string cannot.
+///
+///     None            leave the stored key exactly as it is
+///     Some("")        clear it
+///     Some("sk-...")  replace it
+///
+/// That is why renaming a provider does not make you retype the secret. Without
+/// it you would need a separate `keep_existing_key` boolean alongside the
+/// string — and eventually the two disagree and someone loses a key.
 #[derive(Deserialize)]
 struct ProviderInput {
     id: Option<String>,

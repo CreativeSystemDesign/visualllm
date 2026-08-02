@@ -329,6 +329,26 @@ function render() {
 }
 
 // --------------------------------------------------------------- drag and drop
+//
+// WHY THIS IS HAND-WRITTEN RATHER THAN THE BROWSER'S BUILT-IN DRAG
+//
+// HTML has a drag-and-drop API. It is nearly twenty years old, it renders a
+// blurry screenshot of the element as the drag image with no way to style it,
+// it fires events in an order that differs between browsers, and it cannot be
+// made to work on touch. It looks cheap, and this is the central interaction of
+// the product.
+//
+// So we use POINTER EVENTS instead — one API that covers mouse, trackpad, pen
+// and touch identically. Three things happen:
+//
+//   pointerdown  remember what was grabbed; build a floating copy (the "ghost")
+//   pointermove  move the ghost; work out where it would land; draw the marker
+//   pointerup    commit the change, or put everything back
+//
+// The element you grabbed never actually moves. It dims in place while a copy
+// follows the cursor, and on release the underlying data changes and everything
+// is redrawn from that. Moving the real element around the DOM mid-drag is how
+// you end up with flickering and lost drops.
 
 const drag = {
   active: false,
@@ -342,17 +362,29 @@ const drag = {
   offsetY: 0,
 }
 
+/** Start a drag: build the ghost and start listening for movement. */
 function beginDrag(event, chip) {
   const id = chip.dataset.model
   const model = modelById(id)
   if (!model) return
 
+  // `closest` walks UP the tree looking for a match. If the chip is inside a
+  // lane we are moving it; if not, it came from the sidebar and we are copying,
+  // since a model can appear in many lanes at once.
   const laneEl = chip.closest('.lane')
+
+  // The element's exact position and size on screen right now, in pixels from
+  // the top-left of the window. Needed so the ghost appears precisely over the
+  // real chip instead of jumping to the cursor.
   const rect = chip.getBoundingClientRect()
 
   drag.active = true
   drag.model = model
   drag.from = laneEl ? laneEl.dataset.lane : null
+  // Where inside the chip you grabbed it. Without this the ghost snaps its
+  // corner to the cursor, and a chip grabbed by its right edge jumps left the
+  // instant you move. Small detail; it is most of what makes dragging feel
+  // solid rather than cheap.
   drag.offsetX = event.clientX - rect.left
   drag.offsetY = event.clientY - rect.top
 
@@ -367,6 +399,12 @@ function beginDrag(event, chip) {
   chip.classList.add('is-source')
   document.body.classList.add('is-dragging')
 
+  // Listening on `window`, not on the chip. A fast drag outpaces the browser's
+  // hit-testing, and events land on whatever is under the cursor instead. Watch
+  // the whole window and the drag survives being flung around.
+  //
+  // `{ once: true }` removes the listener automatically after it fires — one
+  // less thing to leak.
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', endDrag, { once: true })
 }
@@ -376,7 +414,14 @@ function onDragMove(event) {
   drag.ghost.style.left = `${event.clientX - drag.offsetX}px`
   drag.ghost.style.top = `${event.clientY - drag.offsetY}px`
 
+  // What is under the cursor right now. The ghost would answer this question
+  // about itself, which is why it is styled `pointer-events: none` — the cursor
+  // passes straight through it as though it were not there.
   const under = document.elementFromPoint(event.clientX, event.clientY)
+
+  // `?.` means "only if the thing on the left exists". Over empty space
+  // `elementFromPoint` returns nothing, and without this the whole drag would
+  // die on an error.
   const track = under?.closest?.('.track')
 
   document.querySelectorAll('.lane.is-target').forEach((l) => l.classList.remove('is-target'))
@@ -391,8 +436,16 @@ function onDragMove(event) {
   track.closest('.lane').classList.add('is-target')
   drag.target = track
 
+  // Which gap in this track are we hovering over?
+  //
+  // Compare the cursor against each chip's MIDPOINT, not its edges. Past the
+  // halfway line means you intend to land after it. Using edges leaves dead
+  // zones between chips where nothing highlights, which reads as broken.
+  //
+  // The dragged chip itself is excluded (`:not(.is-source)`) — it is about to
+  // move, so it should not count as an obstacle to itself.
   const chips = [...track.querySelectorAll('.chip:not(.is-source)')]
-  let slot = chips.length
+  let slot = chips.length // default: past everything, at the far right
   for (let i = 0; i < chips.length; i++) {
     const box = chips[i].getBoundingClientRect()
     if (event.clientX < box.left + box.width / 2) {
@@ -418,7 +471,28 @@ function onDragMove(event) {
   drag.line = line
 }
 
-/** DOM runs right-to-left, so slot `p` of `n` chips is index `n - p`. */
+/**
+ * Convert a position on screen into a position in the data.
+ *
+ * This is the one place the display order and the storage order have to be
+ * reconciled, and it is worth being slow about.
+ *
+ * The DATA is a plain list where `members[0]` answers first:
+ *
+ *     members  = [ A, B, C ]        A is primary
+ *
+ * The SCREEN draws that list reversed, so the primary sits at the right-hand
+ * edge under the arrow:
+ *
+ *     screen   =   C    B    A  →  answers first
+ *     slots    =  0    1    2    3
+ *
+ * A slot is a GAP, so there is always one more slot than chips. Dropping at
+ * slot 3 (far right, past A) must make the new model primary — index 0. Dropping
+ * at slot 0 (far left) makes it the last fallback — index 3.
+ *
+ * Both are `count - slot`. That is the whole conversion.
+ */
 function domSlotToIndex(slot, count) {
   return Math.max(0, Math.min(count, count - slot))
 }
