@@ -192,23 +192,81 @@ enum Verdict {
     Fatal(StatusCode, String),
 }
 
+/// Is a 400 really about *this model's* limits rather than a bad request?
+///
+/// This distinction decides whether the lane continues or dies, so it is worth
+/// dwelling on. Providers report two very different things with the same status
+/// code:
+///
+///   "messages[0].role is required"          → the request is malformed.
+///                                             Every model says the same. Stop.
+///
+///   "this model does not support tools"     → the request is fine; this
+///                                             particular model can't. The next
+///                                             one might. Keep walking.
+///
+/// The signal that separates them is the language of CAPABILITY — "not
+/// supported", "unsupported", "does not accept" — versus the language of
+/// VALIDATION — "required", "invalid", "must be". A capability complaint means
+/// try the next model.
+///
+/// This matters more than it looks because `supported_parameters` in the
+/// OpenRouter catalog is a UNION across every provider serving a model. A model
+/// can be listed as supporting tools because *some* provider does, while the
+/// endpoint you actually reach does not. Before this check existed, that
+/// mismatch returned a 400, got classified as fatal, and killed the entire lane
+/// — with working models sitting untouched behind it.
+///
+/// Bias is deliberately toward continuing. Wrongly continuing costs a few extra
+/// attempts and still reports every failure. Wrongly stopping throws away models
+/// that would have answered.
+fn model_limitation(body: &str) -> Option<&'static str> {
+    let text = body.to_lowercase();
+
+    // A window too small is a ceiling, not a mistake. A later model may be
+    // bigger.
+    if text.contains("context")
+        && (text.contains("length") || text.contains("token") || text.contains("window"))
+    {
+        return Some("prompt too long for this model");
+    }
+
+    let unsupported = text.contains("not support")
+        || text.contains("unsupported")
+        || text.contains("does not accept")
+        || text.contains("no support")
+        || text.contains("not available for");
+    if !unsupported {
+        return None;
+    }
+
+    if text.contains("tool") || text.contains("function") {
+        Some("this model does not support tools")
+    } else if text.contains("image") || text.contains("vision") || text.contains("modality") {
+        Some("this model does not accept images")
+    } else if text.contains("parameter")
+        || text.contains("response_format")
+        || text.contains("json_schema")
+        || text.contains("structured")
+    {
+        Some("this model does not support a parameter in the request")
+    } else {
+        // Something is unsupported and we could not name it. Still this model's
+        // limitation rather than a bad request, so keep going.
+        Some("this model does not support something in the request")
+    }
+}
+
 fn classify(status: StatusCode, body: &str) -> Verdict {
     let reason = |label: &str| format!("{label} ({})", status.as_u16());
 
     match status.as_u16() {
-        // 400/422 mean "I don't understand this request". Normally fatal —
-        // except for one important case below.
-        400 | 422 => {
-            // A prompt that overflows the window arrives as a 400, but it is
-            // this *model's* limitation rather than a defect in the request. A
-            // model further down the lane may have a bigger window, so this one
-            // case is worth continuing on.
-            if body.contains("context") && (body.contains("length") || body.contains("token")) {
-                Verdict::TryNext(reason("prompt too long for this model"))
-            } else {
-                Verdict::Fatal(status, body.to_string())
-            }
-        }
+        // 400/422 mean "I don't understand this request" — usually fatal, but
+        // only when the complaint is about the request rather than the model.
+        400 | 422 => match model_limitation(body) {
+            Some(why) => Verdict::TryNext(reason(why)),
+            None => Verdict::Fatal(status, body.to_string()),
+        },
 
         // Bad or missing key for this provider. Another provider's model may
         // still work, so keep walking.
@@ -236,12 +294,58 @@ fn classify(status: StatusCode, body: &str) -> Verdict {
     }
 }
 
+/// One model that was considered before the one that answered.
+///
+/// Kept as a struct rather than raw JSON because it now has two audiences: the
+/// error body when everything fails, and a response header when something
+/// succeeds. Same facts, two renderings.
+struct Attempt {
+    model: String,
+    outcome: String,
+}
+
+impl Attempt {
+    fn skipped(model: &str, why: &str) -> Self {
+        Attempt { model: model.into(), outcome: format!("skipped: {why}") }
+    }
+    fn failed(model: &str, why: &str) -> Self {
+        Attempt { model: model.into(), outcome: format!("failed: {why}") }
+    }
+}
+
+/// Render the trail for a header.
+///
+/// Header values must be printable ASCII on a single line, and provider error
+/// text is arbitrary — it can carry newlines, quotes, or non-Latin characters.
+/// Anything outside that range becomes `?`, and the whole thing is capped so a
+/// long lane cannot produce a header some proxy refuses to forward.
+fn trail_header(tried: &[Attempt]) -> String {
+    let mut out = String::new();
+    for attempt in tried {
+        if !out.is_empty() {
+            out.push_str("; ");
+        }
+        for ch in format!("{}={}", attempt.model, attempt.outcome).chars() {
+            out.push(if ch.is_ascii_graphic() || ch == ' ' { ch } else { '?' });
+        }
+        if out.len() > 700 {
+            out.push_str(" …");
+            break;
+        }
+    }
+    out
+}
+
 /// Build an error response that says what was attempted.
 ///
 /// A lane that goes quiet is maddening to debug, so every failure carries the
 /// list of models tried and why each one was passed over. Explicable beats
 /// terse.
-fn error(status: StatusCode, message: String, kind: &str, tried: Vec<Value>) -> Response {
+fn error(status: StatusCode, message: String, kind: &str, tried: Vec<Attempt>) -> Response {
+    let tried: Vec<Value> = tried
+        .iter()
+        .map(|a| json!({ "model": a.model, "outcome": a.outcome }))
+        .collect();
     (
         status,
         Json(json!({
@@ -375,7 +479,7 @@ async fn chat(
     };
 
     // A running account of what we attempted, returned if everything fails.
-    let mut tried: Vec<Value> = Vec::new();
+    let mut tried: Vec<Attempt> = Vec::new();
 
     // ---- 3. Walk the lane in order ----------------------------------------
 
@@ -390,7 +494,7 @@ async fn chat(
         let model = entry.unwrap_or(&blank);
 
         if !can_serve(model, &needs, known) {
-            tried.push(json!({ "model": id, "skipped": "cannot serve this request" }));
+            tried.push(Attempt::skipped(id, "cannot serve this request"));
             continue; // never contacted — this is idea #1 from the header
         }
 
@@ -432,10 +536,26 @@ async fn chat(
             Ok(resp) if resp.status().is_success() => {
                 let mut out = Response::builder()
                     .status(StatusCode::OK)
-                    // Two headers of our own, so you can always tell which lane
-                    // handled a call and which model inside it actually spoke.
+                    // Headers of our own, so a call can always be accounted for.
                     .header("x-visualllm-lane", &lane.slug)
-                    .header("x-visualllm-served-by", id);
+                    .header("x-visualllm-served-by", id)
+                    .header("x-visualllm-passed-over", tried.len());
+
+                // THE SILENT-SKIP FIX.
+                //
+                // Until now the list of models we passed over was only reported
+                // when the whole lane failed. That made the worst failure mode
+                // in this design invisible: one wrong field in the cached
+                // catalog makes `can_serve` skip your primary on every single
+                // request, and a lane quietly serving from its third choice
+                // looks exactly like a lane working perfectly.
+                //
+                // Now every response carries what it stepped over and why. A
+                // healthy lane reports `passed-over: 0`; anything else is a
+                // question worth asking.
+                if !tried.is_empty() {
+                    out = out.header("x-visualllm-trail", trail_header(&tried));
+                }
 
                 if streaming {
                     out = out.header("content-type", "text/event-stream");
@@ -469,10 +589,10 @@ async fn chat(
 
                 match classify(status, &text) {
                     Verdict::Fatal(status, message) => {
-                        tried.push(json!({ "model": id, "failed": "request rejected" }));
+                        tried.push(Attempt::failed(id, "request rejected"));
                         return error(status, message, "upstream_rejected", tried);
                     }
-                    Verdict::TryNext(why) => tried.push(json!({ "model": id, "failed": why })),
+                    Verdict::TryNext(why) => tried.push(Attempt::failed(id, &why)),
                 }
             }
 
@@ -485,7 +605,7 @@ async fn chat(
                 } else {
                     err.to_string()
                 };
-                tried.push(json!({ "model": id, "failed": why }));
+                tried.push(Attempt::failed(id, &why));
             }
         }
     }
@@ -530,4 +650,110 @@ pub async fn serve(dir: PathBuf, port: u16) -> Result<(), String> {
     axum::serve(listener, router(dir))
         .await
         .map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+//
+// `classify` decides whether a lane keeps walking or dies, so it is the one
+// function here worth pinning down with examples. Each case below is a real
+// error string shape seen from a provider, not an invented one.
+//
+// Run them with:  cargo test
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn verdict(status: u16, body: &str) -> Verdict {
+        classify(StatusCode::from_u16(status).unwrap(), body)
+    }
+
+    fn continues(status: u16, body: &str) -> bool {
+        matches!(verdict(status, body), Verdict::TryNext(_))
+    }
+
+    #[test]
+    fn a_malformed_request_stops_the_lane() {
+        // Every model would reject this identically. Walking the rest of the
+        // lane only burns the user's rate limit to collect the same error.
+        assert!(!continues(400, "messages[0].role is a required property"));
+        assert!(!continues(400, "invalid value for 'temperature': must be <= 2"));
+    }
+
+    #[test]
+    fn a_capability_gap_keeps_walking() {
+        // The bug this test exists for: `supported_parameters` in the catalog is
+        // a union across every provider serving a model, so a model can be
+        // listed as supporting tools while the endpoint reached does not. That
+        // returned a 400, was classified fatal, and killed the whole lane with
+        // working models untouched behind it.
+        assert!(continues(400, "This model does not support tools"));
+        assert!(continues(400, "function calling is not supported by this model"));
+        assert!(continues(400, "Unsupported parameter: 'response_format'"));
+        assert!(continues(400, "image input is not supported"));
+    }
+
+    #[test]
+    fn an_overflowing_prompt_keeps_walking() {
+        // This model's ceiling, not a bad request. A later one may be bigger.
+        assert!(continues(
+            400,
+            "This model's maximum context length is 8192 tokens, however you requested 9000"
+        ));
+    }
+
+    #[test]
+    fn provider_trouble_always_keeps_walking() {
+        for status in [401, 402, 403, 404, 408, 429, 500, 502, 503] {
+            assert!(continues(status, ""), "{status} should try the next model");
+        }
+    }
+
+    #[test]
+    fn the_bias_is_toward_continuing() {
+        // Wrongly continuing costs a few attempts and still reports every
+        // failure. Wrongly stopping throws away models that would have
+        // answered. So an unrecognised "not supported" keeps going.
+        assert!(continues(400, "widgets are not supported here"));
+    }
+
+    #[test]
+    fn a_header_trail_survives_hostile_provider_text() {
+        // Provider error text is arbitrary; header values must be printable
+        // ASCII on one line or the response is unsendable.
+        let tried = vec![
+            Attempt::skipped("openai/gpt-4o", "cannot serve this request"),
+            Attempt::failed("meta/llama", "rate\nlimited — 429 ✗"),
+        ];
+        let header = trail_header(&tried);
+        assert!(!header.contains('\n'));
+        assert!(header.is_ascii());
+        assert!(header.contains("openai/gpt-4o=skipped"));
+    }
+
+    #[test]
+    fn an_unknown_model_is_never_skipped() {
+        // A generic provider publishes ids and nothing else. Treating silence as
+        // "cannot" would make every such provider useless.
+        let blank = providers::CatalogModel::default();
+        let needs = Needs { vision: true, tools: true, tokens: 999_999 };
+        assert!(can_serve(&blank, &needs, false));
+    }
+
+    #[test]
+    fn a_known_model_is_skipped_on_what_it_lacks() {
+        let text_only = providers::CatalogModel { context: 8192, ..Default::default() };
+        let needs = Needs { vision: true, tools: false, tokens: 10 };
+        assert!(!can_serve(&text_only, &needs, true));
+    }
+
+    #[test]
+    fn an_unknown_context_never_rejects() {
+        // `context: 0` means unpublished, not zero-sized.
+        let unsized_model = providers::CatalogModel { tools: true, ..Default::default() };
+        let needs = Needs { vision: false, tools: true, tokens: 500_000 };
+        assert!(can_serve(&unsized_model, &needs, true));
+    }
 }

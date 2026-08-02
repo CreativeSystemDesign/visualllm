@@ -65,21 +65,33 @@ directory, owner-read-only. That is a floor, not a solution: it wants the system
 keychain before anyone else installs this. Storage is behind a seam in
 `providers.rs`, so replacing the backend touches nothing else.
 
-**Lane arrangements are not persisted.** Rearranging changes the canvas, not
-anything on disk. The ordering model was the thing under test; it has held up,
-so this is the next thing to build — and the engine below cannot start until it
-is, because the server has to read the arrangement.
+**The two 429s are still treated alike.** OpenRouter returns the same status for
+"this provider is throttling you" — where another model fixes it — and "your
+whole free tier is blocked" — where nothing but waiting does. Walking the rest
+of a lane during the second kind burns quota and deepens the hole. They are
+distinguishable: the account-wide block reports `provider_name: null` in the
+error payload. Reading the body rather than the status is the fix.
 
-**The engine is not built yet.** Lanes are currently designed here and served
-elsewhere. That is temporary scaffolding, not the architecture.
+**Capability comes from a cached catalog, and a wrong entry fails quietly.** If
+the catalog says a model can't do something it can, `can_serve` skips it and
+nothing errors. Every response now carries `x-visualllm-passed-over` and
+`x-visualllm-trail` so this is visible rather than silent, but the underlying
+data is only as good as the last fetch.
 
-## What this is meant to be
+## What it is
 
 One program: the UI, the gateway, and the engine that runs on it. A lane
 designed on the canvas is served by the same binary that drew it — an HTTP
-listener answering `/lane/{slug}/v1/chat/completions`, walking that lane's
-models in order and streaming back whichever one answers. Nothing is configured
-anywhere else. There is no config file to learn.
+listener on `127.0.0.1:4100` answering `/lane/{slug}/v1/chat/completions`,
+walking that lane's models in order and streaming back whichever one answers.
+`GET /v1/models` lists your lanes, so a client like VS Code can discover them.
+Nothing is configured anywhere else. There is no config file to learn.
+
+Every response says how it was served:
+
+    x-visualllm-served-by:  which model actually answered
+    x-visualllm-passed-over: how many were skipped or failed first
+    x-visualllm-trail:       each one, and why
 
 The hard part is not the proxying, it is **deciding when a model has failed
 hard enough to move to the next one**. That judgement is the whole value of a
