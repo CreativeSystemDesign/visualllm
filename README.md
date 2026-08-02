@@ -67,8 +67,29 @@ keychain before anyone else installs this. Storage is behind a seam in
 
 **Lane arrangements are not persisted.** Rearranging changes the canvas, not
 anything on disk. The ordering model was the thing under test; it has held up,
-so this is the next thing to build.
+so this is the next thing to build — and the engine below cannot start until it
+is, because the server has to read the arrangement.
 
-**There is no engine yet.** Lanes are designed here but served by a separate
-gateway. Whether this app grows its own proxy or drives an external one is the
-open architectural question.
+**The engine is not built yet.** Lanes are currently designed here and served
+elsewhere. That is temporary scaffolding, not the architecture.
+
+## What this is meant to be
+
+One program: the UI, the gateway, and the engine that runs on it. A lane
+designed on the canvas is served by the same binary that drew it — an HTTP
+listener answering `/lane/{slug}/v1/chat/completions`, walking that lane's
+models in order and streaming back whichever one answers. Nothing is configured
+anywhere else. There is no config file to learn.
+
+The hard part is not the proxying, it is **deciding when a model has failed
+hard enough to move to the next one**. That judgement is the whole value of a
+fallback chain, and it is wrong in both directions: too eager and the user's
+chosen primary gets skipped over a blip, too strict and the lane stalls on a
+model that was never going to answer. Some of it is unobvious — a 429 meaning
+"this provider is throttling, try another model" and a 429 meaning "your whole
+free tier is blocked, only waiting helps" look alike and need opposite
+responses.
+
+Build order: persist lanes, then the listener serving one model per lane, then
+the fallback ladder with real failure classification. Each step is testable on
+its own, and the first two are small.
