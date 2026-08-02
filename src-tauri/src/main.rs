@@ -9,6 +9,7 @@
 
 mod lanes;
 mod providers;
+mod server;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -289,6 +290,9 @@ async fn catalog_read(app: tauri::AppHandle, id: Option<String>) -> Result<Catal
             }),
         }
     }
+    // Kept for the engine, which needs capabilities at request time and cannot
+    // wait on a provider round trip to get them.
+    providers::cache_write(&dir, &models);
     Ok(Catalog { models, errors })
 }
 
@@ -327,8 +331,24 @@ fn copy_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
+/// The port the engine answers on. Fixed for now; it belongs in the UI as soon
+/// as there is somewhere sensible to put it.
+const ENGINE_PORT: u16 = 4100;
+
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            // The engine runs beside the window, on the same state, in the same
+            // process. Closing the window stops it, which is the behaviour a
+            // desktop app should have.
+            let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = server::serve(dir, ENGINE_PORT).await {
+                    eprintln!("engine: {err}");
+                }
+            });
+            Ok(())
+        })
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             read_gateway,

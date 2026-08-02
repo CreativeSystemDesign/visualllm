@@ -19,6 +19,14 @@ const OPENROUTER: &str = "https://openrouter.ai/api/v1";
 const OPENAI: &str = "https://api.openai.com/v1";
 const ANTHROPIC: &str = "https://api.anthropic.com/v1";
 
+/// The engine needs the same auth rules the catalog fetch uses.
+pub fn authorise_public(
+    request: reqwest::RequestBuilder,
+    provider: &Provider,
+) -> reqwest::RequestBuilder {
+    authorise(request, provider)
+}
+
 /// Anthropic is not OpenAI-compatible: the key goes in its own header and the
 /// API is versioned by date rather than by path. Everything else here speaks
 /// Bearer, so this is the one place that has to branch.
@@ -81,7 +89,7 @@ impl From<&Provider> for ProviderView {
 /// One model as the sidebar needs it. Every field past `context` is optional
 /// because only OpenRouter publishes them; a generic endpoint returns ids and
 /// nothing else, and the UI has to stay useful either way.
-#[derive(Serialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct CatalogModel {
     pub id: String,
     pub name: String,
@@ -126,6 +134,32 @@ pub fn save(dir: &PathBuf, providers: &[Provider]) -> Result<(), String> {
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(())
+}
+
+/// The last catalog seen, kept on disk so the engine can answer "does this
+/// model take images?" without a network round trip on every inbound request.
+/// Refreshed whenever the panel fetches; stale is fine, absent is not.
+pub fn cache_path(dir: &PathBuf) -> PathBuf {
+    dir.join("catalog.json")
+}
+
+pub fn cache_write(dir: &PathBuf, models: &[CatalogModel]) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    if let Ok(text) = serde_json::to_string(models) {
+        let temp = cache_path(dir).with_extension("json.tmp");
+        if std::fs::write(&temp, text).is_ok() {
+            let _ = std::fs::rename(&temp, cache_path(dir));
+        }
+    }
+}
+
+pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
+    std::fs::read_to_string(cache_path(dir))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
 }
 
 // ------------------------------------------------------------------ catalogs

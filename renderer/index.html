@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+  <!-- No CSP here on purpose. Tauri injects one from tauri.conf.json with the
+       nonces its own bridge script needs; a second policy in this document is
+       intersected with that one, and a hand-written `script-src 'self'` blocks
+       the injection, leaving window.__TAURI__ undefined. -->
   <title>VisualLLM</title>
   <link rel="stylesheet" href="style.css" />
 </head>
