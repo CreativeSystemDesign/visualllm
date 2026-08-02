@@ -51,7 +51,7 @@ const state = {
   pool: [],             // model ids the user kept — the sidebar shows only these
   browse: {             // the browser's own controls, separate from the sidebar's
     search: '',
-    sort: 'intelligence:desc',   // field and direction in one value
+    sorts: [{ field: 'intelligence', desc: true }],  // in priority order
     author: '',
     context: 0,
     price: '',
@@ -1004,8 +1004,13 @@ function browseMatches() {
     return true
   })
 
-  const chosen = sortOption(b.sort)
-  models.sort(comparator(chosen.field, chosen.desc))
+  models.sort((x, y) => {
+    for (const { field, desc } of b.sorts) {
+      const verdict = comparator(field, desc)(x, y)
+      if (verdict !== 0) return verdict
+    }
+    return x.id.localeCompare(y.id)   // stable last resort
+  })
   return models
 }
 
@@ -1049,32 +1054,39 @@ function comparator(field, desc) {
 }
 
 /**
- * The sort menu, with direction written into each option.
+ * SORTING IS THE COLUMNS.
  *
- * Taken from how OpenRouter does it, because it is plainly better than what was
- * here before — a dropdown, a reverse button, and clickable columns, three
- * controls for one decision. An option that says "Pricing: Low to High" needs
- * no arrow to interpret and no second control to find.
+ * There is no sort dropdown. Each column header cycles through three states,
+ * and the chain of active columns is the sort:
  *
- * Note that most fields offer only one direction. Nobody is looking for the
- * least intelligent model, so offering it is clutter pretending to be
- * flexibility. Price and age are the exceptions where both ends are genuinely
- * useful — the cheapest, and what the expensive tier costs.
+ *     click once   sort by this column, in its useful direction
+ *     click again  reverse it
+ *     click again  drop it from the sort
+ *
+ * Clicking a second column ADDS it as a tiebreaker rather than replacing the
+ * first, so "intelligence, then cheapest" is two clicks. The priority number on
+ * each active header shows the order.
+ *
+ * That is worth the machinery specifically because these columns tie constantly.
+ * 230 of 337 models carry no benchmark score, so they all tie at the bottom of
+ * an intelligence sort; dozens sit at exactly 128K or 1M context; and every free
+ * model ties at zero. A single-column sort leaves those groups in arbitrary
+ * order — a second column is what makes them readable.
  */
-const SORT_OPTIONS = [
-  { value: 'intelligence:desc', label: 'Intelligence: High to Low', field: 'intelligence', desc: true },
-  { value: 'coding:desc',       label: 'Coding: High to Low',       field: 'coding',       desc: true },
-  { value: 'agentic:desc',      label: 'Tool use: High to Low',     field: 'agentic',      desc: true },
-  { value: 'context:desc',      label: 'Context: High to Low',      field: 'context',      desc: true },
-  { value: 'price:asc',         label: 'Output price: Low to High', field: 'price',        desc: false },
-  { value: 'price:desc',        label: 'Output price: High to Low', field: 'price',        desc: true },
-  { value: 'price_in:asc',      label: 'Input price: Low to High',  field: 'price_in',     desc: false },
-  { value: 'created:desc',      label: 'Newest first',              field: 'created',      desc: true },
-  { value: 'created:asc',       label: 'Oldest first',              field: 'created',      desc: false },
-  { value: 'name:asc',          label: 'Name: A to Z',              field: 'name',         desc: false },
-]
 
-const sortOption = (value) => SORT_OPTIONS.find((o) => o.value === value) || SORT_OPTIONS[0]
+/** The direction a column means on its first click. Cheapest and A-Z for money
+ *  and names; best-first for anything scored. */
+const NATURAL_DESC = (field) => !['price', 'price_in', 'name'].includes(field)
+
+/** Add a column, reverse it, or drop it — the three-state cycle. */
+function cycleSort(field) {
+  const sorts = state.browse.sorts
+  const at = sorts.findIndex((s) => s.field === field)
+  if (at < 0) sorts.push({ field, desc: NATURAL_DESC(field) })
+  else if (sorts[at].desc === NATURAL_DESC(field)) sorts[at].desc = !sorts[at].desc
+  else sorts.splice(at, 1)
+  if (!sorts.length) sorts.push({ field: 'intelligence', desc: true })
+}
 
 const COLUMNS = [
   ['intelligence', 'intel'],
@@ -1091,18 +1103,30 @@ const COLUMNS = [
  * Reuses the same classes as a model row, so the widths line up by
  * construction rather than by two sets of numbers that drift apart. */
 function renderBrowseHeader() {
-  const head = $('bHeader')
-  const chosen = sortOption(state.browse.sort)
-  const arrow = chosen.desc ? '↓' : '↑'
-  head.innerHTML = `
-    <span class="row-body"><span class="head-hint">click a column to sort, again to reverse</span></span>
+  const sorts = state.browse.sorts
+  const rank = (field) => sorts.findIndex((s) => s.field === field)
+
+  const label = (field, text) => {
+    const at = rank(field)
+    if (at < 0) return text
+    const arrow = sorts[at].desc ? '↓' : '↑'
+    // The number only appears once there is an order to convey.
+    const order = sorts.length > 1 ? `<span class="sort-rank">${at + 1}</span>` : ''
+    return `${text} ${arrow}${order}`
+  }
+
+  $('bHeader').innerHTML = `
+    <span class="row-body">
+      <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
+        <span class="metric-label">${label('name', 'model')}</span>
+      </button>
+      <span class="head-hint">click to sort · again to reverse · again to remove</span>
+    </span>
     <span class="row-metrics">
-      ${COLUMNS.map(([key, label]) => {
-        const on = chosen.field === key
-        return `<button class="metric col-sort${on ? ' is-sorted' : ''}" data-sort="${key}">
-          <span class="metric-label">${label}${on ? ` ${arrow}` : ''}</span>
-        </button>`
-      }).join('')}
+      ${COLUMNS.map(([key, text]) => `
+        <button class="metric col-sort${rank(key) >= 0 ? ' is-sorted' : ''}" data-sort="${key}">
+          <span class="metric-label">${label(key, text)}</span>
+        </button>`).join('')}
     </span>
     <span class="row-caps"></span>
     <span class="head-spacer"></span>
@@ -1138,11 +1162,6 @@ function renderBrowse() {
 
 function openBrowse() {
   $('browseScrim').hidden = false
-  const sort = $('bSort')
-  if (!sort.options.length) {
-    sort.innerHTML = SORT_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join('')
-  }
-  sort.value = state.browse.sort
   // Authors come from whatever is actually in the catalog, not a hard-coded
   // list — a new vendor appears the moment a provider carries one.
   const authors = [...new Set(state.catalog.map((m) => m.author).filter(Boolean))].sort()
@@ -1191,16 +1210,8 @@ $('browseScrim').addEventListener('click', (event) => {
 
   const column = event.target.closest('.col-sort')
   if (column) {
-    // A column is a shortcut into the same menu. Clicking one whose field has
-    // two directions on offer moves to the other; a field with only one just
-    // selects it. There is no state a menu option cannot express.
-    const options = SORT_OPTIONS.filter((o) => o.field === column.dataset.sort)
-    if (options.length) {
-      const at = options.findIndex((o) => o.value === state.browse.sort)
-      state.browse.sort = options[(at + 1) % options.length].value
-      $('bSort').value = state.browse.sort
-      renderBrowse()
-    }
+    cycleSort(column.dataset.sort)
+    renderBrowse()
     return
   }
 
@@ -1214,10 +1225,6 @@ $('browseScrim').addEventListener('click', (event) => {
 })
 
 $('bSearch').addEventListener('input', (e) => { state.browse.search = e.target.value; renderBrowse() })
-$('bSort').addEventListener('change', (e) => {
-  state.browse.sort = e.target.value
-  renderBrowse()
-})
 $('bAuthor').addEventListener('change', (e) => { state.browse.author = e.target.value; renderBrowse() })
 $('bContext').addEventListener('change', (e) => { state.browse.context = Number(e.target.value); renderBrowse() })
 $('bPrice').addEventListener('change', (e) => { state.browse.price = e.target.value; renderBrowse() })

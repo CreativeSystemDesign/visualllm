@@ -1008,3 +1008,28 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .row-title { display: block; }
 .row-name { display: inline; min-width: 0; }
 .row-author { margin-left: 8px; }
+
+/* --- columns as the sort control ------------------------------------------ */
+
+/* Priority number, shown only once a second column joins the sort. */
+.sort-rank {
+  display: inline-grid;
+  place-items: center;
+  width: 13px; height: 13px;
+  margin-left: 3px;
+  border-radius: 4px;
+  background: linear-gradient(145deg, #f8756f, var(--accent-deep));
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+
+/* The model name is a column too, so every sort is reachable the same way. */
+.col-name {
+  align-self: flex-start;
+  padding: 2px 0;
+  text-align: left;
+}
+.col-name .metric-label { text-align: left; }
+.browse-header .row-body { gap: 1px; }
