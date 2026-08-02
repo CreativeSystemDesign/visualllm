@@ -54,6 +54,7 @@ const state = {
   statsFetchedAt: 0,
   pool: [],             // model ids the user kept — the sidebar shows only these
   browse: {             // the browser's own controls, separate from the sidebar's
+    provider: '',        // provider_id, '' for all
     search: '',
     sorts: [{ field: 'intelligence', desc: true }],  // locked columns = criteria
     scores: new Map(),
@@ -1008,7 +1009,8 @@ $('providerForm').addEventListener('submit', async (event) => {
     // nothing, so the next step should not have to be found.
     await loadCatalog()
     closePanel()
-    openBrowse()
+    const saved = state.providers.find((x) => x.name === name)
+    openBrowse(saved ? saved.id : '')
   } catch (err) {
     note(String(err), 'bad')
   }
@@ -1136,7 +1138,7 @@ function rowEl(model) {
     <span class="row-body">
       <span class="row-title">
         <span class="row-name">${model.name || model.id}</span>
-        <span class="row-author">${model.author || ''}</span>
+        <span class="row-author">${model.author || model.provider_name || ''}</span>
       </span>
       <span class="row-id">${model.id}</span>
     </span>
@@ -1170,6 +1172,7 @@ function browseMatches() {
   const q = b.search.toLowerCase()
 
   let models = state.catalog.filter((m) => {
+    if (b.provider && m.provider_id !== b.provider) return false
     if (q && !m.id.toLowerCase().includes(q) && !(m.name || '').toLowerCase().includes(q)) return false
     if (b.author && m.author !== b.author) return false
     if (b.context && (m.context || 0) < b.context) return false
@@ -1475,8 +1478,17 @@ function renderBrowse() {
   }
 }
 
-function openBrowse() {
+function openBrowse(providerId) {
+  // Passed when a provider was just saved: the person who added OpenAI wants
+  // to see what OpenAI brought, not OpenAI shuffled into 337 other rows.
+  if (providerId !== undefined) state.browse.provider = providerId
   $('browseScrim').hidden = false
+
+  const seen = new Map()
+  state.catalog.forEach((m) => seen.set(m.provider_id, m.provider_name))
+  $('bProvider').innerHTML = '<option value="">All providers</option>' +
+    [...seen].map(([id, name]) =>
+      `<option value="${id}"${id === state.browse.provider ? ' selected' : ''}>${name}</option>`).join('')
   // Authors come from whatever is actually in the catalog, not a hard-coded
   // list — a new vendor appears the moment a provider carries one.
   const authors = [...new Set(state.catalog.map((m) => m.author).filter(Boolean))].sort()
@@ -1550,6 +1562,7 @@ $('browseScrim').addEventListener('click', (event) => {
 
 $('bSearch').addEventListener('input', (e) => { state.browse.search = e.target.value; renderBrowse() })
 $('bAuthor').addEventListener('change', (e) => { state.browse.author = e.target.value; renderBrowse() })
+$('bProvider').addEventListener('change', (e) => { state.browse.provider = e.target.value; renderBrowse() })
 $('bContext').addEventListener('change', (e) => { state.browse.context = Number(e.target.value); renderBrowse() })
 $('bPrice').addEventListener('change', (e) => { state.browse.price = e.target.value; renderBrowse() })
 

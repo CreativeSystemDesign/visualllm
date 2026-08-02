@@ -246,7 +246,16 @@ fn openrouter_model(raw: &Value, provider: &Provider) -> CatalogModel {
 
 fn generic_model(raw: &Value, provider: &Provider) -> CatalogModel {
     let id = raw["id"].as_str().unwrap_or_default().to_string();
-    let id_author = id.split('/').next().unwrap_or_default().to_string();
+    // An author only exists when the id carries one. OpenRouter ids are
+    // `vendor/model`; a direct provider's are bare (`gpt-4o`, `whisper-1`),
+    // and splitting those on '/' returned the whole id — which made every
+    // model its own author and blew the author dropdown up to one entry per
+    // model the moment a second provider was added.
+    let id_author = if id.contains('/') {
+        id.split('/').next().unwrap_or_default().to_string()
+    } else {
+        String::new()
+    };
     CatalogModel {
         name: id.clone(),
         id,
