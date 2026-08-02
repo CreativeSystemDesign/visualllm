@@ -105,6 +105,18 @@ pub struct CatalogModel {
     pub intelligence: Option<f64>,
     pub coding: Option<f64>,
     pub agentic: Option<f64>,
+
+    // --- the rest of what the browser filters on ---
+    /// Everything before the slash in the id: `anthropic`, `openai`, `qwen`.
+    /// 58 of them across the OpenRouter catalog, and the most natural way a
+    /// person narrows a list of hundreds.
+    pub author: String,
+    /// Unix seconds. The only way to answer "what is new".
+    pub created: u64,
+    pub reasoning: bool,
+    pub structured: bool,
+    pub moderated: bool,
+    pub description: String,
 }
 
 // ------------------------------------------------------------------- storage
@@ -179,6 +191,14 @@ fn openrouter_model(raw: &Value, provider: &Provider) -> CatalogModel {
     let price_in = as_f64(&raw["pricing"]["prompt"]);
     let price_out = as_f64(&raw["pricing"]["completion"]);
 
+    // `supported_parameters` is a union across every provider serving this
+    // model, so treat each of these as "at least one provider offers it".
+    let has = |name: &str| {
+        params
+            .map(|p| p.iter().any(|v| v.as_str() == Some(name)))
+            .unwrap_or(false)
+    };
+
     CatalogModel {
         id: raw["id"].as_str().unwrap_or_default().to_string(),
         name: raw["name"].as_str().unwrap_or_default().to_string(),
@@ -208,17 +228,32 @@ fn openrouter_model(raw: &Value, provider: &Provider) -> CatalogModel {
         intelligence: bench["intelligence_index"].as_f64(),
         coding: bench["coding_index"].as_f64(),
         agentic: bench["agentic_index"].as_f64(),
+
+        author: raw["id"]
+            .as_str()
+            .unwrap_or_default()
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+        created: raw["created"].as_u64().unwrap_or(0),
+        reasoning: has("reasoning") || raw["reasoning"]["default_enabled"].is_boolean(),
+        structured: has("structured_outputs") || has("response_format"),
+        moderated: raw["top_provider"]["is_moderated"].as_bool().unwrap_or(false),
+        description: raw["description"].as_str().unwrap_or_default().chars().take(400).collect(),
     }
 }
 
 fn generic_model(raw: &Value, provider: &Provider) -> CatalogModel {
     let id = raw["id"].as_str().unwrap_or_default().to_string();
+    let id_author = id.split('/').next().unwrap_or_default().to_string();
     CatalogModel {
         name: id.clone(),
         id,
         provider_id: provider.id.clone(),
         provider_name: provider.name.clone(),
         context: raw["context_length"].as_u64().unwrap_or(0),
+        author: id_author,
         ..Default::default()
     }
 }

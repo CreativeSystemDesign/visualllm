@@ -41,6 +41,9 @@
               </svg>
               <input id="search" type="text" placeholder="Search models" spellcheck="false" />
             </div>
+            <button class="icon-btn" id="openBrowse" type="button" title="Browse models">
+              <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4"/><path d="M10.4 10.4L14 14M7 5v4M5 7h4"/></svg>
+            </button>
             <button class="icon-btn" id="openProviders" type="button" title="Providers">
               <svg viewBox="0 0 16 16"><path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.9"/><circle cx="10.5" cy="11" r="1.9"/></svg>
             </button>
@@ -161,6 +164,83 @@
           </div>
         </form>
       </div>
+    </section>
+  </div>
+
+  <div class="scrim" id="browseScrim" hidden>
+    <section class="panel panel-wide" role="dialog" aria-label="Browse models">
+      <header class="panel-head">
+        <div>
+          <h2>Browse models</h2>
+          <p class="sub">Everything your providers offer. Add the ones worth keeping — those are what appear in the sidebar to drag into lanes.</p>
+        </div>
+        <button class="wc" id="closeBrowse" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+
+      <div class="browse-controls">
+        <div class="browse-row">
+          <div class="search grow">
+            <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>
+            </svg>
+            <input id="bSearch" type="text" placeholder="Search by name or id" spellcheck="false" />
+          </div>
+          <div class="field-select w-sort">
+            <select id="bSort">
+              <option value="intelligence">Most intelligent</option>
+              <option value="coding">Best at coding</option>
+              <option value="agentic">Best at tool use</option>
+              <option value="price">Cheapest output</option>
+              <option value="price_in">Cheapest input</option>
+              <option value="context">Largest context</option>
+              <option value="created">Newest</option>
+              <option value="name">Name</option>
+            </select>
+            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+          </div>
+        </div>
+
+        <div class="browse-row">
+          <div class="field-select">
+            <select id="bAuthor"><option value="">All authors</option></select>
+            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+          </div>
+          <div class="field-select">
+            <select id="bContext">
+              <option value="0">Any context</option>
+              <option value="32768">32K or more</option>
+              <option value="131072">128K or more</option>
+              <option value="262144">256K or more</option>
+              <option value="1048576">1M or more</option>
+            </select>
+            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+          </div>
+          <div class="field-select">
+            <select id="bPrice">
+              <option value="">Any price</option>
+              <option value="0">Free only</option>
+              <option value="1">Under $1/M out</option>
+              <option value="5">Under $5/M out</option>
+              <option value="20">Under $20/M out</option>
+            </select>
+            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+          </div>
+        </div>
+
+        <div class="browse-row filters" id="bFilters">
+          <button class="filter" data-filter="vision">Vision</button>
+          <button class="filter" data-filter="tools">Tools</button>
+          <button class="filter" data-filter="reasoning">Reasoning</button>
+          <button class="filter" data-filter="structured">Structured output</button>
+          <button class="filter" data-filter="rated">Benchmarked</button>
+          <button class="filter" data-filter="pooled">In my pool</button>
+        </div>
+      </div>
+
+      <div class="browse-count" id="bCount">—</div>
+      <div class="browse-list" id="bList"></div>
     </section>
   </div>
 

@@ -27,6 +27,8 @@ const api = T
       catalogRead: (id) => T.core.invoke('catalog_read', { id: id ?? null }),
       lanesRead: () => T.core.invoke('lanes_read'),
       lanesWrite: (lanes) => T.core.invoke('lanes_write', { lanes }),
+      poolRead: () => T.core.invoke('pool_read'),
+      poolWrite: (ids) => T.core.invoke('pool_write', { ids }),
     }
   : window.vll
 
@@ -46,6 +48,15 @@ const state = {
 
   providers: [],
   catalog: [],
+  pool: [],             // model ids the user kept — the sidebar shows only these
+  browse: {             // the browser's own controls, separate from the sidebar's
+    search: '',
+    sort: 'intelligence',
+    author: '',
+    context: 0,
+    price: '',
+    filters: { vision: false, tools: false, reasoning: false, structured: false, rated: false, pooled: false },
+  },
   catalogErrors: [],
   counts: {},          // provider id -> models found, or an error string
   editing: null,       // provider id being edited, null when adding
@@ -174,7 +185,10 @@ function renderSidebar() {
   const list = $('modelList')
   const q = state.search.toLowerCase()
 
+  // Only what the user kept. Browsing happens in its own panel; this is the
+  // working set you drag from.
   let models = allModels().filter((m) => {
+    if (m.source === 'catalog' && !state.pool.includes(m.id)) return false
     if (q && !m.id.toLowerCase().includes(q) && !(m.name || '').toLowerCase().includes(q)) {
       return false
     }
@@ -203,13 +217,13 @@ function renderSidebar() {
 
   list.innerHTML = ''
   if (!models.length) {
-    const hasSource = state.models.length || state.catalog.length
+    const hasPool = state.pool.length || state.models.length
     list.innerHTML = `<div class="empty-state"><strong>${
-      hasSource ? 'No matches' : 'No models yet'
+      hasPool ? 'No matches' : 'Your pool is empty'
     }</strong>${
-      hasSource
+      hasPool
         ? 'Loosen the search or filters.'
-        : 'Add a provider to pull in its catalog.'
+        : 'Browse models and add the ones you want.'
     }</div>`
   } else {
     // The full OpenRouter catalog is hundreds of rows; building every chip up
@@ -836,7 +850,11 @@ $('providerForm').addEventListener('submit', async (event) => {
     await loadProviders()
     resetForm()
     note('saved', 'ok')
-    loadCatalog()
+    // Straight into browsing: a provider with no models chosen from it does
+    // nothing, so the next step should not have to be found.
+    await loadCatalog()
+    closePanel()
+    openBrowse()
   } catch (err) {
     note(String(err), 'bad')
   }
@@ -855,6 +873,220 @@ $('pDelete').addEventListener('click', async () => {
   }
 })
 
+
+
+// ============================================================================
+// THE MODEL BROWSER
+// ============================================================================
+//
+// Shopping and building are different jobs and want different surfaces. This
+// panel is the catalog — hundreds of rows, every metric the provider publishes,
+// sortable and filterable. The sidebar is the pool: only what you kept, small
+// enough to scan, and the thing you drag from.
+//
+// The button on each row is the line between them.
+
+const CAP_ICONS = [
+  ['vision', 'IMG'],
+  ['tools', 'FN'],
+  ['reasoning', 'R'],
+  ['structured', '{}'],
+]
+
+function fmtCreated(seconds) {
+  if (!seconds) return '—'
+  const days = Math.floor((Date.now() / 1000 - seconds) / 86400)
+  if (days < 1) return 'today'
+  if (days < 30) return `${days}d`
+  if (days < 365) return `${Math.floor(days / 30)}mo`
+  return `${(days / 365).toFixed(1)}y`
+}
+
+function metric(value, label, dim = false) {
+  return `<span class="metric">
+    <span class="metric-value${dim ? ' dim' : ''}">${value}</span>
+    <span class="metric-label">${label}</span>
+  </span>`
+}
+
+function rowEl(model) {
+  const pooled = state.pool.includes(model.id)
+  const el = document.createElement('div')
+  el.className = `row${pooled ? ' is-pooled' : ''}`
+  el.dataset.model = model.id
+
+  const inPrice = model.price_in != null && model.price_in >= 0
+    ? (model.price_in * 1e6 === 0 ? 'free' : `$${(model.price_in * 1e6).toFixed(2)}`)
+    : '—'
+  const outPrice = fmtPrice(model) || '—'
+
+  const score = (v) => (v == null ? '—' : Math.round(v))
+
+  el.innerHTML = `
+    <span class="row-body">
+      <span class="row-title">
+        <span class="row-name">${model.name || model.id}</span>
+        <span class="row-author">${model.author || ''}</span>
+      </span>
+      <span class="row-id">${model.id}</span>
+    </span>
+
+    <span class="row-metrics">
+      ${metric(score(model.intelligence), 'intel', model.intelligence == null)}
+      ${metric(score(model.coding), 'code', model.coding == null)}
+      ${metric(score(model.agentic), 'agent', model.agentic == null)}
+      ${metric(fmtContext(model.context), 'ctx')}
+      ${metric(inPrice, 'in/M')}
+      ${metric(outPrice.replace('/M', ''), 'out/M')}
+      ${metric(fmtCreated(model.created), 'age', true)}
+    </span>
+
+    <span class="row-caps">
+      ${CAP_ICONS.map(([key, label]) =>
+        `<span class="cap ${model[key] ? 'on' : ''}" title="${key}">${label}</span>`
+      ).join('')}
+    </span>
+
+    <button class="row-add${pooled ? ' added' : ''}">${pooled ? 'Added' : 'Add'}</button>
+  `
+  return el
+}
+
+function browseMatches() {
+  const b = state.browse
+  const q = b.search.toLowerCase()
+
+  let models = state.catalog.filter((m) => {
+    if (q && !m.id.toLowerCase().includes(q) && !(m.name || '').toLowerCase().includes(q)) return false
+    if (b.author && m.author !== b.author) return false
+    if (b.context && (m.context || 0) < b.context) return false
+
+    if (b.price !== '') {
+      const ceiling = Number(b.price)
+      if (ceiling === 0) {
+        if (!m.free) return false
+      } else {
+        const per = pricePerMillion(m)
+        if (per == null || per > ceiling) return false
+      }
+    }
+
+    for (const [key, on] of Object.entries(b.filters)) {
+      if (!on) continue
+      if (key === 'rated' && m.intelligence == null) return false
+      else if (key === 'pooled' && !state.pool.includes(m.id)) return false
+      else if (key !== 'rated' && key !== 'pooled' && !m[key]) return false
+    }
+    return true
+  })
+
+  if (b.sort === 'name') models.sort((a, b2) => a.id.localeCompare(b2.id))
+  else if (b.sort === 'price' || b.sort === 'price_in') {
+    const field = b.sort === 'price' ? 'price_out' : 'price_in'
+    models.sort((x, y) => {
+      const a = x.free ? 0 : x[field] < 0 ? null : x[field]
+      const c = y.free ? 0 : y[field] < 0 ? null : y[field]
+      if (a == null && c == null) return x.id.localeCompare(y.id)
+      if (a == null) return 1
+      if (c == null) return -1
+      return a - c
+    })
+  } else models.sort(byDescending(b.sort))
+
+  return models
+}
+
+function renderBrowse() {
+  const list = $('bList')
+  const models = browseMatches()
+
+  $('bCount').textContent = `${models.length} of ${state.catalog.length} models · ${state.pool.length} in your pool`
+
+  list.innerHTML = ''
+  if (!state.catalog.length) {
+    list.innerHTML = `<div class="empty-state"><strong>No catalog yet</strong>Add a provider and its models load here.</div>`
+    return
+  }
+  if (!models.length) {
+    list.innerHTML = `<div class="empty-state"><strong>Nothing matches</strong>Loosen a filter.</div>`
+    return
+  }
+  // Hundreds of rows, each with a dozen elements. Building them all up front
+  // costs more than anyone will scroll through, so cap and say so.
+  const CAP = 150
+  models.slice(0, CAP).forEach((m) => list.appendChild(rowEl(m)))
+  if (models.length > CAP) {
+    list.insertAdjacentHTML('beforeend',
+      `<div class="empty-state">${models.length - CAP} more — narrow the search to see them.</div>`)
+  }
+}
+
+function openBrowse() {
+  $('browseScrim').hidden = false
+  // Authors come from whatever is actually in the catalog, not a hard-coded
+  // list — a new vendor appears the moment a provider carries one.
+  const authors = [...new Set(state.catalog.map((m) => m.author).filter(Boolean))].sort()
+  const select = $('bAuthor')
+  select.innerHTML = '<option value="">All authors</option>' +
+    authors.map((a) => `<option value="${a}"${a === state.browse.author ? ' selected' : ''}>${a}</option>`).join('')
+  renderBrowse()
+}
+
+function closeBrowse() { $('browseScrim').hidden = true }
+
+async function loadPool() {
+  try {
+    state.pool = (await api.poolRead()) || []
+  } catch (err) {
+    state.pool = []
+  }
+}
+
+async function savePool() {
+  try {
+    await api.poolWrite(state.pool)
+  } catch (err) {
+    toast(`Could not save pool: ${err}`)
+  }
+}
+
+$('openBrowse').addEventListener('click', openBrowse)
+$('closeBrowse').addEventListener('click', closeBrowse)
+
+$('browseScrim').addEventListener('click', (event) => {
+  if (event.target === $('browseScrim')) return closeBrowse()
+
+  const add = event.target.closest('.row-add')
+  if (add) {
+    const id = add.closest('.row').dataset.model
+    const at = state.pool.indexOf(id)
+    if (at >= 0) state.pool.splice(at, 1)
+    else state.pool.push(id)
+    savePool()
+    renderBrowse()
+    renderSidebar()
+    toast(at >= 0 ? `${id} removed from your pool` : `${id} added to your pool`)
+    return
+  }
+
+  const filter = event.target.closest('#bFilters .filter')
+  if (filter) {
+    const key = filter.dataset.filter
+    state.browse.filters[key] = !state.browse.filters[key]
+    filter.classList.toggle('is-active', state.browse.filters[key])
+    renderBrowse()
+  }
+})
+
+$('bSearch').addEventListener('input', (e) => { state.browse.search = e.target.value; renderBrowse() })
+$('bSort').addEventListener('change', (e) => { state.browse.sort = e.target.value; renderBrowse() })
+$('bAuthor').addEventListener('change', (e) => { state.browse.author = e.target.value; renderBrowse() })
+$('bContext').addEventListener('change', (e) => { state.browse.context = Number(e.target.value); renderBrowse() })
+$('bPrice').addEventListener('change', (e) => { state.browse.price = e.target.value; renderBrowse() })
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('browseScrim').hidden) closeBrowse()
+})
 
 // ------------------------------------------------------------------ persistence
 
@@ -902,6 +1134,7 @@ document.addEventListener('click', async (event) => {
 })
 
 loadLanes()
+loadPool().then(renderSidebar)
 loadProviders().then(() => {
   renderProviders()
   loadCatalog()

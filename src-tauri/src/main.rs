@@ -383,6 +383,16 @@ fn lanes_write(app: tauri::AppHandle, lanes: Vec<lanes::Lane>) -> Result<(), Str
 }
 
 #[tauri::command]
+fn pool_read(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    Ok(lanes::pool_load(&store_dir(&app)?))
+}
+
+#[tauri::command]
+fn pool_write(app: tauri::AppHandle, ids: Vec<String>) -> Result<(), String> {
+    lanes::pool_save(&store_dir(&app)?, &ids)
+}
+
+#[tauri::command]
 fn copy_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
     app.clipboard().write_text(text).map_err(|e| e.to_string())
@@ -416,7 +426,9 @@ fn main() {
             provider_test,
             catalog_read,
             lanes_read,
-            lanes_write
+            lanes_write,
+            pool_read,
+            pool_write
         ])
         .run(tauri::generate_context!())
         .expect("failed to start VisualLLM");
