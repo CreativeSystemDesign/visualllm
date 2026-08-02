@@ -935,6 +935,8 @@ const PRESETS = [
     url: 'https://api.x.ai/v1', key: 'xai-…' },
   { id: 'mistral',    kind: 'openai', name: 'Mistral',
     url: 'https://api.mistral.ai/v1', key: '…' },
+  // Chat is at the root here, the catalog is under /v1. The base is set for
+  // chat, and the catalog fetch falls back to /v1 on a 404. Verified 2026-08-02.
   { id: 'perplexity', kind: 'openai', name: 'Perplexity',
     url: 'https://api.perplexity.ai', key: 'pplx-…' },
   { id: 'nebius',     kind: 'openai', name: 'Nebius',

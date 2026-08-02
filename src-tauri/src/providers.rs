@@ -270,15 +270,33 @@ pub async fn fetch(provider: &Provider) -> Result<Vec<CatalogModel>, String> {
         provider.base_url.trim_end_matches('/').to_string()
     };
 
-    let request = authorise(client.get(format!("{base}/models")), provider);
+    // Try `{base}/models`, and on a 404 try `{base}/v1/models`.
+    //
+    // Two things need this. Perplexity genuinely serves its catalog under /v1
+    // while serving chat at the root, so no single base URL reaches both. And
+    // it rescues the commonest setup mistake there is — pasting a base without
+    // the /v1 — which otherwise produces a bare 404 that explains nothing.
+    let mut resp = authorise(client.get(format!("{base}/models")), provider)
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_connect() {
+                format!("could not reach {base}")
+            } else {
+                e.to_string()
+            }
+        })?;
 
-    let resp = request.send().await.map_err(|e| {
-        if e.is_connect() {
-            format!("could not reach {base}")
-        } else {
-            e.to_string()
+    if resp.status().as_u16() == 404 && !base.ends_with("/v1") {
+        if let Ok(second) = authorise(client.get(format!("{base}/v1/models")), provider)
+            .send()
+            .await
+        {
+            if second.status().is_success() || second.status().as_u16() != 404 {
+                resp = second;
+            }
         }
-    })?;
+    }
 
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
