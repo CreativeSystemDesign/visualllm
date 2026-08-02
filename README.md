@@ -102,6 +102,9 @@ model that was never going to answer. Some of it is unobvious — a 429 meaning
 free tier is blocked, only waiting helps" look alike and need opposite
 responses.
 
-Build order: persist lanes, then the listener serving one model per lane, then
-the fallback ladder with real failure classification. Each step is testable on
-its own, and the first two are small.
+`classify` in `server.rs` is where that judgement lives, and it is the one
+function here covered by tests — `cargo test` from `src-tauri/`.
+
+Next, in order: split the two 429s by reading the error body; move keys to the
+system keychain; check capabilities per-provider rather than trusting the
+catalog's union.
