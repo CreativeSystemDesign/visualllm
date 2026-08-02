@@ -745,8 +745,8 @@ function resetForm() {
   $('pId').value = ''
   $('pName').value = ''
   $('pKind').value = 'openrouter'
-  $('pUrl').value = PRESET.openrouter.url
-  $('pUrl').placeholder = PRESET.openrouter.url
+  $('pUrl').value = presetById('openrouter').url
+  $('pUrl').placeholder = presetById('openrouter').url
   $('pKey').value = ''
   $('pKey').placeholder = 'sk-or-…'
   $('pSave').textContent = 'Save provider'
@@ -769,7 +769,10 @@ function editProvider(id) {
   $('formTitle').textContent = `Edit ${provider.name}`
   $('pId').value = provider.id
   $('pName').value = provider.name
-  $('pKind').value = provider.kind
+  const url = (provider.base_url || '').replace(/\/+$/, '')
+  const match = PRESETS.find((x) => x.url && x.url.replace(/\/+$/, '') === url)
+    || PRESETS.find((x) => x.kind === provider.kind && x.id === provider.kind)
+  $('pKind').value = (match || presetById('custom')).id
   $('pUrl').value = provider.base_url
   $('pKey').value = ''
   // Left blank the key is kept, so editing a name never means retyping a secret.
@@ -780,6 +783,8 @@ function editProvider(id) {
   note('')
   renderProviders()
 }
+
+fillPresetOptions()
 
 function renderProviders() {
   const list = $('providerList')
@@ -889,32 +894,93 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('scrim').hidden) closePanel()
 })
 
-// Each service has a home and a key format. Filling them in beats asking
-// someone to look them up.
-const PRESET = {
-  openrouter: { url: 'https://openrouter.ai/api/v1', key: 'sk-or-…', name: 'OpenRouter' },
-  anthropic:  { url: 'https://api.anthropic.com/v1', key: 'sk-ant-…', name: 'Anthropic' },
-  openai:     { url: 'https://api.openai.com/v1',    key: 'sk-…',     name: 'OpenAI' },
-  compatible: { url: '',                             key: 'sk-…',     name: '' },
+/**
+ * THE PROVIDER LIST.
+ *
+ * A preset is data: a label, a base URL, and what the key looks like. The
+ * `kind` is which code path runs, and there are only three of those —
+ * `openrouter` for the rich catalog, `anthropic` for its own auth header, and
+ * `openai` for everything else that speaks the OpenAI shape.
+ *
+ * Keeping those separate is the point. Adding the thirty-first provider should
+ * be one line in this table, not a branch somewhere in Rust.
+ *
+ * Base URL is the single most common setup failure, and the error it produces
+ * is a bare 404 that explains nothing — some services want `/v1`, some do not,
+ * Groq wants `/openai/v1`, DeepInfra wants `/v1/openai`. That is precisely why
+ * this table exists and why every field stays editable: these are best-known
+ * values, and Test is what proves them.
+ */
+const PRESETS = [
+  { id: 'openrouter', kind: 'openrouter', name: 'OpenRouter',
+    url: 'https://openrouter.ai/api/v1', key: 'sk-or-…' },
+
+  { id: 'openai',     kind: 'openai',     name: 'OpenAI',
+    url: 'https://api.openai.com/v1', key: 'sk-…' },
+  { id: 'anthropic',  kind: 'anthropic',  name: 'Anthropic',
+    url: 'https://api.anthropic.com/v1', key: 'sk-ant-…' },
+
+  // Drop-in OpenAI-compatible. No code, just a URL.
+  { id: 'groq',       kind: 'openai', name: 'Groq',
+    url: 'https://api.groq.com/openai/v1', key: 'gsk_…' },
+  { id: 'cerebras',   kind: 'openai', name: 'Cerebras',
+    url: 'https://api.cerebras.ai/v1', key: 'csk-…' },
+  { id: 'together',   kind: 'openai', name: 'Together AI',
+    url: 'https://api.together.xyz/v1', key: '…' },
+  { id: 'fireworks',  kind: 'openai', name: 'Fireworks AI',
+    url: 'https://api.fireworks.ai/inference/v1', key: 'fw_…' },
+  { id: 'deepinfra',  kind: 'openai', name: 'DeepInfra',
+    url: 'https://api.deepinfra.com/v1/openai', key: '…' },
+  { id: 'deepseek',   kind: 'openai', name: 'DeepSeek',
+    url: 'https://api.deepseek.com/v1', key: 'sk-…' },
+  { id: 'xai',        kind: 'openai', name: 'xAI (Grok)',
+    url: 'https://api.x.ai/v1', key: 'xai-…' },
+  { id: 'mistral',    kind: 'openai', name: 'Mistral',
+    url: 'https://api.mistral.ai/v1', key: '…' },
+  { id: 'perplexity', kind: 'openai', name: 'Perplexity',
+    url: 'https://api.perplexity.ai', key: 'pplx-…' },
+  { id: 'nebius',     kind: 'openai', name: 'Nebius',
+    url: 'https://api.studio.nebius.ai/v1', key: '…' },
+
+  // Local. No key at all, which is why the field has to tolerate being empty.
+  { id: 'ollama',     kind: 'openai', name: 'Ollama (local)',
+    url: 'http://localhost:11434/v1', key: 'not needed' },
+  { id: 'lmstudio',   kind: 'openai', name: 'LM Studio (local)',
+    url: 'http://localhost:1234/v1', key: 'not needed' },
+  { id: 'vllm',       kind: 'openai', name: 'vLLM (local)',
+    url: 'http://localhost:8000/v1', key: 'not needed' },
+
+  { id: 'custom',     kind: 'openai', name: 'Other (OpenAI-compatible)',
+    url: '', key: 'sk-…' },
+]
+
+const presetById = (id) => PRESETS.find((p) => p.id === id) || PRESETS[PRESETS.length - 1]
+
+function fillPresetOptions() {
+  $('pKind').innerHTML = PRESETS.map(
+    (p) => `<option value="${p.id}">${p.name}</option>`
+  ).join('')
 }
 
 $('pKind').addEventListener('change', (e) => {
-  const preset = PRESET[e.target.value] || PRESET.compatible
+  const preset = presetById(e.target.value)
   $('pUrl').placeholder = preset.url || 'https://api.example.com/v1'
   $('pKey').placeholder = preset.key
-  // Only fill what the user has not typed over.
+  // Overwrite only what the user has not typed over themselves: a field still
+  // holding another preset's value is ours to replace, anything else is theirs.
   if (!state.editing) {
-    const previous = Object.values(PRESET).map((p) => p.url)
-    if (!$('pUrl').value || previous.includes($('pUrl').value)) $('pUrl').value = preset.url
-    const names = Object.values(PRESET).map((p) => p.name).filter(Boolean)
-    if (!$('pName').value || names.includes($('pName').value)) $('pName').value = preset.name
+    const ourUrls = PRESETS.map((p) => p.url).filter(Boolean)
+    if (!$('pUrl').value || ourUrls.includes($('pUrl').value)) $('pUrl').value = preset.url
+    const ourNames = PRESETS.map((p) => p.name)
+    if (!$('pName').value || ourNames.includes($('pName').value)) $('pName').value = preset.name
   }
 })
 
 $('pTest').addEventListener('click', async () => {
   note('testing…')
   try {
-    const found = await api.providerTest($('pKind').value, $('pUrl').value, $('pKey').value)
+    const found = await api.providerTest(
+      presetById($('pKind').value).kind, $('pUrl').value, $('pKey').value)
     note(`reached it — ${found} models available`, 'ok')
   } catch (err) {
     note(String(err), 'bad')
@@ -928,7 +994,8 @@ $('providerForm').addEventListener('submit', async (event) => {
     await api.providerSave({
       id: state.editing || null,
       name: $('pName').value,
-      kind: $('pKind').value,
+      // The dropdown carries a preset id; storage carries the code path.
+      kind: presetById($('pKind').value).kind,
       base_url: $('pUrl').value,
       // Blank while editing means "keep what is stored"; blank on a new one is
       // a genuinely empty key.
