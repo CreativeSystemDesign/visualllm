@@ -621,7 +621,17 @@ document.addEventListener('click', async (event) => {
     return
   }
 
-  const filter = event.target.closest('.filter')
+  // Scoped to `#filters`, not a bare `.filter`.
+  //
+  // This handler is on `document`, and the browse panel uses the same class for
+  // its own filter buttons. An unscoped selector caught those too as they
+  // bubbled up, so choosing "Vision" in the browser silently filtered the pool
+  // in the sidebar behind it — two states changed by one click, one of them
+  // invisible at the time.
+  //
+  // Any delegated handler on `document` needs a container in its selector for
+  // exactly this reason.
+  const filter = event.target.closest('#filters .filter')
   if (filter) {
     const key = filter.dataset.filter
     state.filters[key] = !state.filters[key]
