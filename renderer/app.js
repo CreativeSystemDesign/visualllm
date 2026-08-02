@@ -51,8 +51,7 @@ const state = {
   pool: [],             // model ids the user kept — the sidebar shows only these
   browse: {             // the browser's own controls, separate from the sidebar's
     search: '',
-    sort: 'intelligence',
-    desc: true,          // direction, flipped by clicking the active column
+    sort: 'intelligence:desc',   // field and direction in one value
     author: '',
     context: 0,
     price: '',
@@ -995,7 +994,8 @@ function browseMatches() {
     return true
   })
 
-  models.sort(comparator(b.sort, b.desc))
+  const chosen = sortOption(b.sort)
+  models.sort(comparator(chosen.field, chosen.desc))
   return models
 }
 
@@ -1038,9 +1038,33 @@ function comparator(field, desc) {
   }
 }
 
-/** Which direction a column means when you first click it. Cheapest-first for
- *  money and A-Z for names; best-first for anything scored. */
-const ASCENDING_FIRST = new Set(['price', 'price_in', 'name'])
+/**
+ * The sort menu, with direction written into each option.
+ *
+ * Taken from how OpenRouter does it, because it is plainly better than what was
+ * here before — a dropdown, a reverse button, and clickable columns, three
+ * controls for one decision. An option that says "Pricing: Low to High" needs
+ * no arrow to interpret and no second control to find.
+ *
+ * Note that most fields offer only one direction. Nobody is looking for the
+ * least intelligent model, so offering it is clutter pretending to be
+ * flexibility. Price and age are the exceptions where both ends are genuinely
+ * useful — the cheapest, and what the expensive tier costs.
+ */
+const SORT_OPTIONS = [
+  { value: 'intelligence:desc', label: 'Intelligence: High to Low', field: 'intelligence', desc: true },
+  { value: 'coding:desc',       label: 'Coding: High to Low',       field: 'coding',       desc: true },
+  { value: 'agentic:desc',      label: 'Tool use: High to Low',     field: 'agentic',      desc: true },
+  { value: 'context:desc',      label: 'Context: High to Low',      field: 'context',      desc: true },
+  { value: 'price:asc',         label: 'Output price: Low to High', field: 'price',        desc: false },
+  { value: 'price:desc',        label: 'Output price: High to Low', field: 'price',        desc: true },
+  { value: 'price_in:asc',      label: 'Input price: Low to High',  field: 'price_in',     desc: false },
+  { value: 'created:desc',      label: 'Newest first',              field: 'created',      desc: true },
+  { value: 'created:asc',       label: 'Oldest first',              field: 'created',      desc: false },
+  { value: 'name:asc',          label: 'Name: A to Z',              field: 'name',         desc: false },
+]
+
+const sortOption = (value) => SORT_OPTIONS.find((o) => o.value === value) || SORT_OPTIONS[0]
 
 const COLUMNS = [
   ['intelligence', 'intel'],
@@ -1058,12 +1082,13 @@ const COLUMNS = [
  * construction rather than by two sets of numbers that drift apart. */
 function renderBrowseHeader() {
   const head = $('bHeader')
-  const arrow = state.browse.desc ? '↓' : '↑'
+  const chosen = sortOption(state.browse.sort)
+  const arrow = chosen.desc ? '↓' : '↑'
   head.innerHTML = `
     <span class="row-body"><span class="head-hint">click a column to sort, again to reverse</span></span>
     <span class="row-metrics">
       ${COLUMNS.map(([key, label]) => {
-        const on = state.browse.sort === key
+        const on = chosen.field === key
         return `<button class="metric col-sort${on ? ' is-sorted' : ''}" data-sort="${key}">
           <span class="metric-label">${label}${on ? ` ${arrow}` : ''}</span>
         </button>`
@@ -1079,9 +1104,6 @@ function renderBrowse() {
   const models = browseMatches()
   renderBrowseHeader()
 
-  const direction = $('bDirection')
-  direction.textContent = state.browse.desc ? '↓  High to low' : '↑  Low to high'
-  direction.title = 'Reverse the order'
 
   $('bCount').textContent = `${models.length} of ${state.catalog.length} models · ${state.pool.length} in your pool`
 
@@ -1106,6 +1128,11 @@ function renderBrowse() {
 
 function openBrowse() {
   $('browseScrim').hidden = false
+  const sort = $('bSort')
+  if (!sort.options.length) {
+    sort.innerHTML = SORT_OPTIONS.map((o) => `<option value="${o.value}">${o.label}</option>`).join('')
+  }
+  sort.value = state.browse.sort
   // Authors come from whatever is actually in the catalog, not a hard-coded
   // list — a new vendor appears the moment a provider carries one.
   const authors = [...new Set(state.catalog.map((m) => m.author).filter(Boolean))].sort()
@@ -1154,22 +1181,16 @@ $('browseScrim').addEventListener('click', (event) => {
 
   const column = event.target.closest('.col-sort')
   if (column) {
-    const key = column.dataset.sort
-    if (state.browse.sort === key) {
-      state.browse.desc = !state.browse.desc      // clicking again reverses
-    } else {
-      state.browse.sort = key
-      state.browse.desc = !ASCENDING_FIRST.has(key)
-      $('bSort').value = key
+    // A column is a shortcut into the same menu. Clicking one whose field has
+    // two directions on offer moves to the other; a field with only one just
+    // selects it. There is no state a menu option cannot express.
+    const options = SORT_OPTIONS.filter((o) => o.field === column.dataset.sort)
+    if (options.length) {
+      const at = options.findIndex((o) => o.value === state.browse.sort)
+      state.browse.sort = options[(at + 1) % options.length].value
+      $('bSort').value = state.browse.sort
+      renderBrowse()
     }
-    renderBrowse()
-    return
-  }
-
-  const flip = event.target.closest('#bDirection')
-  if (flip) {
-    state.browse.desc = !state.browse.desc
-    renderBrowse()
     return
   }
 
@@ -1185,7 +1206,6 @@ $('browseScrim').addEventListener('click', (event) => {
 $('bSearch').addEventListener('input', (e) => { state.browse.search = e.target.value; renderBrowse() })
 $('bSort').addEventListener('change', (e) => {
   state.browse.sort = e.target.value
-  state.browse.desc = !ASCENDING_FIRST.has(e.target.value)
   renderBrowse()
 })
 $('bAuthor').addEventListener('change', (e) => { state.browse.author = e.target.value; renderBrowse() })
