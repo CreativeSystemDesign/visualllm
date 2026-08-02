@@ -238,6 +238,28 @@
     </section>
   </div>
 
+  <!-- Per-member dials. Opens from the gear on a chip in a lane; positioned
+       beside that chip by app.js. Blank means "no opinion" — the client's own
+       value, or the provider's default, is used. That is why these are number
+       inputs and not sliders: a slider always has a position, and these
+       settings need an honest unset state. -->
+  <div class="member-pop" id="memberPop" hidden>
+    <div class="pop-head">
+      <span class="pop-title" id="popTitle">model</span>
+      <button class="wc" id="popClose" type="button" title="Close">
+        <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+      </button>
+    </div>
+    <p class="pop-sub">Dials the lane fixes for this member. Blank leaves the choice to the client or the provider.</p>
+    <label class="pop-field"><span>temperature</span><input data-dial="temperature" type="number" step="0.1" min="0" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>top p</span><input data-dial="top_p" type="number" step="0.05" min="0" max="1" placeholder="—" /></label>
+    <label class="pop-field"><span>frequency penalty</span><input data-dial="frequency_penalty" type="number" step="0.1" min="-2" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>presence penalty</span><input data-dial="presence_penalty" type="number" step="0.1" min="-2" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>repetition penalty</span><input data-dial="repetition_penalty" type="number" step="0.05" min="0.5" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>max output tokens</span><input data-dial="max_tokens" type="number" step="100" min="1" placeholder="—" /></label>
+    <div class="pop-actions"><button class="btn-ghost" id="popClear" type="button">Clear all</button></div>
+  </div>
+
   <div class="toast" id="toast"></div>
   <script src="app.js"></script>
 </body>

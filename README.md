@@ -76,7 +76,9 @@ error payload. Reading the body rather than the status is the fix.
 the catalog says a model can't do something it can, `can_serve` skips it and
 nothing errors. Every response now carries `x-visualllm-passed-over` and
 `x-visualllm-trail` so this is visible rather than silent, but the underlying
-data is only as good as the last fetch.
+data is only as good as the last fetch. A capability is only ever *disqualifying*
+when the provider actually published it (`caps_known`) — a generic `/models`
+that says nothing about vision has not said "no vision".
 
 ## What it is
 
@@ -93,6 +95,14 @@ Every response says how it was served:
     x-visualllm-passed-over: how many were skipped or failed first
     x-visualllm-trail:       each one, and why
 
+A model's identity everywhere — the pool, a lane, these headers — is the pair
+of provider and id, written `model@provider` where it has to fit on one line.
+The id alone stopped being an identity the moment two providers could carry
+the same one: `deepseek-chat` direct and through a reseller are different
+endpoints, different keys, different bills. Files from before this rule hold
+bare ids and still load; they mean "whichever provider first matches", which
+is what they always meant.
+
 The hard part is not the proxying, it is **deciding when a model has failed
 hard enough to move to the next one**. That judgement is the whole value of a
 fallback chain, and it is wrong in both directions: too eager and the user's
@@ -102,9 +112,36 @@ model that was never going to answer. Some of it is unobvious — a 429 meaning
 free tier is blocked, only waiting helps" look alike and need opposite
 responses.
 
-`classify` in `server.rs` is where that judgement lives, and it is the one
-function here covered by tests — `cargo test` from `src-tauri/`.
+That judgement no longer stops at the status line. **A 200 is provisional
+until it carries something a client can render** — a content token or a tool
+call. Providers return 200 and then stream an error event, or nothing, or
+spend the whole token budget on hidden reasoning and end with zero visible
+content; a chat client shows all of these as an empty reply. The engine holds
+every response at the door until its first usable delta, and one that dies
+before that point fails over to the next member with the reason in the trail
+("spent the whole token budget reasoning, with no room left to answer").
+Three consequences, all deliberate:
 
-Next, in order: split the two 429s by reading the error body; move keys to the
-system keychain; check capabilities per-provider rather than trusting the
-catalog's union.
+- Nothing reaches the client until the commit point, so a thinking model's
+  reasoning is not shown live — it arrives in one piece with the answer.
+  Forwarded bytes cannot be unsent, and forwarding early would spend the
+  lane's one chance to fall back.
+- A member that fails *after* its first content token is a failed request,
+  not a fallback. Splicing two models' answers mid-stream would be worse.
+- Requests with tiny token budgets (under 16) skip the gate: a one-token
+  health probe is not a request for an answer, and judging it would fail
+  every monitoring script ever written.
+
+Lanes can also ask members not to think at all — the "no thinking" toggle on
+a lane injects the reasoning-off knob for providers that expose one (today:
+OpenRouter, which normalises it across models). It is a preference, not a
+guarantee; the commit gate catches the models that think anyway.
+
+`classify` (refusals) and the commit gate (acceptances) in `server.rs` are
+the judgement, and they are what the tests pin down — `cargo test` from
+`src-tauri/`.
+
+Next, in order: split the two 429 *statuses* by reading the error body (the
+mid-stream kind inside a 200 is already caught); move keys to the system
+keychain; check capabilities per-provider rather than trusting the catalog's
+union.

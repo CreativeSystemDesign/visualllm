@@ -1,6 +1,6 @@
 //! Lanes on disk.
 //!
-//! A lane is a name, a slug, and an ordered list of model ids — `members[0]`
+//! A lane is a name, a slug, and an ordered list of members — `members[0]`
 //! answers first. That is the entire shape, and it is deliberately small:
 //! everything else about a lane is derived from the models it points at.
 //!
@@ -10,6 +10,91 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+/// The dials a lane may fix for one member.
+///
+/// Every field is optional, and an absent field means "whatever the client
+/// asked for, or the provider's default" — never zero. That distinction is
+/// the whole type: a temperature of 0 is a strong instruction, and a member
+/// with no opinion about temperature must not accidentally issue it.
+///
+/// These are per-MEMBER, not per-lane, deliberately. The same lane can hold
+/// a model that needs a repetition penalty to stay on task and one that
+/// behaves at its defaults; a lane-wide setting would force the choice on
+/// both.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct MemberParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+    /// Not in the OpenAI schema, but OpenRouter and most local servers accept
+    /// it, and it is the dial that actually addresses token-level loops.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repetition_penalty: Option<f64>,
+    /// A ceiling on the answer, useful for lanes that serve quick lookups.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+}
+
+impl MemberParams {
+    /// True when no dial is set — used to keep unset members compact on disk.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// One model in a lane or the pool: WHICH PROVIDER serves it, its id there,
+/// and the dials the lane holds it to.
+///
+/// A bare id stopped being an identity the moment a second provider could be
+/// configured. Two providers can and do carry the same id — `deepseek-chat`
+/// direct and through a reseller, `llama3` on two local servers — and a lane
+/// that stores only the string routes to whichever provider happened to load
+/// first. The pair is the identity; the params are the member's own tuning.
+///
+/// `provider` may be empty, and that is not an error: files written before
+/// this type existed hold bare strings, and an empty provider means "whichever
+/// provider first matches the id" — exactly the old behaviour, so old files
+/// keep working unchanged until the UI naturally re-saves them qualified.
+#[derive(Serialize, Clone, PartialEq)]
+pub struct Member {
+    pub provider: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "MemberParams::is_empty")]
+    pub params: MemberParams,
+}
+
+/// Accept every file shape this type has ever had: `"model-id"` from before
+/// providers were part of identity, and `{ provider, id }` with or without
+/// `params` since.
+impl<'de> Deserialize<'de> for Member {
+    fn deserialize<D>(de: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bare(String),
+            Full {
+                #[serde(default)]
+                provider: String,
+                id: String,
+                #[serde(default)]
+                params: MemberParams,
+            },
+        }
+        Ok(match Raw::deserialize(de)? {
+            Raw::Bare(id) => Member { provider: String::new(), id, params: MemberParams::default() },
+            Raw::Full { provider, id, params } => Member { provider, id, params },
+        })
+    }
+}
 
 /// One of the qualities a lane was built to satisfy.
 ///
@@ -26,7 +111,7 @@ pub struct Lane {
     pub slug: String,
     pub name: String,
     #[serde(default)]
-    pub members: Vec<String>,
+    pub members: Vec<Member>,
     /// What the lane was built to be: the criteria that were locked in the
     /// browser when its models were chosen.
     ///
@@ -51,6 +136,14 @@ pub struct Lane {
     /// `#[serde(default)]` so lanes saved before this existed still load.
     #[serde(default)]
     pub criteria: Vec<Criterion>,
+    /// Ask members not to spend tokens thinking before they answer.
+    ///
+    /// A lane PREFERENCE, not a guarantee: it reaches providers that expose
+    /// the knob (OpenRouter normalises it across models), and the engine's
+    /// commit gate catches the ones that think anyway. Off by default —
+    /// thinking is only a problem when a lane exists to answer fast.
+    #[serde(default)]
+    pub suppress_reasoning: bool,
 }
 
 pub fn store_path(dir: &PathBuf) -> PathBuf {
@@ -82,7 +175,7 @@ pub fn save(dir: &PathBuf, lanes: &[Lane]) -> Result<(), String> {
 // THE POOL
 // ============================================================================
 
-/// The models the user has chosen to keep, by id.
+/// The models the user has chosen to keep, as (provider, id) pairs.
 ///
 /// A provider's catalog runs to hundreds of models. The pool is the handful
 /// worth having in front of you — picked in the browser, and the only thing the
@@ -92,18 +185,56 @@ pub fn pool_path(dir: &PathBuf) -> PathBuf {
     dir.join("pool.json")
 }
 
-pub fn pool_load(dir: &PathBuf) -> Vec<String> {
+pub fn pool_load(dir: &PathBuf) -> Vec<Member> {
     std::fs::read_to_string(pool_path(dir))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
 
-pub fn pool_save(dir: &PathBuf, ids: &[String]) -> Result<(), String> {
+pub fn pool_save(dir: &PathBuf, members: &[Member]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(ids).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(members).map_err(|e| e.to_string())?;
     let path = pool_path(dir);
     let temp = path.with_extension("json.tmp");
     std::fs::write(&temp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&temp, &path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn members_load_from_every_file_shape() {
+        // Bare strings, pairs, and pairs with params have all been valid at
+        // some point. All must load, or an upgrade silently empties lanes.
+        let lane: Lane = serde_json::from_str(
+            r#"{"slug":"s","name":"n","members":[
+                "openai/gpt-4o",
+                {"provider":"groq","id":"llama-3.3-70b"},
+                {"provider":"or","id":"m","params":{"temperature":0.2,"repetition_penalty":1.3}}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(lane.members[0].provider, "");
+        assert_eq!(lane.members[0].id, "openai/gpt-4o");
+        assert!(lane.members[0].params.is_empty());
+        assert_eq!(lane.members[1].provider, "groq");
+        assert!(lane.members[1].params.is_empty());
+        assert_eq!(lane.members[2].params.temperature, Some(0.2));
+        assert_eq!(lane.members[2].params.repetition_penalty, Some(1.3));
+    }
+
+    #[test]
+    fn unset_dials_stay_off_the_disk() {
+        // A member with no settings serialises without a `params` key at all.
+        // The file is read by hand when things go wrong; noise costs trust.
+        let plain = Member {
+            provider: "p".into(),
+            id: "m".into(),
+            params: MemberParams::default(),
+        };
+        assert!(!serde_json::to_string(&plain).unwrap().contains("params"));
+    }
 }

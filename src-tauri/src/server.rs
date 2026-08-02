@@ -19,7 +19,7 @@
 //! your order, and streams back whichever one answers.
 //!
 //! ============================================================================
-//! TWO IDEAS THAT SHAPE EVERYTHING BELOW
+//! THREE IDEAS THAT SHAPE EVERYTHING BELOW
 //! ============================================================================
 //!
 //! 1. CAPABILITY IS CHECKED, NEVER DISCOVERED.
@@ -33,7 +33,24 @@
 //!    So we check the cached catalog *before* contacting anything, and skip
 //!    models that can't serve the request.
 //!
-//! 2. STATE IS READ FRESH ON EVERY REQUEST.
+//! 2. A MEMBER HAS NOT ANSWERED UNTIL A CLIENT COULD USE THE ANSWER.
+//!
+//!    An HTTP 200 does not mean success. Providers return 200 and then:
+//!    stream an error event; stream nothing and close; or spend the entire
+//!    token budget on hidden "reasoning" and end with zero visible content —
+//!    which a chat client renders as an empty reply and the person reads as
+//!    "broken". Status-code fallback cannot see any of this.
+//!
+//!    So the engine holds every response PROVISIONAL until it carries the
+//!    first thing a baseline OpenAI client can render — a content token or a
+//!    tool call. Only then are headers sent and bytes forwarded. A response
+//!    that ends before that point is a member failure like any other: noted
+//!    in the trail, next model tried, the client none the wiser. The cost is
+//!    honest and deliberate: nothing reaches the client during a model's
+//!    thinking phase, because forwarded bytes cannot be unsent and would
+//!    otherwise spend the lane's one chance to fall back.
+//!
+//! 3. STATE IS READ FRESH ON EVERY REQUEST.
 //!
 //!    If you have a PLC background, the instinct here is a scan cycle: latch a
 //!    consistent image of the world, run the logic, write the outputs. There is
@@ -52,7 +69,7 @@ use std::path::PathBuf;
 // `use` is just shorthand so we can write `Json` instead of `axum::Json`
 // everywhere. The braces group several imports from the same place.
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -63,6 +80,29 @@ use serde_json::{json, Value};
 
 // `crate::` means "from this program", as opposed to an external library.
 use crate::{lanes, providers};
+
+/// A member's catalog entry, honouring its provider when it has one.
+///
+/// An empty provider is a file from before providers were part of identity:
+/// first id match, the old behaviour, so nothing built then changes now.
+fn find_model<'a>(
+    catalog: &'a [providers::CatalogModel],
+    member: &lanes::Member,
+) -> Option<&'a providers::CatalogModel> {
+    catalog.iter().find(|m| {
+        m.id == member.id && (member.provider.is_empty() || m.provider_id == member.provider)
+    })
+}
+
+/// How a member is named in trails and headers. The id alone is ambiguous the
+/// moment two providers carry it, so a qualified member says which one.
+fn member_label(member: &lanes::Member) -> String {
+    if member.provider.is_empty() {
+        member.id.clone()
+    } else {
+        format!("{}@{}", member.id, member.provider)
+    }
+}
 
 /// Shared context every route handler receives.
 ///
@@ -152,17 +192,24 @@ fn inspect(body: &Value) -> Needs {
 /// would be useless.
 ///
 /// So: absence of evidence is permission. We only skip a model when the catalog
-/// positively tells us it can't. Likewise `context == 0` means *unknown*, not
-/// *zero-sized*, and must not be used to reject anything.
+/// positively tells us it can't. That rule applies at two depths: a model with
+/// no catalog entry at all (`known == false`), and a catalogued model whose
+/// entry never stated capabilities (`caps_known == false`) — a generic
+/// provider's row says `vision: false` meaning "unstated", and treating that
+/// as "cannot" would skip every direct-provider model on every tools request.
+/// Likewise `context == 0` means *unknown*, not *zero-sized*, and must not be
+/// used to reject anything.
 fn can_serve(model: &providers::CatalogModel, needs: &Needs, known: bool) -> bool {
     if !known {
         return true; // nothing published; let the provider decide
     }
-    if needs.vision && !model.vision {
-        return false;
-    }
-    if needs.tools && !model.tools {
-        return false;
+    if model.caps_known {
+        if needs.vision && !model.vision {
+            return false;
+        }
+        if needs.tools && !model.tools {
+            return false;
+        }
     }
     if model.context > 0 && needs.tokens > model.context {
         return false;
@@ -294,6 +341,291 @@ fn classify(status: StatusCode, body: &str) -> Verdict {
     }
 }
 
+// ============================================================================
+// THE COMMIT POINT — idea #2 from the header
+// ============================================================================
+//
+// `classify` judges refusals. Everything below judges ACCEPTANCES, which turn
+// out to need judging too: a 200 whose body a chat client cannot render is a
+// failure wearing a success status.
+//
+// The rule, for both streamed and unstreamed responses, is the same single
+// question: did anything arrive that a baseline OpenAI client would show a
+// person — assistant content, or a tool call? Reasoning tokens do not count;
+// they are commentary about an answer, and several models will happily spend
+// the whole token budget on them and send the answer they ran out of room for.
+
+/// Does this event (a streaming chunk or a whole response body) carry
+/// something a baseline client can use?
+///
+/// Checks `delta` and `message` on every choice, so the one function serves
+/// both shapes. Content may legally be a string or an array of parts, and
+/// tool calls may arrive under the modern `tool_calls` or the legacy
+/// `function_call` — all four count.
+fn usable_event(event: &Value) -> bool {
+    let Some(choices) = event["choices"].as_array() else {
+        return false;
+    };
+    choices.iter().any(|choice| {
+        [&choice["delta"], &choice["message"]].into_iter().any(|node| {
+            // Whitespace is not content. Several models open with a bare
+            // "\n" delta before anything real; committing on it forwards a
+            // stream that may never say a visible thing, when the point of
+            // the gate is exactly to catch that and move on.
+            node["content"].as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)
+                || node["content"].as_array().map(|a| !a.is_empty()).unwrap_or(false)
+                || node["tool_calls"].as_array().map(|a| !a.is_empty()).unwrap_or(false)
+                || node["function_call"].is_object()
+        })
+    })
+}
+
+/// Name what made an event usable: `tool:{name}`, or `content` with a short
+/// preview — enough to tell a real answer from a tool call written as text.
+fn commit_kind(event: &Value) -> String {
+    let choices = event["choices"].as_array();
+    for choice in choices.iter().flat_map(|c| c.iter()) {
+        for node in [&choice["delta"], &choice["message"]] {
+            if let Some(calls) = node["tool_calls"].as_array() {
+                if let Some(name) = calls
+                    .iter()
+                    .find_map(|c| c["function"]["name"].as_str().filter(|n| !n.is_empty()))
+                {
+                    return format!("tool:{name}");
+                }
+                if !calls.is_empty() {
+                    return "tool:?".into();
+                }
+            }
+            if node["function_call"].is_object() {
+                let name = node["function_call"]["name"].as_str().unwrap_or("?");
+                return format!("tool:{name}");
+            }
+            if let Some(text) = node["content"].as_str() {
+                if !text.trim().is_empty() {
+                    let preview: String = text.trim().chars().take(60).collect();
+                    return format!("content {preview:?}");
+                }
+            }
+        }
+    }
+    "content".into()
+}
+
+/// Judge a complete (non-streaming) 200 body. `Ok` means forward it; `Err`
+/// carries the trail note explaining why the next member gets a turn.
+fn usable_body(text: &str) -> Result<(), String> {
+    let Ok(body) = serde_json::from_str::<Value>(text) else {
+        return Err("returned an unreadable 200 body".into());
+    };
+    // OpenRouter (and others) can put a whole error object inside a 200.
+    if let Some(error) = body.get("error") {
+        let message = error["message"].as_str().unwrap_or("unnamed provider error");
+        return Err(format!("error in a 200 body: {message}"));
+    }
+    if usable_event(&body) {
+        return Ok(());
+    }
+    // Nothing usable. Say WHY as precisely as the body allows — this string
+    // is what someone reads in the trail when their lane "randomly" fell back.
+    let finish = body["choices"][0]["finish_reason"].as_str().unwrap_or("unknown");
+    let reasoned = body["choices"][0]["message"]["reasoning"]
+        .as_str()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        || body["usage"]["completion_tokens_details"]["reasoning_tokens"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0;
+    Err(if reasoned && finish == "length" {
+        "spent the whole token budget reasoning, with no room left to answer".into()
+    } else {
+        format!("answered with no usable content (finish_reason: {finish})")
+    })
+}
+
+/// What the scanner concluded from the stream so far.
+enum Scan {
+    /// Nothing decisive yet; keep reading.
+    Wait,
+    /// A usable delta arrived — stop judging, start forwarding.
+    Commit,
+    /// The stream is over (or carried an error) and nothing usable came.
+    Die(String),
+}
+
+/// Watches an SSE stream for the first delta a client could render.
+///
+/// Server-sent events are lines: `data: {json}`, blank lines between events,
+/// `: comment` keepalives, and a final `data: [DONE]`. Chunks off the wire cut
+/// across those lines wherever they please, so this keeps the current
+/// unfinished line between `feed` calls and judges only completed ones.
+#[derive(Default)]
+struct SseScan {
+    line: Vec<u8>,
+    /// The last `finish_reason` seen, for the post-mortem when nothing commits.
+    finish: Option<String>,
+    /// Whether reasoning tokens flowed — turns "empty answer" into "spent the
+    /// budget thinking", which is the difference between confusion and a fix.
+    saw_reasoning: bool,
+    /// What the commit was: `content`, or `tool:{name}`. Diagnostic only —
+    /// "the turn was served" and "the turn was served with a call to a tool
+    /// the client never offered" look identical without it.
+    committed_on: Option<String>,
+}
+
+impl SseScan {
+    fn feed(&mut self, chunk: &[u8]) -> Scan {
+        for &byte in chunk {
+            if byte != b'\n' {
+                self.line.push(byte);
+                continue;
+            }
+            let verdict = self.line_done();
+            self.line.clear();
+            if !matches!(verdict, Scan::Wait) {
+                return verdict;
+            }
+        }
+        Scan::Wait
+    }
+
+    /// The stream closed; judge any unterminated final line. A provider that
+    /// answers a streaming request with a bare JSON error body ends up here.
+    fn flush(&mut self) -> Scan {
+        if self.line.is_empty() {
+            return Scan::Wait;
+        }
+        let verdict = self.line_done();
+        self.line.clear();
+        verdict
+    }
+
+    fn line_done(&mut self) -> Scan {
+        let Ok(text) = std::str::from_utf8(&self.line) else {
+            return Scan::Wait; // not ours to judge; forwarding stays byte-exact
+        };
+        let text = text.trim_end_matches('\r');
+        if text.is_empty() || text.starts_with(':') {
+            return Scan::Wait; // event separator, or a keepalive comment
+        }
+        let payload = match text.strip_prefix("data:") {
+            Some(payload) => payload.trim(),
+            // Not an SSE line at all. A bare JSON error body shows up this
+            // way; judge it directly so the death note can quote it.
+            None => text,
+        };
+        if payload == "[DONE]" {
+            return Scan::Die(self.post_mortem());
+        }
+        let Ok(event) = serde_json::from_str::<Value>(payload) else {
+            return Scan::Wait; // partial or foreign line — never fatal on its own
+        };
+        self.remember(&event);
+        if let Some(error) = event.get("error") {
+            let message = error["message"].as_str().unwrap_or("unnamed provider error");
+            return Scan::Die(format!("error mid-stream: {message}"));
+        }
+        if usable_event(&event) {
+            self.committed_on = Some(commit_kind(&event));
+            Scan::Commit
+        } else {
+            Scan::Wait
+        }
+    }
+
+    /// Note the facts a post-mortem wants: did it think, and how did it end.
+    fn remember(&mut self, event: &Value) {
+        if let Some(choices) = event["choices"].as_array() {
+            for choice in choices {
+                if let Some(reason) = choice["finish_reason"].as_str() {
+                    self.finish = Some(reason.to_string());
+                }
+                if choice["delta"]["reasoning"].as_str().map(|s| !s.is_empty()).unwrap_or(false) {
+                    self.saw_reasoning = true;
+                }
+            }
+        }
+    }
+
+    fn post_mortem(&self) -> String {
+        match (self.saw_reasoning, self.finish.as_deref()) {
+            (true, Some("length")) => {
+                "spent the whole token budget reasoning, with no room left to answer".into()
+            }
+            (_, Some(reason)) => {
+                format!("stream ended with no usable content (finish_reason: {reason})")
+            }
+            _ => "stream ended with no usable content".into(),
+        }
+    }
+}
+
+/// How much prelude the gate will hold while waiting for a usable delta.
+/// Megabytes of pure reasoning is far past anything legitimate; give the slot
+/// to the next member instead of holding memory open forever.
+const PRELUDE_CAP: usize = 8 * 1024 * 1024;
+
+/// The gate's verdict on a streaming response.
+enum Gated {
+    /// A usable delta arrived. `prelude` is every byte seen so far, verbatim
+    /// (thinking included — clients that render it still get it, in one piece);
+    /// `rest` is the still-live remainder of the stream; `on` names what
+    /// committed it, for the log.
+    Committed {
+        on: String,
+        prelude: Vec<Bytes>,
+        rest: futures_util::stream::BoxStream<'static, Result<Bytes, reqwest::Error>>,
+    },
+    /// It ended, errored, or overflowed before anything usable. The note goes
+    /// in the trail; the next member gets the request.
+    Dead(String),
+}
+
+/// Hold a streaming 200 at the door until it proves usable.
+async fn gate(resp: reqwest::Response) -> Gated {
+    use futures_util::StreamExt;
+
+    let mut rest = resp.bytes_stream().boxed();
+    let mut scan = SseScan::default();
+    let mut prelude: Vec<Bytes> = Vec::new();
+    let mut held = 0usize;
+
+    while let Some(item) = rest.next().await {
+        let chunk = match item {
+            Ok(chunk) => chunk,
+            Err(err) => return Gated::Dead(format!("stream broke with no usable content: {err}")),
+        };
+        held += chunk.len();
+        let verdict = scan.feed(&chunk);
+        prelude.push(chunk);
+        match verdict {
+            Scan::Commit => {
+                let on = scan.committed_on.take().unwrap_or_else(|| "content".into());
+                return Gated::Committed { on, prelude, rest };
+            }
+            Scan::Die(why) => return Gated::Dead(why),
+            Scan::Wait => {}
+        }
+        if held > PRELUDE_CAP {
+            return Gated::Dead("streamed megabytes with no usable content".into());
+        }
+    }
+
+    // Closed without [DONE]. A trailing unterminated line may still decide it.
+    match scan.flush() {
+        // Content in the very last gasp: the stream is finished, but the bytes
+        // are all in `prelude`, so an empty remainder serves them fine.
+        Scan::Commit => Gated::Committed {
+            on: scan.committed_on.take().unwrap_or_else(|| "content".into()),
+            prelude,
+            rest: futures_util::stream::empty().boxed(),
+        },
+        Scan::Die(why) => Gated::Dead(why),
+        Scan::Wait => Gated::Dead(scan.post_mortem()),
+    }
+}
+
 /// One model that was considered before the one that answered.
 ///
 /// Kept as a struct rather than raw JSON because it now has two audiences: the
@@ -332,6 +664,98 @@ fn trail_header(tried: &[Attempt]) -> String {
             out.push_str(" …");
             break;
         }
+    }
+    out
+}
+
+// ============================================================================
+// MEMBER DIALS
+// ============================================================================
+//
+// A member is not just a model id — it can carry its own request settings,
+// fixed when the lane was designed: temperature, penalties, a token ceiling.
+// The engine applies them here, per member, for the same reason it swaps the
+// model id: the client addressed a lane, and the lane knows how each of its
+// members should be driven.
+//
+// The subtle requirement is the same one reasoning suppression has: a dial
+// set for THIS member must never leak into the request for the NEXT one.
+// Every knob the client did not set is removed again before the next attempt,
+// and every knob the client did set is put back.
+
+/// Every request knob a member may fix. One list serves both jobs: capturing
+/// what the client asked for, and restoring it between members.
+const MEMBER_KNOBS: [&str; 6] = [
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "max_tokens",
+];
+
+/// The member's value for one knob, as JSON, if the lane set one.
+fn knob_value(params: &lanes::MemberParams, knob: &str) -> Option<Value> {
+    match knob {
+        "temperature" => params.temperature.map(|v| json!(v)),
+        "top_p" => params.top_p.map(|v| json!(v)),
+        "frequency_penalty" => params.frequency_penalty.map(|v| json!(v)),
+        "presence_penalty" => params.presence_penalty.map(|v| json!(v)),
+        "repetition_penalty" => params.repetition_penalty.map(|v| json!(v)),
+        "max_tokens" => params.max_tokens.map(|v| json!(v)),
+        _ => None,
+    }
+}
+
+/// Shape the request for one member: the member's dial wins, the client's own
+/// value is the fallback, and a knob neither of them set is absent — never
+/// defaulted, because absence is itself an instruction ("provider decides").
+///
+/// `client` is the client's original values, captured once before the walk
+/// begins; passing them in on every call is what makes the walk stateless.
+fn apply_member_params(
+    body: &mut Value,
+    params: &lanes::MemberParams,
+    client: &[(String, Option<Value>)],
+) {
+    let Some(map) = body.as_object_mut() else { return };
+    for (knob, original) in client {
+        match knob_value(params, knob).or_else(|| original.clone()) {
+            Some(value) => {
+                map.insert(knob.clone(), value);
+            }
+            None => {
+                map.remove(knob.as_str());
+            }
+        }
+    }
+}
+
+/// The set dials as one log-friendly line: `temperature=0.2 max_tokens=400`.
+fn dials_summary(params: &lanes::MemberParams) -> String {
+    MEMBER_KNOBS
+        .iter()
+        .filter_map(|knob| knob_value(params, knob).map(|v| format!("{knob}={v}")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The headers every successful lane response carries, whatever its body.
+fn success_headers(
+    slug: &str,
+    served: &str,
+    tried: &[Attempt],
+) -> axum::http::response::Builder {
+    let mut out = Response::builder()
+        .status(StatusCode::OK)
+        .header("x-visualllm-lane", slug)
+        .header("x-visualllm-served-by", served)
+        .header("x-visualllm-passed-over", tried.len());
+    // THE SILENT-SKIP FIX: every response says what it stepped over and why.
+    // A healthy lane reports `passed-over: 0`; anything else is a question
+    // worth asking, and the trail is the answer.
+    if !tried.is_empty() {
+        out = out.header("x-visualllm-trail", trail_header(tried));
     }
     out
 }
@@ -381,7 +805,7 @@ async fn models(State(engine): State<Engine>) -> Json<Value> {
             let members: Vec<&providers::CatalogModel> = lane
                 .members
                 .iter()
-                .filter_map(|id| catalog.iter().find(|m| &m.id == id))
+                .filter_map(|member| find_model(&catalog, member))
                 .collect();
 
             // A lane advertises the UNION of what its members can do, not the
@@ -466,6 +890,39 @@ async fn chat(
     let needs = inspect(&body);
     let streaming = body["stream"].as_bool().unwrap_or(false);
 
+    // A one-token ping is not a request for an answer, and judging it for
+    // content would fail every health probe ever written. Tiny budgets skip
+    // the commit gate and stream straight through, as before.
+    let budget = body["max_tokens"]
+        .as_u64()
+        .or_else(|| body["max_completion_tokens"].as_u64());
+    let gated = !budget.is_some_and(|b| b < 16);
+
+    // What the client itself said about reasoning and about every dial a
+    // member may override — captured once, so one member's settings can be
+    // unwound before the next member's request is built.
+    let client_reasoning = body.get("reasoning").cloned();
+    let client_knobs: Vec<(String, Option<Value>)> = MEMBER_KNOBS
+        .iter()
+        .map(|knob| (knob.to_string(), body.get(*knob).cloned()))
+        .collect();
+
+    // One line per request, one per attempt, to stderr — which `tauri dev`
+    // already collects. Cheap eyes for a process that had none: three separate
+    // wrong guesses about live behaviour were made from TCP state alone the
+    // night this went in.
+    eprintln!(
+        "engine: {} <- {} request: {} tools, budget {}, needs[vision={} tools={} ~{}tok], no-think={}",
+        lane.slug,
+        if streaming { "streaming" } else { "blocking" },
+        body["tools"].as_array().map(|t| t.len()).unwrap_or(0),
+        budget.map(|b| b.to_string()).unwrap_or_else(|| "unset".into()),
+        needs.vision,
+        needs.tools,
+        needs.tokens,
+        lane.suppress_reasoning,
+    );
+
     let client = match reqwest::Client::builder().build() {
         Ok(client) => client,
         Err(err) => {
@@ -483,8 +940,9 @@ async fn chat(
 
     // ---- 3. Walk the lane in order ----------------------------------------
 
-    for id in &lane.members {
-        let entry = catalog.iter().find(|m| &m.id == id);
+    for member in &lane.members {
+        let label = member_label(member);
+        let entry = find_model(&catalog, member);
         let known = entry.is_some();
 
         // If the catalog has nothing on this model we still need *something* to
@@ -494,16 +952,21 @@ async fn chat(
         let model = entry.unwrap_or(&blank);
 
         if !can_serve(model, &needs, known) {
-            tried.push(Attempt::skipped(id, "cannot serve this request"));
+            eprintln!("engine: {}   skip {label}: cannot serve this request", lane.slug);
+            tried.push(Attempt::skipped(&label, "cannot serve this request"));
             continue; // never contacted — this is idea #1 from the header
         }
 
-        // Which provider actually offers this model, and therefore whose key and
-        // base URL to use. With no catalog entry there is nothing to match on,
-        // so the first configured provider is the best available guess.
-        let provider = configured
+        // Whose key and base URL to use. The member names its provider — that
+        // is the identity now. A pre-provider member falls back to the catalog
+        // entry's provider, and only a member the catalog has never heard of
+        // lands on the first configured provider: a guess, and labelled as one
+        // in the trail rather than made silently.
+        let named = configured
             .iter()
-            .find(|p| known && p.id == model.provider_id)
+            .find(|p| !member.provider.is_empty() && p.id == member.provider);
+        let provider = named
+            .or_else(|| configured.iter().find(|p| known && p.id == model.provider_id))
             .or_else(|| configured.first());
 
         let Some(provider) = provider else {
@@ -515,9 +978,34 @@ async fn chat(
             );
         };
 
+        let guessed = named.is_none() && !known;
+
         // The client addressed a *lane*; the provider needs a real model id.
         // This one line is the whole translation.
-        body["model"] = json!(id);
+        body["model"] = json!(member.id);
+
+        // Then the member's own dials. Note the commit gate's tiny-budget
+        // bypass was decided from the CLIENT's budget on purpose: a member
+        // whose settings cap the answer short is a design choice the gate
+        // still protects, while a client probing with one token is not asking
+        // for an answer at all.
+        apply_member_params(&mut body, &member.params, &client_knobs);
+        if !member.params.is_empty() {
+            eprintln!("engine: {}   {label} dials: {}", lane.slug, dials_summary(&member.params));
+        }
+
+        // The lane's word on thinking. Only OpenRouter gets the knob — it
+        // normalises `reasoning` across models and ignores it where it cannot
+        // apply, while a direct provider would reject the unknown parameter
+        // and read as a bad request. Everyone else gets the client's own
+        // wishes back, untouched.
+        if lane.suppress_reasoning && provider.kind == "openrouter" {
+            body["reasoning"] = json!({ "enabled": false });
+        } else if let Some(wanted) = &client_reasoning {
+            body["reasoning"] = wanted.clone();
+        } else if let Some(map) = body.as_object_mut() {
+            map.remove("reasoning");
+        }
 
         let base = provider.base_url.trim_end_matches('/');
         let request = providers::authorise_public(
@@ -532,48 +1020,83 @@ async fn chat(
         // `.await` is the pause point: this request's work stops here, other
         // requests run, and we resume when the provider responds.
         match request.json(&body).send().await {
-            // ---- it answered ----
+            // ---- it answered (provisionally — see idea #2) ----
             Ok(resp) if resp.status().is_success() => {
-                let mut out = Response::builder()
-                    .status(StatusCode::OK)
-                    // Headers of our own, so a call can always be accounted for.
-                    .header("x-visualllm-lane", &lane.slug)
-                    .header("x-visualllm-served-by", id)
-                    .header("x-visualllm-passed-over", tried.len());
+                // A guessed provider must say so where it can be seen. It may
+                // well have answered — with the wrong key billed for it.
+                let served = if guessed {
+                    format!("{label} (provider guessed: {})", provider.id)
+                } else {
+                    label.clone()
+                };
+                let upstream_type = resp.headers().get("content-type").cloned();
 
-                // THE SILENT-SKIP FIX.
-                //
-                // Until now the list of models we passed over was only reported
-                // when the whole lane failed. That made the worst failure mode
-                // in this design invisible: one wrong field in the cached
-                // catalog makes `can_serve` skip your primary on every single
-                // request, and a lane quietly serving from its third choice
-                // looks exactly like a lane working perfectly.
-                //
-                // Now every response carries what it stepped over and why. A
-                // healthy lane reports `passed-over: 0`; anything else is a
-                // question worth asking.
-                if !tried.is_empty() {
-                    out = out.header("x-visualllm-trail", trail_header(&tried));
+                if streaming && gated {
+                    // Hold the stream at the door until the first delta a
+                    // client could render. Once committed, the buffered
+                    // prelude (thinking included) and the live remainder are
+                    // piped through as they arrive — the full answer still
+                    // never exists in one piece here.
+                    match gate(resp).await {
+                        Gated::Committed { on, prelude, rest } => {
+                            eprintln!(
+                                "engine: {}   {label} committed on {on} ({} passed over)",
+                                lane.slug,
+                                tried.len()
+                            );
+                            let out = success_headers(&lane.slug, &served, &tried)
+                                .header("content-type", "text/event-stream");
+                            let replay = futures_util::stream::iter(
+                                prelude.into_iter().map(Ok::<Bytes, reqwest::Error>),
+                            );
+                            let joined = futures_util::StreamExt::chain(replay, rest);
+                            let stream =
+                                futures_util::TryStreamExt::map_err(joined, std::io::Error::other);
+                            return out.body(Body::from_stream(stream)).unwrap().into_response();
+                        }
+                        Gated::Dead(why) => {
+                            eprintln!("engine: {}   {label} died in-stream: {why}", lane.slug);
+                            tried.push(Attempt::failed(&label, &why));
+                            continue;
+                        }
+                    }
                 }
 
+                if !streaming && gated {
+                    // The unstreamed twin: read the whole body — the client
+                    // asked for it in one piece anyway — and judge it before
+                    // passing it on.
+                    let text = resp.text().await.unwrap_or_default();
+                    match usable_body(&text) {
+                        Ok(()) => {
+                            eprintln!(
+                                "engine: {}   {label} served a blocking body ({} passed over)",
+                                lane.slug,
+                                tried.len()
+                            );
+                            let mut out = success_headers(&lane.slug, &served, &tried);
+                            out = match upstream_type {
+                                Some(kind) => out.header("content-type", kind),
+                                None => out.header("content-type", "application/json"),
+                            };
+                            return out.body(Body::from(text)).unwrap().into_response();
+                        }
+                        Err(why) => {
+                            eprintln!("engine: {}   {label} unusable body: {why}", lane.slug);
+                            tried.push(Attempt::failed(&label, &why));
+                            continue;
+                        }
+                    }
+                }
+
+                // Ungated (a tiny-budget probe): pipe straight through, the
+                // pre-commit-gate behaviour.
+                let mut out = success_headers(&lane.slug, &served, &tried);
                 if streaming {
                     out = out.header("content-type", "text/event-stream");
-                } else if let Some(kind) = resp.headers().get("content-type") {
+                } else if let Some(kind) = upstream_type {
                     out = out.header("content-type", kind);
                 }
-
-                // STREAMING, and why it matters.
-                //
-                // We do not wait for the full answer and then forward it. Bytes
-                // are piped through as they arrive, so the complete response
-                // never exists in one piece anywhere in this program.
-                //
-                // Two reasons. Memory: a long answer would otherwise sit in RAM
-                // in full. And far more visibly — buffering means the client
-                // sees nothing for thirty seconds and probably gives up. Words
-                // appearing one at a time in Copilot is this choice, made
-                // visible.
                 let stream = futures_util::TryStreamExt::map_err(
                     resp.bytes_stream(),
                     std::io::Error::other,
@@ -589,10 +1112,18 @@ async fn chat(
 
                 match classify(status, &text) {
                     Verdict::Fatal(status, message) => {
-                        tried.push(Attempt::failed(id, "request rejected"));
+                        eprintln!(
+                            "engine: {}   {label} fatal {}: request rejected",
+                            lane.slug,
+                            status.as_u16()
+                        );
+                        tried.push(Attempt::failed(&label, "request rejected"));
                         return error(status, message, "upstream_rejected", tried);
                     }
-                    Verdict::TryNext(why) => tried.push(Attempt::failed(id, &why)),
+                    Verdict::TryNext(why) => {
+                        eprintln!("engine: {}   {label} failed: {why}", lane.slug);
+                        tried.push(Attempt::failed(&label, &why));
+                    }
                 }
             }
 
@@ -605,10 +1136,13 @@ async fn chat(
                 } else {
                     err.to_string()
                 };
-                tried.push(Attempt::failed(id, &why));
+                eprintln!("engine: {}   {label} unreachable: {why}", lane.slug);
+                tried.push(Attempt::failed(&label, &why));
             }
         }
     }
+
+    eprintln!("engine: {} exhausted — every member skipped or failed", lane.slug);
 
     // ---- 4. Nothing worked ------------------------------------------------
 
@@ -744,16 +1278,253 @@ mod tests {
 
     #[test]
     fn a_known_model_is_skipped_on_what_it_lacks() {
-        let text_only = providers::CatalogModel { context: 8192, ..Default::default() };
+        // `caps_known` is what makes the false a fact rather than a default.
+        let text_only = providers::CatalogModel {
+            context: 8192,
+            caps_known: true,
+            ..Default::default()
+        };
         let needs = Needs { vision: true, tools: false, tokens: 10 };
         assert!(!can_serve(&text_only, &needs, true));
     }
 
     #[test]
+    fn unstated_capabilities_never_skip() {
+        // A generic provider's catalog entry says `vision: false, tools: false`
+        // because it said NOTHING — the fields defaulted. Treating that as
+        // "cannot" would skip every direct-provider model on every tools
+        // request, silently and forever. The entry is in the catalog (known),
+        // but its capabilities are not, so the request goes through.
+        let unstated = providers::CatalogModel { context: 8192, ..Default::default() };
+        let needs = Needs { vision: true, tools: true, tokens: 10 };
+        assert!(can_serve(&unstated, &needs, true));
+
+        // Context is a separate fact: when published it still applies, whatever
+        // the capability fields do or don't say.
+        let too_long = Needs { vision: false, tools: false, tokens: 9_000 };
+        assert!(!can_serve(&unstated, &too_long, true));
+    }
+
+    #[test]
     fn an_unknown_context_never_rejects() {
         // `context: 0` means unpublished, not zero-sized.
-        let unsized_model = providers::CatalogModel { tools: true, ..Default::default() };
+        let unsized_model = providers::CatalogModel {
+            tools: true,
+            caps_known: true,
+            ..Default::default()
+        };
         let needs = Needs { vision: false, tools: true, tokens: 500_000 };
         assert!(can_serve(&unsized_model, &needs, true));
+    }
+
+    // ------------------------------------------------------ the commit point
+
+    /// Feed a whole transcript through the scanner, ending it the way
+    /// `gate()` does: an EOF that decided nothing is a death, with the
+    /// scanner's post-mortem as the note.
+    fn scan(text: &str) -> Scan {
+        let mut scanner = SseScan::default();
+        let fed = scanner.feed(text.as_bytes());
+        if !matches!(fed, Scan::Wait) {
+            return fed;
+        }
+        match scanner.flush() {
+            Scan::Wait => Scan::Die(scanner.post_mortem()),
+            decisive => decisive,
+        }
+    }
+
+    fn commits(text: &str) -> bool {
+        matches!(scan(text), Scan::Commit)
+    }
+
+    fn dies_with(text: &str, needle: &str) -> bool {
+        match scan(text) {
+            Scan::Die(why) => why.contains(needle),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn reasoning_only_until_done_dies_and_says_why() {
+        // The Copilot incident, in miniature: every delta is reasoning, the
+        // budget runs out, and the visible answer never starts. The death
+        // note must name the cause, because "no response" already didn't.
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"hmm\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\" more\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        assert!(dies_with(stream, "reasoning"));
+    }
+
+    #[test]
+    fn the_first_content_token_commits() {
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\",\"reasoning\":\"hmm\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"H\"}}]}\n\n",
+        );
+        assert!(commits(stream));
+    }
+
+    #[test]
+    fn whitespace_is_not_content() {
+        // Several models open with a bare "\n" delta. A stream that never
+        // says anything visible must die at the gate, not be forwarded as an
+        // "answer" a chat client renders as nothing.
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\\n\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        assert!(dies_with(stream, "no usable content"));
+
+        // But whitespace before a real token delays nothing important.
+        let healthy = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"\\n\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n",
+        );
+        assert!(commits(healthy));
+
+        // Same rule for a whole body.
+        assert!(usable_body(r#"{"choices":[{"message":{"content":"\n \n"}}]}"#).is_err());
+    }
+
+    #[test]
+    fn a_tool_call_delta_commits() {
+        // Agent mode lives on this: a turn can be all tool calls, no prose.
+        let stream = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"f\"}}]}}]}\n\n";
+        assert!(commits(stream));
+        // The legacy spelling counts too.
+        let legacy = "data: {\"choices\":[{\"delta\":{\"function_call\":{\"name\":\"f\"}}}]}\n\n";
+        assert!(commits(legacy));
+    }
+
+    #[test]
+    fn a_mid_stream_error_event_dies_with_its_message() {
+        // OpenRouter delivers rate limits INSIDE a 200 stream. Before the
+        // gate, this reached the client as an empty answer.
+        let stream = "data: {\"error\":{\"message\":\"Rate limit exceeded: free-models-per-day\",\"code\":429}}\n";
+        assert!(dies_with(stream, "free-models-per-day"));
+    }
+
+    #[test]
+    fn chunks_split_anywhere_still_parse() {
+        // Network chunks cut across SSE lines wherever they please. The
+        // scanner keeps the partial line between feeds; the verdict must not
+        // depend on where the cuts fall.
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"x\"}}]}\r\n\r\n",
+            ": OPENROUTER PROCESSING\r\n\r\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\r\n\r\n",
+        );
+        for size in [1, 3, 7, 20] {
+            let mut scanner = SseScan::default();
+            let mut verdict = Scan::Wait;
+            for piece in stream.as_bytes().chunks(size) {
+                verdict = scanner.feed(piece);
+                if !matches!(verdict, Scan::Wait) {
+                    break;
+                }
+            }
+            assert!(matches!(verdict, Scan::Commit), "chunk size {size}");
+        }
+    }
+
+    #[test]
+    fn an_empty_stream_dies_quietly_but_explicably() {
+        assert!(dies_with("data: [DONE]\n\n", "no usable content"));
+        assert!(dies_with("", "no usable content"));
+    }
+
+    #[test]
+    fn a_bare_json_error_body_on_a_streaming_request_dies() {
+        // Some providers answer a streaming request with a plain JSON error
+        // and no SSE framing at all. The unterminated line is judged at EOF.
+        let body = "{\"error\":{\"message\":\"upstream fell over\"}}";
+        assert!(dies_with(body, "upstream fell over"));
+    }
+
+    #[test]
+    fn a_200_body_with_no_content_is_unusable() {
+        let body = r#"{"choices":[{"message":{"content":"","reasoning":"so much thinking"},"finish_reason":"length"}]}"#;
+        let why = usable_body(body).unwrap_err();
+        assert!(why.contains("reasoning"), "note was: {why}");
+    }
+
+    #[test]
+    fn a_200_body_with_an_error_object_is_unusable() {
+        let body = r#"{"error":{"message":"quota exhausted","code":429}}"#;
+        assert!(usable_body(body).unwrap_err().contains("quota exhausted"));
+    }
+
+    #[test]
+    fn real_answers_are_usable() {
+        assert!(usable_body(r#"{"choices":[{"message":{"content":"Hello."}}]}"#).is_ok());
+        assert!(usable_body(
+            r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"1","function":{"name":"f","arguments":"{}"}}]}}]}"#
+        )
+        .is_ok());
+        // Content as an array of parts is legal OpenAI, and counts.
+        assert!(usable_body(r#"{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}"#).is_ok());
+    }
+
+    #[test]
+    fn member_dials_never_leak_to_the_next_member() {
+        // The walk mutates one shared body. Member A's dials must be gone —
+        // and the client's own values back — before member B's request goes
+        // out, or a fallback quietly behaves like the model ahead of it.
+        let mut body = json!({ "messages": [], "temperature": 0.9 });
+        let client: Vec<(String, Option<Value>)> = MEMBER_KNOBS
+            .iter()
+            .map(|knob| (knob.to_string(), body.get(*knob).cloned()))
+            .collect();
+
+        let tuned = lanes::MemberParams {
+            temperature: Some(0.2),
+            repetition_penalty: Some(1.3),
+            ..Default::default()
+        };
+        apply_member_params(&mut body, &tuned, &client);
+        assert_eq!(body["temperature"], json!(0.2));
+        assert_eq!(body["repetition_penalty"], json!(1.3));
+
+        apply_member_params(&mut body, &lanes::MemberParams::default(), &client);
+        assert_eq!(body["temperature"], json!(0.9), "client value restored");
+        assert!(body.get("repetition_penalty").is_none(), "lane dial unwound");
+    }
+
+    #[test]
+    fn a_member_resolves_to_its_own_provider() {
+        // Two providers carry the same id. The member names which one it meant,
+        // and that one — not whichever loaded first — must be found.
+        let catalog = vec![
+            providers::CatalogModel {
+                id: "deepseek-chat".into(),
+                provider_id: "reseller".into(),
+                ..Default::default()
+            },
+            providers::CatalogModel {
+                id: "deepseek-chat".into(),
+                provider_id: "deepseek".into(),
+                ..Default::default()
+            },
+        ];
+
+        let member = |provider: &str| lanes::Member {
+            provider: provider.into(),
+            id: "deepseek-chat".into(),
+            params: Default::default(),
+        };
+
+        assert_eq!(find_model(&catalog, &member("deepseek")).unwrap().provider_id, "deepseek");
+
+        // A pre-provider member keeps the old behaviour: first id match.
+        assert_eq!(find_model(&catalog, &member("")).unwrap().provider_id, "reseller");
+
+        // A member whose provider vanished matches nothing, rather than
+        // quietly borrowing another provider's entry (and key).
+        assert!(find_model(&catalog, &member("closed")).is_none());
     }
 }

@@ -70,6 +70,34 @@ const state = {
 
 const $ = (id) => document.getElementById(id)
 
+/** The engine's address. The old Python gateway lived on 4000 and is only
+ *  polled for the status bar now; lanes are SERVED from here. */
+const ENGINE_HOST = '127.0.0.1:4100'
+
+// ------------------------------------------------------------------- identity
+//
+// A model's identity is (provider, id), not the id alone. Two providers can
+// carry the same id — deepseek-chat direct and through a reseller, llama3 on
+// Ollama and LM Studio — and everything that stores or compares models has to
+// keep them apart. Pool entries and lane members are refs: { provider, id }.
+// An EMPTY provider is a ref from before this rule existed and matches the
+// first catalog entry with that id, which is exactly the old behaviour.
+
+/** Anything old files might hold — a bare id string — becomes a ref. The
+ *  member's dials (`params`) ride along; dropping them here would silently
+ *  reset a tuned member every time the app restarted. */
+const asRef = (r) =>
+  typeof r === 'string'
+    ? { provider: '', id: r, params: {} }
+    : { provider: r.provider || '', id: r.id, params: r.params || {} }
+
+/** Does this member carry any dial at all? Drives the gear's "tuned" dot. */
+const hasParams = (ref) => Object.values(ref.params || {}).some((v) => v != null)
+
+/** Does this ref mean this catalog model? Empty provider is a wildcard. */
+const refMatches = (ref, model) =>
+  ref.id === model.id && (!ref.provider || ref.provider === (model.provider_id || ''))
+
 /** Everything the sidebar can offer: what the gateway runs, plus every
  *  provider catalog. Gateway lanes win a name collision — they carry live
  *  health and measured throughput, which a catalog entry never will. */
@@ -78,7 +106,28 @@ function allModels() {
   return state.models.concat(state.catalog.filter((m) => !seen.has(m.id)))
 }
 
-const modelById = (id) => allModels().find((m) => m.id === id)
+const modelByRef = (provider, id) => {
+  const all = allModels()
+  return (
+    all.find((m) => m.id === id && (m.provider_id || '') === (provider || '')) ||
+    (!provider ? all.find((m) => m.id === id) : undefined)
+  )
+}
+
+const poolHas = (model) => state.pool.some((r) => refMatches(r, model))
+
+/** Fill in the provider on refs written before providers were part of
+ *  identity, once the catalog can say which provider that was. Nothing is
+ *  saved here — the next natural save persists it. */
+function qualifyRefs() {
+  const fill = (r) => {
+    if (r.provider) return
+    const m = state.catalog.find((m) => m.id === r.id)
+    if (m) r.provider = m.provider_id
+  }
+  state.pool.forEach(fill)
+  state.lanes.forEach((lane) => lane.members.forEach(fill))
+}
 
 const slugify = (s) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'lane'
@@ -128,14 +177,19 @@ const ICON = {
   copy: '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6"/><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>',
   close: '<svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>',
   arrow: '<svg viewBox="0 0 16 16"><path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5"/></svg>',
+  gear: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.6v1.9M8 11.5v1.9M2.6 8h1.9M11.5 8h1.9M4.2 4.2l1.3 1.3M10.5 10.5l1.3 1.3M11.8 4.2l-1.3 1.3M5.5 10.5l-1.3 1.3"/></svg>',
 }
 
 // ------------------------------------------------------------------ rendering
 
-function chipEl(model, { inTrack = false, rank = null } = {}) {
+/** More than one provider in play means every model needs to say whose it is. */
+const multiProvider = () => new Set(state.catalog.map((m) => m.provider_id)).size > 1
+
+function chipEl(model, { inTrack = false, rank = null, tuned = false } = {}) {
   const el = document.createElement('div')
   el.className = 'chip'
   el.dataset.model = model.id
+  el.dataset.provider = model.provider_id || ''
   el.dataset.class = model.klass
   if (inTrack) el.classList.add('in-track')
   if (rank === 1) el.classList.add('is-primary')
@@ -162,6 +216,8 @@ function chipEl(model, { inTrack = false, rank = null } = {}) {
     const ranked = model[state.sort]
     bits.push(ranked == null ? `${SORT_LABEL[state.sort]} unrated` : `${SORT_LABEL[state.sort]} ${Math.round(ranked)}`)
   }
+  // Which provider serves this chip — but only once there are two to confuse.
+  if (model.provider_name && multiProvider()) bits.push(model.provider_name)
   if (model.source !== 'catalog' && !model.available && model.reason) bits.push(model.reason)
 
   if (model.description) el.title = model.description
@@ -177,7 +233,32 @@ function chipEl(model, { inTrack = false, rank = null } = {}) {
         .join(' ')}</span>
     </span>
     ${dot ? `<span class="chip-health ${dot}" title="${dot}"></span>` : ''}
+    ${inTrack ? `<button class="chip-gear${tuned ? ' tuned' : ''}" title="${
+      tuned ? 'This member has its own settings' : 'Member settings'
+    }">${ICON.gear}</button>` : ''}
     ${inTrack ? `<button class="chip-remove" title="Remove">${ICON.close}</button>` : ''}
+  `
+  return el
+}
+
+/** A lane member nothing in any catalog explains — deleted upstream, from a
+ *  removed provider, or (historically) an old-gateway slug that was never a
+ *  model. It cannot be dragged, because there is no model to place; it can
+ *  only be removed, and it says why it is dead so the fix is obvious. */
+function deadChipEl(ref, rank) {
+  const el = document.createElement('div')
+  el.className = 'chip in-track is-dead'
+  el.dataset.model = ref.id
+  el.dataset.provider = ref.provider || ''
+  el.title = 'No configured provider offers this id. The engine will skip or fail it.'
+  el.innerHTML = `
+    <span class="chip-bar"></span>
+    ${rank ? `<span class="rank">${rank}</span>` : ''}
+    <span class="chip-body">
+      <span class="chip-name">${ref.id}</span>
+      <span class="chip-meta">not in any provider's catalog</span>
+    </span>
+    <button class="chip-remove" title="Remove">${ICON.close}</button>
   `
   return el
 }
@@ -201,8 +282,15 @@ function renderSidebar() {
 
   // Only what the user kept. Browsing happens in its own panel; this is the
   // working set you drag from.
+  //
+  // Gateway entries are excluded outright. They are the OLD gateway's own
+  // endpoints — readouts, not provider models — and were only ever in this
+  // list because the sidebar predates the pool. Left visible they invite the
+  // one drag that can never work. Their health figures still feed the status
+  // bar, which is where a readout belongs.
   let models = allModels().filter((m) => {
-    if (m.source === 'catalog' && !state.pool.includes(m.id)) return false
+    if (m.source === 'gateway') return false
+    if (!poolHas(m)) return false
     if (q && !m.id.toLowerCase().includes(q) && !(m.name || '').toLowerCase().includes(q)) {
       return false
     }
@@ -231,7 +319,7 @@ function renderSidebar() {
 
   list.innerHTML = ''
   if (!models.length) {
-    const hasPool = state.pool.length || state.models.length
+    const hasPool = state.pool.length
     list.innerHTML = `<div class="empty-state"><strong>${
       hasPool ? 'No matches' : 'Your pool is empty'
     }</strong>${
@@ -267,11 +355,17 @@ function renderTrack(track, lane) {
   }
 
   // members[0] answers first, so it is drawn last: right-hand edge.
-  ;[...lane.members].reverse().forEach((id, domIndex) => {
-    const model = modelById(id)
-    if (!model) return
+  ;[...lane.members].reverse().forEach((ref, domIndex) => {
     const rank = lane.members.length - domIndex
-    track.appendChild(chipEl(model, { inTrack: true, rank }))
+    const model = modelByRef(ref.provider, ref.id)
+    // A member no catalog can explain still renders — as visibly dead, with
+    // its remove button. Skipping it left a lane trying (and failing on) a
+    // model its own canvas refused to show, which is undebuggable from the UI.
+    track.appendChild(
+      model
+        ? chipEl(model, { inTrack: true, rank, tuned: hasParams(ref) })
+        : deadChipEl(ref, rank)
+    )
   })
 
   track.insertAdjacentHTML(
@@ -290,11 +384,16 @@ function laneEl(lane) {
   head.innerHTML = `
     <span class="lane-name" contenteditable="plaintext-only" spellcheck="false">${lane.name}</span>
     <button class="lane-url" title="Copy endpoint URL">
-      ${ICON.copy}<span class="host">127.0.0.1:4000</span><span>/lane/${lane.slug}/v1</span>
+      ${ICON.copy}<span class="host">${ENGINE_HOST}</span><span>/lane/${lane.slug}/v1</span>
     </button>
     ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
     }</span>` : ''}
+    <button class="lane-think${lane.suppress_reasoning ? ' is-on' : ''}" title="${
+      lane.suppress_reasoning
+        ? 'Members are asked to answer directly, without spending tokens on hidden reasoning. Click to allow thinking again.'
+        : 'Members may spend tokens thinking before they answer — slower first words, and a thinker can burn the whole budget. Click to ask them not to.'
+    }">${lane.suppress_reasoning ? 'no thinking' : 'thinking ok'}</button>
     <span class="lane-kind ${lane.computed ? 'computed' : ''}">${
       lane.computed ? lane.kind : 'ordered'
     }</span>
@@ -415,8 +514,7 @@ const drag = {
 
 /** Start a drag: build the ghost and start listening for movement. */
 function beginDrag(event, chip) {
-  const id = chip.dataset.model
-  const model = modelById(id)
+  const model = modelByRef(chip.dataset.provider, chip.dataset.model)
   if (!model) return
 
   // `closest` walks UP the tree looking for a match. If the chip is inside a
@@ -559,11 +657,37 @@ function endDrag() {
   drag.active = false
   drag.ghost = drag.line = drag.target = null
 
+  // A gateway chip is a READOUT — one of the old gateway's own lane slugs,
+  // carried in the sidebar for its live health figures. It is not a provider
+  // model, and sent upstream as one it fails as a bad model id. If the catalog
+  // has a real model under the same id, the drop means that one; otherwise the
+  // drop is refused with a reason rather than accepted and broken.
+  let placed = model
+  if (model.source === 'gateway') {
+    const twin = state.catalog.find((m) => m.id === model.id)
+    if (twin) placed = twin
+    else if (target) {
+      toast(`${model.id} is a gateway readout, not a provider model — browse and add models to build lanes`)
+      render()
+      return
+    }
+  }
+
+  // The ref this drag is about: this model, from this provider. A member
+  // moved out of a lane keeps its dials — the settings belong to the member,
+  // and reordering a lane must not amount to resetting it.
+  const prior = from
+    ? state.lanes
+        .find((l) => l.slug === from)
+        ?.members.find((r) => refMatches(r, placed))
+    : null
+  const dragged = { provider: placed.provider_id || '', id: placed.id, params: prior?.params || {} }
+
   if (!target) {
     // Dropped nowhere. Out of a lane means remove; out of the sidebar means nothing.
     if (from) {
       const lane = state.lanes.find((l) => l.slug === from)
-      lane.members = lane.members.filter((m) => m !== model.id)
+      lane.members = lane.members.filter((r) => !refMatches(r, model))
       toast(`${model.id} removed from ${lane.name}`)
       render()
       saveLanes()
@@ -576,10 +700,10 @@ function endDrag() {
   const lane = state.lanes.find((l) => l.slug === target.closest('.lane').dataset.lane)
   const source = from ? state.lanes.find((l) => l.slug === from) : null
 
-  if (source) source.members = source.members.filter((m) => m !== model.id)
-  const without = lane.members.filter((m) => m !== model.id)
+  if (source) source.members = source.members.filter((r) => !refMatches(r, model))
+  const without = lane.members.filter((r) => !refMatches(r, model))
   const index = domSlotToIndex(slot, without.length)
-  without.splice(index, 0, model.id)
+  without.splice(index, 0, dragged)
   lane.members = without
 
   // A lane takes on the question its first models were found by. Only once —
@@ -587,7 +711,7 @@ function endDrag() {
   // lane says it is for.
   if (!lane.criteria?.length && state.browse.sorts?.length) {
     lane.criteria = state.browse.sorts
-      .filter((s) => s.field !== 'name')
+      .filter((s) => !NON_CRITERIA.has(s.field))
       .map(({ field, desc }) => ({ field, desc }))
   }
 
@@ -595,6 +719,107 @@ function endDrag() {
   render()
   saveLanes()
 }
+
+// -------------------------------------------------------------- member dials
+//
+// The gear on a chip in a lane opens a small panel of request settings the
+// lane fixes for that one member: temperature, penalties, a token ceiling.
+// The engine injects them per attempt and unwinds them before the next
+// member, so tuning one chip can never bleed into its neighbours.
+//
+// Writes go straight onto the member ref and save on every change — there is
+// no OK button, because there is nothing to confirm: blank a field and the
+// dial is gone, type a value and it is set. The popover is positioned beside
+// the gear it came from, and closes on Escape, on the close button, or on
+// any press outside it.
+
+/** Which member the open popover is editing, by identity — never by element,
+ *  because a re-render replaces every element under the popover. */
+const popTarget = { lane: null, provider: '', id: '' }
+
+/** The member ref the popover is aimed at, freshly looked up in state. */
+function popMember() {
+  const lane = state.lanes.find((l) => l.slug === popTarget.lane)
+  if (!lane) return null
+  return (
+    lane.members.find(
+      (r) => r.id === popTarget.id && (r.provider || '') === popTarget.provider
+    ) || lane.members.find((r) => r.id === popTarget.id)
+  )
+}
+
+function openMemberPop(gear) {
+  const chip = gear.closest('.chip')
+  const laneEl = chip.closest('.lane')
+  popTarget.lane = laneEl.dataset.lane
+  popTarget.provider = chip.dataset.provider || ''
+  popTarget.id = chip.dataset.model
+
+  const member = popMember()
+  if (!member) return
+
+  $('popTitle').textContent = member.id
+  document.querySelectorAll('#memberPop [data-dial]').forEach((input) => {
+    const value = (member.params || {})[input.dataset.dial]
+    input.value = value == null ? '' : value
+  })
+
+  const pop = $('memberPop')
+  pop.hidden = false
+
+  // Beside the gear, clamped to the window. Measured after unhiding, because
+  // a hidden element has no size to measure.
+  const at = gear.getBoundingClientRect()
+  const box = pop.getBoundingClientRect()
+  const left = Math.max(8, Math.min(at.left - box.width / 2, window.innerWidth - box.width - 8))
+  const below = at.bottom + 10
+  const top = below + box.height > window.innerHeight - 8 ? at.top - box.height - 10 : below
+  pop.style.left = `${left}px`
+  pop.style.top = `${Math.max(8, top)}px`
+}
+
+/** Hide the popover. Re-rendering is the caller's choice: closing by starting
+ *  a drag must NOT rebuild the DOM out from under that drag. */
+function closeMemberPop({ rerender = true } = {}) {
+  const pop = $('memberPop')
+  if (pop.hidden) return
+  pop.hidden = true
+  popTarget.lane = null
+  // The gear's "tuned" dot may have changed while the popover was open.
+  if (rerender) renderLanes()
+}
+
+$('memberPop').addEventListener('change', (event) => {
+  const input = event.target.closest('[data-dial]')
+  const member = input && popMember()
+  if (!member) return
+  member.params = member.params || {}
+  if (input.value === '') {
+    delete member.params[input.dataset.dial]
+  } else {
+    const value = Number(input.value)
+    // An unparseable entry is treated as blank rather than saved as NaN —
+    // JSON has no NaN, and a half-written number should not become a dial.
+    if (Number.isFinite(value)) {
+      member.params[input.dataset.dial] =
+        input.dataset.dial === 'max_tokens' ? Math.max(1, Math.round(value)) : value
+    } else {
+      input.value = ''
+      delete member.params[input.dataset.dial]
+    }
+  }
+  saveLanes()
+})
+
+$('popClose').addEventListener('click', () => closeMemberPop())
+$('popClear').addEventListener('click', () => {
+  const member = popMember()
+  if (!member) return
+  member.params = {}
+  document.querySelectorAll('#memberPop [data-dial]').forEach((i) => (i.value = ''))
+  saveLanes()
+  toast(`${member.id}: settings cleared`)
+})
 
 // ------------------------------------------------------------------ interaction
 
@@ -609,11 +834,24 @@ function toast(message) {
 document.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return
 
+  // A press anywhere outside the open popover closes it. Without a rerender:
+  // if this press is also the start of a drag, rebuilding the DOM here would
+  // orphan the chip the drag is about to grab.
+  if (!$('memberPop').hidden && !event.target.closest('#memberPop')) {
+    closeMemberPop({ rerender: false })
+  }
+
+  // The gear opens settings; it must not begin a drag. The click handler
+  // below does the opening — this guard only keeps the chip from grabbing.
+  if (event.target.closest('.chip-gear')) return
+
   const remove = event.target.closest('.chip-remove')
   if (remove) {
     const chip = remove.closest('.chip')
     const lane = state.lanes.find((l) => l.slug === chip.closest('.lane').dataset.lane)
-    lane.members = lane.members.filter((m) => m !== chip.dataset.model)
+    lane.members = lane.members.filter(
+      (r) => !(r.id === chip.dataset.model && (r.provider || '') === chip.dataset.provider)
+    )
     render()
     saveLanes()
     return
@@ -627,6 +865,12 @@ document.addEventListener('pointerdown', (event) => {
 })
 
 document.addEventListener('click', async (event) => {
+  const gear = event.target.closest('.chip-gear')
+  if (gear) {
+    openMemberPop(gear)
+    return
+  }
+
   const remove = event.target.closest('.lane-remove')
   if (remove) {
     const lane = state.lanes.find((l) => l.slug === remove.closest('.lane').dataset.lane)
@@ -654,10 +898,26 @@ document.addEventListener('click', async (event) => {
     return
   }
 
+  // Thinking is a lane property, like member order: part of what the lane
+  // was built to be, toggled where the lane lives.
+  const think = event.target.closest('.lane-think')
+  if (think) {
+    const lane = state.lanes.find((l) => l.slug === think.closest('.lane').dataset.lane)
+    lane.suppress_reasoning = !lane.suppress_reasoning
+    render()
+    saveLanes()
+    toast(
+      lane.suppress_reasoning
+        ? `${lane.name}: members will be asked to answer without thinking`
+        : `${lane.name}: members may think before answering`
+    )
+    return
+  }
+
   const url = event.target.closest('.lane-url')
   if (url) {
     const slug = url.closest('.lane').dataset.lane
-    await api.copy(`http://127.0.0.1:4000/lane/${slug}/v1/chat/completions`)
+    await api.copy(`http://${ENGINE_HOST}/lane/${slug}/v1/chat/completions`)
     toast('Endpoint URL copied')
     return
   }
@@ -798,6 +1058,14 @@ function renderProviders() {
     const el = document.createElement('div')
     el.className = `provider${state.editing === provider.id ? ' is-editing' : ''}`
     el.dataset.provider = provider.id
+    // THE ROW IS THE DOOR TO THE MODELS. Seeing what a provider offers is why
+    // anyone opens this panel; changing its key is the rare errand. So the
+    // frequent intent gets the whole row, and editing sits behind the pencil.
+    // Entering a key and looking at a catalog are different workflows, and
+    // for a while the only path to the second ran through the first.
+    el.title = failed
+      ? 'This provider failed to load — click to fix its settings'
+      : "View this provider's models"
     el.innerHTML = `
       <span class="provider-body">
         <span class="provider-name">${provider.name}</span>
@@ -808,6 +1076,10 @@ function renderProviders() {
       <span class="provider-count${failed ? ' bad' : ''}">${
         failed ? count : count == null ? '—' : `${count} models`
       }</span>
+      <button class="provider-edit" data-edit="${provider.id}"
+        title="Edit ${attr(provider.name)} — name, URL, API key">
+        <svg viewBox="0 0 16 16"><path d="M3.2 12.8l.9-3.2 7.2-7.2a1.3 1.3 0 0 1 1.9 0l.4.4a1.3 1.3 0 0 1 0 1.9l-7.2 7.2-3.2.9z"/></svg>
+      </button>
     `
     list.appendChild(el)
   })
@@ -867,6 +1139,8 @@ async function loadCatalog() {
     state.catalogErrors.forEach((e) => (counts[e.provider_id] = e.error))
     state.counts = counts
     mergeStats()
+    // Old refs can finally learn which provider they meant.
+    qualifyRefs()
 
     // Refresh if we have never fetched, or the figures are over an hour old —
     // they describe the last thirty minutes, so anything older is fiction.
@@ -885,12 +1159,28 @@ $('pCancel').addEventListener('click', resetForm)
 
 $('scrim').addEventListener('click', (event) => {
   if (event.target === $('scrim')) closePanel()
+  // The pencil first — it sits inside the row, and the row means "view".
+  const edit = event.target.closest('.provider-edit')
+  if (edit) {
+    editProvider(edit.dataset.edit)
+    return
+  }
   const row = event.target.closest('.provider')
-  if (row) editProvider(row.dataset.provider)
+  if (row) {
+    // A provider that failed to load has no models to show; the only useful
+    // next step is fixing its settings, so the row opens those instead.
+    if (typeof state.counts[row.dataset.provider] === 'string') {
+      editProvider(row.dataset.provider)
+      return
+    }
+    closePanel()
+    openBrowse(row.dataset.provider)
+  }
 })
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('scrim').hidden) closePanel()
+  if (event.key === 'Escape') closeMemberPop()
 })
 
 /**
@@ -992,7 +1282,11 @@ $('providerForm').addEventListener('submit', async (event) => {
   event.preventDefault()
   const key = $('pKey').value.trim()
   try {
-    await api.providerSave({
+    // The command returns the saved provider — id included, which matters
+    // because a new provider's id is minted on the Rust side. (This used to be
+    // rediscovered by name afterwards, against a variable that didn't exist,
+    // so the browse below always opened unfiltered.)
+    const saved = await api.providerSave({
       id: state.editing || null,
       name: $('pName').value,
       // The dropdown carries a preset id; storage carries the code path.
@@ -1005,12 +1299,11 @@ $('providerForm').addEventListener('submit', async (event) => {
     await loadProviders()
     resetForm()
     note('saved', 'ok')
-    // Straight into browsing: a provider with no models chosen from it does
-    // nothing, so the next step should not have to be found.
+    // Straight into browsing what THIS provider brought: the person who just
+    // added Groq wants Groq's models, not Groq shuffled into 337 other rows.
     await loadCatalog()
     closePanel()
-    const saved = state.providers.find((x) => x.name === name)
-    openBrowse(saved ? saved.id : '')
+    openBrowse(saved.id)
   } catch (err) {
     note(String(err), 'bad')
   }
@@ -1103,30 +1396,51 @@ function attr(text) {
     .replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function rowEl(model) {
-  const pooled = state.pool.includes(model.id)
+/** One rendered cell per column key, so the header and every row agree about
+ *  which columns exist without agreeing about anything else. */
+function metricCell(model, key) {
+  const score = (v) => (v == null ? '—' : Math.round(v))
+  switch (key) {
+    case 'intelligence': return metric(score(model.intelligence), 'intel', model.intelligence == null)
+    case 'coding':       return metric(score(model.coding), 'code', model.coding == null)
+    case 'agentic':      return metric(score(model.agentic), 'agent', model.agentic == null)
+    case 'context':      return metric(fmtContext(model.context), 'ctx')
+    case 'price_in': {
+      const v = model.price_in != null && model.price_in >= 0
+        ? (model.price_in * 1e6 === 0 ? 'free' : `$${(model.price_in * 1e6).toFixed(2)}`)
+        : '—'
+      return metric(v, 'in/M')
+    }
+    case 'price':        return metric((fmtPrice(model) || '—').replace('/M', ''), 'out/M')
+    case 'throughput':
+      return metric(model.throughput == null ? '—' : Math.round(model.throughput), 'tok/s', model.throughput == null)
+    case 'latency': {
+      // Latency reads better in seconds past a second; nobody compares 3018ms.
+      const ttft = model.latency == null ? '—'
+        : model.latency >= 1000 ? `${(model.latency / 1000).toFixed(1)}s`
+        : `${Math.round(model.latency)}ms`
+      return metric(ttft, 'ttft', model.latency == null)
+    }
+    case 'providers':    return metric(model.providers || '—', 'hosts', !model.providers)
+    case 'created':      return metric(fmtCreated(model.created), 'age', true)
+    default:             return metric('—', key, true)
+  }
+}
+
+function rowEl(model, cols) {
+  const pooled = poolHas(model)
   const el = document.createElement('div')
   el.className = `row${pooled ? ' is-pooled' : ''}`
   el.dataset.model = model.id
+  el.dataset.provider = model.provider_id || ''
 
   // The vendor's own description, on hover. It is the fastest way to tell two
   // similarly-scored models apart, and it costs nothing — we already cache it.
   if (model.description) el.title = model.description
 
-  const inPrice = model.price_in != null && model.price_in >= 0
-    ? (model.price_in * 1e6 === 0 ? 'free' : `$${(model.price_in * 1e6).toFixed(2)}`)
-    : '—'
-  const outPrice = fmtPrice(model) || '—'
-
-  const score = (v) => (v == null ? '—' : Math.round(v))
-  // Latency reads better in seconds past a second; nobody compares 3018ms.
-  const ttft = model.latency == null ? '—'
-    : model.latency >= 1000 ? `${(model.latency / 1000).toFixed(1)}s`
-    : `${Math.round(model.latency)}ms`
-
   // With two or more criteria the composite is the thing actually being sorted
   // on, so it has to be visible — otherwise the order looks arbitrary.
-  const criteria = state.browse.sorts.filter((s) => s.field !== 'name')
+  const criteria = state.browse.sorts.filter((s) => !NON_CRITERIA.has(s.field))
   const composite = criteria.length > 1 ? (state.browse.scores || new Map()).get(model.id) : undefined
   const match = composite === undefined ? ''
     : composite == null
@@ -1138,27 +1452,23 @@ function rowEl(model) {
     <span class="row-body">
       <span class="row-title">
         <span class="row-name">${model.name || model.id}</span>
-        <span class="row-author">${model.author || model.provider_name || ''}</span>
+        <span class="row-author">${model.author || (multiProvider() ? '' : model.provider_name || '')}</span>
+        ${multiProvider() ? `<span class="row-provider">${attr(model.provider_name || '')}</span>` : ''}
       </span>
       <span class="row-id">${model.id}</span>
     </span>
 
     <span class="row-metrics">
-      ${metric(score(model.intelligence), 'intel', model.intelligence == null)}
-      ${metric(score(model.coding), 'code', model.coding == null)}
-      ${metric(score(model.agentic), 'agent', model.agentic == null)}
-      ${metric(fmtContext(model.context), 'ctx')}
-      ${metric(inPrice, 'in/M')}
-      ${metric(outPrice.replace('/M', ''), 'out/M')}
-      ${metric(model.throughput == null ? '—' : Math.round(model.throughput), 'tok/s', model.throughput == null)}
-      ${metric(ttft, 'ttft', model.latency == null)}
-      ${metric(model.providers || '—', 'hosts', !model.providers)}
-      ${metric(fmtCreated(model.created), 'age', true)}
+      ${cols.map(([key]) => metricCell(model, key)).join('')}
     </span>
 
     <span class="row-caps">
       ${CAP_ICONS.map(([key, label]) =>
-        `<span class="cap ${model[key] ? 'on' : ''}" title="${key}">${label}</span>`
+        // A generic catalog says nothing about capability; a dim icon with an
+        // honest tooltip beats an "off" state claiming the model can't.
+        model.caps_known === false
+          ? `<span class="cap unknown" title="${key}: not published by this provider">${label}</span>`
+          : `<span class="cap ${model[key] ? 'on' : ''}" title="${key}">${label}</span>`
       ).join('')}
     </span>
 
@@ -1190,21 +1500,30 @@ function browseMatches() {
     for (const [key, on] of Object.entries(b.filters)) {
       if (!on) continue
       if (key === 'rated' && m.intelligence == null) return false
-      else if (key === 'pooled' && !state.pool.includes(m.id)) return false
+      else if (key === 'pooled' && !poolHas(m)) return false
       else if (key !== 'rated' && key !== 'pooled' && !m[key]) return false
     }
     return true
   })
 
-  const nameSort = b.sorts.find((s) => s.field === 'name')
-  const criteria = b.sorts.filter((s) => s.field !== 'name')
+  const textSorts = b.sorts.filter((s) => NON_CRITERIA.has(s.field))
+  const criteria = b.sorts.filter((s) => !NON_CRITERIA.has(s.field))
 
-  // Name is not a criterion — there is no such thing as being 80th-percentile
-  // alphabetical. Locked alone it sorts; locked alongside others it is ignored.
+  // Name and provider are not criteria — there is no such thing as being
+  // 80th-percentile alphabetical. Locked alone they sort, in lock order (so
+  // provider-then-name groups a mixed catalog by provider); locked alongside
+  // real criteria they are ignored.
   if (!criteria.length) {
     state.browse.scores = new Map()
-    models.sort((x, y) =>
-      nameSort && !nameSort.desc ? x.id.localeCompare(y.id) : y.id.localeCompare(x.id))
+    models.sort((x, y) => {
+      for (const s of textSorts) {
+        const c = s.field === 'provider'
+          ? (x.provider_name || '').localeCompare(y.provider_name || '')
+          : x.id.localeCompare(y.id)
+        if (c) return s.desc ? -c : c
+      }
+      return x.id.localeCompare(y.id)
+    })
     return models
   }
 
@@ -1219,45 +1538,6 @@ function browseMatches() {
     return c - a
   })
   return models
-}
-
-/** Price for sorting: free is zero, negative means "variable" and is unknown. */
-function priceValue(model, field) {
-  if (model.free) return 0
-  const raw = model[field]
-  return raw == null || raw < 0 ? null : raw
-}
-
-/**
- * One comparator for every column, with direction as a parameter.
- *
- * The rule worth stating: A MISSING VALUE ALWAYS SORTS LAST, in both
- * directions. It is tempting to treat null as negative infinity and let it
- * flip with everything else, but "unrated" is not the same as "worst" — 230 of
- * 337 models carry no benchmark score, and reversing the sort should not bury
- * every rated model beneath them.
- */
-function comparator(field, desc) {
-  return (a, b) => {
-    if (field === 'name') {
-      return desc ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id)
-    }
-
-    let x, y
-    if (field === 'price' || field === 'price_in') {
-      const key = field === 'price' ? 'price_out' : 'price_in'
-      x = priceValue(a, key)
-      y = priceValue(b, key)
-    } else {
-      x = a[field]
-      y = b[field]
-    }
-
-    if (x == null && y == null) return 0   // a tie: let the next column decide
-    if (x == null) return 1
-    if (y == null) return -1
-    return desc ? y - x : x - y
-  }
 }
 
 /**
@@ -1309,9 +1589,13 @@ function comparator(field, desc) {
  *     premium tier.
  */
 
+/** Text columns: they order the list but can never be a criterion, because
+ *  there is no percentile of being alphabetical or of being served by Groq. */
+const NON_CRITERIA = new Set(['name', 'provider'])
+
 /** Which end of a column counts as good, before the user reverses it. */
 const NATURAL_DESC = (field) =>
-  !['price', 'price_in', 'name', 'latency'].includes(field)
+  !['price', 'price_in', 'name', 'provider', 'latency'].includes(field)
 
 /** The comparable number for a field, or null when it cannot be judged. */
 function criterionValue(model, field) {
@@ -1323,6 +1607,7 @@ function criterionValue(model, field) {
   // Zero means "not published" for these, not "none".
   if (field === 'providers') return model.providers || null
   if (field === 'context') return model.context || null
+  if (field === 'created') return model.created || null
   return model[field]
 }
 
@@ -1407,11 +1692,31 @@ const COLUMNS = [
   ['created', 'age'],
 ]
 
+/**
+ * Which metric columns this view actually shows.
+ *
+ * THE COLUMNS FOLLOW THE DATA. The full table was designed against OpenRouter,
+ * which publishes everything; filter to a provider that publishes ids and
+ * nothing else and ten columns of "—" remain, implying judgements nobody made.
+ * Worse, sorting the mixed view by a column only OpenRouter fills sinks every
+ * direct-provider model to the bottom — reading as "worst" when the truth is
+ * "unmeasured". So a column earns its place by having at least one value in
+ * the current view. A LOCKED column always stays: it is live state the user
+ * put there, and state must never be silently discarded by a filter change —
+ * it shows its emptiness honestly instead.
+ */
+function visibleColumns(models) {
+  const locked = new Set(state.browse.sorts.map((s) => s.field))
+  return COLUMNS.filter(
+    ([key]) => locked.has(key) || models.some((m) => criterionValue(m, key) != null)
+  )
+}
+
 /** A clickable header row, aligned to the metric columns beneath it.
  *
  * Reuses the same classes as a model row, so the widths line up by
  * construction rather than by two sets of numbers that drift apart. */
-function renderBrowseHeader() {
+function renderBrowseHeader(cols) {
   const sorts = state.browse.sorts
   const rank = (field) => sorts.findIndex((s) => s.field === field)
 
@@ -1427,21 +1732,27 @@ function renderBrowseHeader() {
     return `${text} ${arrow}${lock}`
   }
 
-  const criteriaCount = sorts.filter((s) => s.field !== 'name').length
+  const criteriaCount = sorts.filter((s) => !NON_CRITERIA.has(s.field)).length
   $('bHeader').innerHTML = `
     ${criteriaCount > 1 ? '<span class="match head-match"><span class="match-label">match</span></span>' : ''}
     <span class="row-body">
-      <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
-        <span class="metric-label">${label('name', 'model')}</span>
-      </button>
+      <span class="head-text-sorts">
+        <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
+          <span class="metric-label">${label('name', 'model')}</span>
+        </button>
+        ${multiProvider() ? `
+        <button class="col-sort col-name${rank('provider') >= 0 ? ' is-sorted' : ''}" data-sort="provider">
+          <span class="metric-label">${label('provider', 'provider')}</span>
+        </button>` : ''}
+      </span>
       <span class="head-hint">${
-        state.browse.sorts.filter((s) => s.field !== 'name').length > 1
+        criteriaCount > 1
           ? 'ranked by how well each model does on every locked column at once'
           : 'click to lock a column in · click again to reverse · padlock to remove'
       }</span>
     </span>
     <span class="row-metrics">
-      ${COLUMNS.map(([key, text]) => `
+      ${cols.map(([key, text]) => `
         <button class="metric col-sort${rank(key) >= 0 ? ' is-sorted' : ''}" data-sort="${key}">
           <span class="metric-label">${label(key, text)}</span>
         </button>`).join('')}
@@ -1454,8 +1765,8 @@ function renderBrowseHeader() {
 function renderBrowse() {
   const list = $('bList')
   const models = browseMatches()
-  renderBrowseHeader()
-
+  const cols = visibleColumns(models)
+  renderBrowseHeader(cols)
 
   $('bCount').textContent = `${models.length} of ${state.catalog.length} models · ${state.pool.length} in your pool`
 
@@ -1471,7 +1782,7 @@ function renderBrowse() {
   // Hundreds of rows, each with a dozen elements. Building them all up front
   // costs more than anyone will scroll through, so cap and say so.
   const CAP = 150
-  models.slice(0, CAP).forEach((m) => list.appendChild(rowEl(m)))
+  models.slice(0, CAP).forEach((m) => list.appendChild(rowEl(m, cols)))
   if (models.length > CAP) {
     list.insertAdjacentHTML('beforeend',
       `<div class="empty-state">${models.length - CAP} more — narrow the search to see them.</div>`)
@@ -1502,7 +1813,7 @@ function closeBrowse() { $('browseScrim').hidden = true }
 
 async function loadPool() {
   try {
-    state.pool = (await api.poolRead()) || []
+    state.pool = ((await api.poolRead()) || []).map(asRef)
   } catch (err) {
     state.pool = []
   }
@@ -1516,7 +1827,10 @@ async function savePool() {
   }
 }
 
-$('openBrowse').addEventListener('click', openBrowse)
+// NOT `addEventListener('click', openBrowse)`: the handler would receive the
+// click event as `providerId`, quietly setting the provider filter to a
+// PointerEvent that matches no provider — a full catalog showing zero rows.
+$('openBrowse').addEventListener('click', () => openBrowse())
 $('closeBrowse').addEventListener('click', closeBrowse)
 
 $('browseScrim').addEventListener('click', (event) => {
@@ -1524,14 +1838,17 @@ $('browseScrim').addEventListener('click', (event) => {
 
   const add = event.target.closest('.row-add')
   if (add) {
-    const id = add.closest('.row').dataset.model
-    const at = state.pool.indexOf(id)
+    const row = add.closest('.row')
+    const ref = { provider: row.dataset.provider || '', id: row.dataset.model }
+    const at = state.pool.findIndex(
+      (r) => r.id === ref.id && (!r.provider || r.provider === ref.provider)
+    )
     if (at >= 0) state.pool.splice(at, 1)
-    else state.pool.push(id)
+    else state.pool.push(ref)
     savePool()
     renderBrowse()
     renderSidebar()
-    toast(at >= 0 ? `${id} removed from your pool` : `${id} added to your pool`)
+    toast(at >= 0 ? `${ref.id} removed from your pool` : `${ref.id} added to your pool`)
     return
   }
 
@@ -1578,8 +1895,16 @@ document.addEventListener('keydown', (event) => {
 async function saveLanes() {
   try {
     await api.lanesWrite(
-      state.lanes.map(({ slug, name, members, criteria }) => ({
-        slug, name, members, criteria: criteria || [],
+      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning }) => ({
+        slug,
+        name,
+        members: members.map(({ provider, id, params }) => ({
+          provider,
+          id,
+          params: params || {},
+        })),
+        criteria: criteria || [],
+        suppress_reasoning: !!suppress_reasoning,
       }))
     )
   } catch (err) {
@@ -1593,6 +1918,9 @@ async function loadLanes() {
   } catch (err) {
     state.lanes = []
   }
+  // The backend already normalises old files, but normalise here too so this
+  // code never has to wonder which shape it is holding.
+  state.lanes.forEach((lane) => (lane.members = (lane.members || []).map(asRef)))
   renderLanes()
 }
 

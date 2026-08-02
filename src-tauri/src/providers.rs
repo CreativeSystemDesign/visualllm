@@ -101,6 +101,19 @@ pub struct CatalogModel {
     pub free: bool,
     pub vision: bool,
     pub tools: bool,
+    /// Whether `vision`/`tools` were actually published, or merely defaulted.
+    ///
+    /// A generic provider's `/models` usually says nothing about capability, so
+    /// its entries carry `vision: false, tools: false` — which reads exactly
+    /// like "cannot" when the truth is "unstated". The engine must only treat a
+    /// false as disqualifying when this is true; otherwise a tools request
+    /// would skip every model from every direct provider, forever, silently.
+    ///
+    /// `#[serde(default)]` so a cached catalog written before this field
+    /// existed loads as "unknown" — the permissive direction, never the one
+    /// that starts skipping models it used to serve.
+    #[serde(default)]
+    pub caps_known: bool,
     pub reasoning_default: bool,
     pub intelligence: Option<f64>,
     pub coding: Option<f64>,
@@ -222,6 +235,7 @@ fn openrouter_model(raw: &Value, provider: &Provider) -> CatalogModel {
         tools: params
             .map(|p| p.iter().any(|v| v.as_str() == Some("tools")))
             .unwrap_or(false),
+        caps_known: true,
         reasoning_default: raw["reasoning"]["default_enabled"]
             .as_bool()
             .unwrap_or(false),
@@ -244,6 +258,17 @@ fn openrouter_model(raw: &Value, provider: &Provider) -> CatalogModel {
     }
 }
 
+/// A generic `/models` entry: ids for certain, everything else opportunistic.
+///
+/// Providers disagree wildly about what else they publish, and throwing it all
+/// away flattens Mistral (which states capabilities outright) down to Ollama
+/// (which states nothing). So: recognise the common spellings where they
+/// appear, and leave the rest at their defaults — which the UI and the engine
+/// both already treat as "unknown", not "absent".
+///
+/// Pricing is deliberately NOT read here. The few generic providers that
+/// publish it disagree about units (per token, per million, per thousand), and
+/// a price wrong by six orders of magnitude is worse than no price at all.
 fn generic_model(raw: &Value, provider: &Provider) -> CatalogModel {
     let id = raw["id"].as_str().unwrap_or_default().to_string();
     // An author only exists when the id carries one. OpenRouter ids are
@@ -256,12 +281,41 @@ fn generic_model(raw: &Value, provider: &Provider) -> CatalogModel {
     } else {
         String::new()
     };
+
+    // Mistral publishes `capabilities: { vision, function_calling, ... }`.
+    // Only when such an object exists do we claim to know what a model can do.
+    let caps = &raw["capabilities"];
+    let caps_known = caps.is_object();
+
     CatalogModel {
-        name: id.clone(),
+        name: raw["name"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&id)
+            .to_string(),
         id,
         provider_id: provider.id.clone(),
         provider_name: provider.name.clone(),
-        context: raw["context_length"].as_u64().unwrap_or(0),
+        // Three spellings for the same fact: OpenAI-compatible has no standard
+        // field, so Together, Mistral and vLLM each chose their own.
+        context: raw["context_length"]
+            .as_u64()
+            .or_else(|| raw["max_context_length"].as_u64())
+            .or_else(|| raw["max_model_len"].as_u64())
+            .unwrap_or(0),
+        created: raw["created"].as_u64().unwrap_or(0),
+        vision: caps["vision"].as_bool().unwrap_or(false),
+        tools: caps["function_calling"]
+            .as_bool()
+            .or_else(|| caps["tool_calling"].as_bool())
+            .unwrap_or(false),
+        caps_known,
+        description: raw["description"]
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .take(400)
+            .collect(),
         author: id_author,
         ..Default::default()
     }

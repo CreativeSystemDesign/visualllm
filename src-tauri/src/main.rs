@@ -400,12 +400,12 @@ async fn stats_refresh(app: tauri::AppHandle) -> Result<usize, String> {
 }
 
 #[tauri::command]
-fn pool_read(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+fn pool_read(app: tauri::AppHandle) -> Result<Vec<lanes::Member>, String> {
     Ok(lanes::pool_load(&store_dir(&app)?))
 }
 
 #[tauri::command]
-fn pool_write(app: tauri::AppHandle, ids: Vec<String>) -> Result<(), String> {
+fn pool_write(app: tauri::AppHandle, ids: Vec<lanes::Member>) -> Result<(), String> {
     lanes::pool_save(&store_dir(&app)?, &ids)
 }
 

@@ -296,15 +296,23 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* One clipped line, never a wrap. As a flex row this wrapped WITHIN a bit —
+   "tok/s" stacking under "138" and spilling past the card — the moment the
+   provider tag made the line longer than a track chip's 240px. Inline text
+   with an ellipsis degrades gracefully at any width; a wrapped metric reads
+   as a broken card. */
 .chip-meta {
-  display: flex; align-items: center; gap: 7px;
+  display: block;
   margin-top: 2px;
   font-size: 10.5px;
   font-weight: 500;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.chip-meta .sep { color: var(--text-faint); }
+.chip-meta .sep { color: var(--text-faint); margin: 0 3px; }
 
 .chip-health {
   width: 7px; height: 7px; border-radius: 50%;
@@ -455,6 +463,33 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   color: var(--text-faint);
 }
 .lane-kind.computed { color: var(--accent); }
+
+/* Thinking is a lane property. Extruded = members may reason; pressed-in =
+   the lane asks them not to. Same grammar as every other control here. */
+.lane-think {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 5px 13px;
+  border-radius: 100px;
+  background: var(--raised);
+  box-shadow: var(--e1);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease);
+}
+.lane-think:hover { color: var(--text-dim); box-shadow: var(--e2); }
+.lane-think.is-on {
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  color: var(--accent);
+}
+/* The toggle takes over the push-right job so the pair sits together. */
+.lane-think + .lane-kind { margin-left: 0; }
 
 /* --------------------------------------------------------------------- track */
 
@@ -1151,3 +1186,132 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   transition: color 0.14s var(--ease);
 }
 .lane-criteria:hover .crit { color: var(--accent); }
+
+/* --- more than one provider ------------------------------------------------ */
+
+/* Which of YOUR providers serves a row. The author says who made the model;
+   this says whose key the request would ride on — different facts, and the
+   second only exists once there are two providers to tell apart. */
+.row-provider {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: 100px;
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+/* Name and provider are both text sorts; they sit side by side above the
+   name column. */
+.head-text-sorts { display: flex; align-items: center; gap: 16px; }
+
+/* A capability nobody published: visibly not a judgement either way. */
+.cap.unknown { opacity: 0.38; }
+
+/* The provider row is the door to its catalog; the pencil is the only way
+   into settings and key entry. Two workflows, two controls. */
+.provider-edit {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.provider-edit:hover { color: var(--text); box-shadow: var(--e1); }
+.provider-edit:active { box-shadow: var(--in1); }
+.provider-edit svg { width: 12px; height: 12px; stroke-width: 1.5; }
+
+/* A lane member no catalog can explain. Present — the engine will still walk
+   over it — but unmistakably dead, and removable. */
+.chip.is-dead { opacity: 0.55; }
+.chip.is-dead .chip-name { text-decoration: line-through; }
+.chip.is-dead .chip-bar { background: var(--text-faint); }
+
+/* --- member dials ----------------------------------------------------------- */
+
+/* Two hover controls on a track chip now: the gear (settings) inboard of the
+   cross (remove). The extra right padding is their parking space. */
+.chip.in-track { padding-right: 58px; }
+
+.chip-gear {
+  position: absolute; right: 30px; top: 50%;
+  transform: translateY(-50%);
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.14s var(--ease), color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.chip-gear svg { width: 11px; height: 11px; stroke-width: 1.5; }
+.chip:hover .chip-gear { opacity: 1; }
+.chip-gear:hover { color: var(--accent); box-shadow: var(--e1); }
+
+/* A tuned member shows its gear even at rest — settings that only reveal
+   themselves on hover are settings someone will forget exist. */
+.chip-gear.tuned { opacity: 0.9; color: var(--accent); }
+
+/* The panel itself: one small raised card, fixed beside the gear that opened
+   it. Above everything else on the canvas, below nothing it needs to defer to. */
+.member-pop {
+  position: fixed;
+  z-index: 600;
+  width: 252px;
+  padding: 14px 16px 12px;
+  border-radius: var(--r);
+  background: var(--bg);
+  box-shadow: -8px -8px 20px rgba(255, 255, 255, 0.7), 12px 14px 30px rgba(146, 154, 172, 0.45);
+  animation: rise 0.16s var(--ease);
+}
+.member-pop[hidden] { display: none; }
+
+.pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pop-title {
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pop-sub { margin: 6px 0 10px; font-size: 10.5px; line-height: 1.45; color: var(--text-dim); }
+
+.pop-field {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.pop-field > span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.pop-field input {
+  width: 88px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  font-size: 11.5px;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+.pop-field input::placeholder { color: var(--text-faint); }
+
+.pop-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.pop-actions .btn-ghost { height: 28px; padding: 0 12px; font-size: 10.5px; }
