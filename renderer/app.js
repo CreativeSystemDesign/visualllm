@@ -1005,8 +1005,9 @@ function browseMatches() {
   })
 
   models.sort((x, y) => {
-    for (const { field, desc } of b.sorts) {
-      const verdict = comparator(field, desc)(x, y)
+    b.sorts.forEach((s, i) => (s.banded = i < b.sorts.length - 1))
+    for (const { field, desc, banded } of b.sorts) {
+      const verdict = comparator(field, desc, banded)(x, y)
       if (verdict !== 0) return verdict
     }
     return x.id.localeCompare(y.id)   // stable last resort
@@ -1030,7 +1031,7 @@ function priceValue(model, field) {
  * 337 models carry no benchmark score, and reversing the sort should not bury
  * every rated model beneath them.
  */
-function comparator(field, desc) {
+function comparator(field, desc, banded = false) {
   return (a, b) => {
     if (field === 'name') {
       return desc ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id)
@@ -1042,11 +1043,11 @@ function comparator(field, desc) {
       x = priceValue(a, key)
       y = priceValue(b, key)
     } else {
-      x = a[field]
-      y = b[field]
+      x = bandValue(field, a[field], banded)
+      y = bandValue(field, b[field], banded)
     }
 
-    if (x == null && y == null) return a.id.localeCompare(b.id)
+    if (x == null && y == null) return 0   // a tie: let the next column decide
     if (x == null) return 1
     if (y == null) return -1
     return desc ? y - x : x - y
@@ -1077,6 +1078,32 @@ function comparator(field, desc) {
 /** The direction a column means on its first click. Cheapest and A-Z for money
  *  and names; best-first for anything scored. */
 const NATURAL_DESC = (field) => !['price', 'price_in', 'name'].includes(field)
+
+/**
+ * BANDING — why a second sort column does anything at all.
+ *
+ * A tiebreaker only fires on an exact tie, and benchmark scores are continuous:
+ * 60.7, 59.9, 58.9. No two are equal, so a strict second key never gets a say
+ * and appears broken. Adding "cheapest" under "most intelligent" changed
+ * nothing at the top of the list, which is where anyone is looking.
+ *
+ * But "most intelligent, then cheapest" does not mean exact ties to a person.
+ * It means: AMONG MODELS OF SIMILAR INTELLIGENCE, SHOW ME THE CHEAPEST. So when
+ * a scored column has another column beneath it, its values are rounded into
+ * bands of five points. 60.7 and 59.9 land in the same band and price decides
+ * between them; a model ten points weaker still sorts below regardless of cost.
+ *
+ * Only when it is NOT the last key — as the final key, exact order is what you
+ * asked for and rounding would only lose detail. The header marks a banded
+ * column with `≈` so this is visible rather than magic.
+ */
+const BANDED = ['intelligence', 'coding', 'agentic']
+const BAND = 5
+
+function bandValue(field, value, banded) {
+  if (!banded || value == null || !BANDED.includes(field)) return value
+  return Math.round(value / BAND) * BAND
+}
 
 /** Add a column, reverse it, or drop it — the three-state cycle. */
 function cycleSort(field) {
@@ -1110,9 +1137,11 @@ function renderBrowseHeader() {
     const at = rank(field)
     if (at < 0) return text
     const arrow = sorts[at].desc ? '↓' : '↑'
-    // The number only appears once there is an order to convey.
+    // `≈` marks a column whose values are grouped into bands so the column
+    // below it can order within them. Visible, not magic.
+    const band = at < sorts.length - 1 && BANDED.includes(field) ? '≈' : ''
     const order = sorts.length > 1 ? `<span class="sort-rank">${at + 1}</span>` : ''
-    return `${text} ${arrow}${order}`
+    return `${text}${band} ${arrow}${order}`
   }
 
   $('bHeader').innerHTML = `
@@ -1120,7 +1149,9 @@ function renderBrowseHeader() {
       <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
         <span class="metric-label">${label('name', 'model')}</span>
       </button>
-      <span class="head-hint">click to sort · again to reverse · again to remove</span>
+      <span class="head-hint">click to sort · again to reverse · again to remove${
+        state.browse.sorts.length > 1 ? ' · ≈ groups similar values' : ''
+      }</span>
     </span>
     <span class="row-metrics">
       ${COLUMNS.map(([key, text]) => `
