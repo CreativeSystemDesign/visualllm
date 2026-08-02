@@ -1,0 +1,19 @@
+{
+  "name": "visualllm",
+  "version": "0.1.0",
+  "description": "",
+  "main": "renderer/index.html",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  },
+  "private": true
+}

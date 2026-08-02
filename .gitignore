@@ -1,0 +1,18 @@
+# Build output
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+dist/
+
+# Credentials never belong in the tree. The app writes providers.json into the
+# OS app-data directory, not here — this is a guard against a stray copy.
+providers.json
+*.key
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp

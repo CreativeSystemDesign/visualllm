@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+  <title>VisualLLM</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="brand" data-tauri-drag-region>
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h6M4 12h11M4 17h7" />
+          <circle cx="17.5" cy="7" r="2.4" />
+          <circle cx="20" cy="12" r="2.4" />
+          <circle cx="14.5" cy="17" r="2.4" />
+        </svg>
+        <span class="brand-name">VisualLLM</span>
+      </div>
+
+      <div class="window-controls">
+        <button class="wc" id="wcMin" title="Minimise" type="button"><svg viewBox="0 0 12 12"><path d="M3 6h6"/></svg></button>
+        <button class="wc" id="wcMax" title="Maximise" type="button"><svg viewBox="0 0 12 12"><rect x="3" y="3" width="6" height="6" rx="1"/></svg></button>
+        <button class="wc wc-close" id="wcClose" title="Close" type="button"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></button>
+      </div>
+    </header>
+
+    <div class="body">
+
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="head-row">
+            <div class="search">
+              <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>
+              </svg>
+              <input id="search" type="text" placeholder="Search models" spellcheck="false" />
+            </div>
+            <button class="icon-btn" id="openProviders" type="button" title="Providers">
+              <svg viewBox="0 0 16 16"><path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.9"/><circle cx="10.5" cy="11" r="1.9"/></svg>
+            </button>
+          </div>
+
+          <div class="controls">
+            <div class="field-select">
+              <select id="sort">
+                <option value="name">Name</option>
+                <option value="price">Cheapest</option>
+                <option value="speed">Fastest measured</option>
+                <option value="intelligence">Most intelligent</option>
+                <option value="coding">Best at coding</option>
+                <option value="agentic">Best at tool use</option>
+                <option value="context">Largest context</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+          </div>
+
+          <div class="filters" id="filters">
+            <button class="filter" data-filter="free">Free</button>
+            <button class="filter" data-filter="vision">Vision</button>
+            <button class="filter" data-filter="tools">Tools</button>
+          </div>
+        </div>
+        <div class="model-list" id="modelList"></div>
+        <div class="sidebar-foot">
+          <span id="modelCount">—</span>
+          <span class="hint">drag into a lane</span>
+        </div>
+      </aside>
+
+      <main class="canvas">
+        <div class="canvas-head">
+          <div>
+            <h1>Endpoints</h1>
+            <p class="sub">Each lane is an endpoint. The model on the right answers first; everything to its left is a fallback.</p>
+          </div>
+          <button class="btn-primary" id="newLane" type="button">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+            New lane
+          </button>
+        </div>
+        <div class="lanes" id="lanes"></div>
+      </main>
+
+    </div>
+
+    <footer class="statusbar">
+      <button class="stat stat-link" id="statGateway" title="Copy gateway address">
+        <span class="dot" id="barDot"></span>
+        <span id="barGateway">—</span>
+      </button>
+      <span class="stat" id="statModels">—</span>
+      <span class="stat" id="statFastest">—</span>
+      <span class="stat" id="statTraffic">—</span>
+      <span class="stat stat-right" id="statUpdated">—</span>
+    </footer>
+  </div>
+
+  <div class="scrim" id="scrim" hidden>
+    <section class="panel" role="dialog" aria-label="Providers">
+      <header class="panel-head">
+        <div>
+          <h2>Providers</h2>
+          <p class="sub">Add a service, and its models appear in the sidebar. Nothing is hard-coded — the catalog is asked for, every time.</p>
+        </div>
+        <button class="wc" id="closeProviders" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+
+      <div class="panel-body">
+        <div class="provider-list" id="providerList"></div>
+
+        <form class="provider-form" id="providerForm" autocomplete="off">
+          <input type="hidden" id="pId" />
+          <div class="form-title" id="formTitle">Add a provider</div>
+
+          <label class="field">
+            <span>Name</span>
+            <input id="pName" type="text" placeholder="OpenRouter" spellcheck="false" />
+          </label>
+
+          <label class="field">
+            <span>Service</span>
+            <div class="field-select">
+              <select id="pKind">
+                <option value="openrouter">OpenRouter</option>
+                <option value="openai">OpenAI-compatible</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Base URL</span>
+            <input id="pUrl" type="text" spellcheck="false" placeholder="https://openrouter.ai/api/v1" />
+          </label>
+
+          <label class="field">
+            <span>API key</span>
+            <input id="pKey" type="password" placeholder="sk-or-…" spellcheck="false" />
+          </label>
+
+          <p class="form-note" id="formNote"></p>
+
+          <div class="form-actions">
+            <button type="button" class="btn-ghost" id="pTest">Test</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn-ghost btn-danger" id="pDelete" hidden>Remove</button>
+            <button type="button" class="btn-ghost" id="pCancel" hidden>Cancel</button>
+            <button type="submit" class="btn-primary" id="pSave">Save provider</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
