@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod lanes;
 mod providers;
 
 use std::path::PathBuf;
@@ -308,6 +309,18 @@ async fn provider_test(kind: String, base_url: Option<String>, key: String) -> R
     providers::fetch(&probe).await.map(|models| models.len())
 }
 
+// ---------------------------------------------------------------------- lanes
+
+#[tauri::command]
+fn lanes_read(app: tauri::AppHandle) -> Result<Vec<lanes::Lane>, String> {
+    Ok(lanes::load(&store_dir(&app)?))
+}
+
+#[tauri::command]
+fn lanes_write(app: tauri::AppHandle, lanes: Vec<lanes::Lane>) -> Result<(), String> {
+    lanes::save(&store_dir(&app)?, &lanes)
+}
+
 #[tauri::command]
 fn copy_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -324,7 +337,9 @@ fn main() {
             provider_save,
             provider_delete,
             provider_test,
-            catalog_read
+            catalog_read,
+            lanes_read,
+            lanes_write
         ])
         .run(tauri::generate_context!())
         .expect("failed to start VisualLLM");

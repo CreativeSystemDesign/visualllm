@@ -25,6 +25,8 @@ const api = T
       providerTest: (kind, baseUrl, key) =>
         T.core.invoke('provider_test', { kind, baseUrl, key }),
       catalogRead: (id) => T.core.invoke('catalog_read', { id: id ?? null }),
+      lanesRead: () => T.core.invoke('lanes_read'),
+      lanesWrite: (lanes) => T.core.invoke('lanes_write', { lanes }),
     }
   : window.vll
 
@@ -245,6 +247,7 @@ function laneEl(lane) {
     <span class="lane-kind ${lane.computed ? 'computed' : ''}">${
       lane.computed ? lane.kind : 'ordered'
     }</span>
+    <button class="lane-remove" title="Delete lane">${ICON.close}</button>
   `
 
   const track = document.createElement('div')
@@ -438,6 +441,7 @@ function endDrag() {
       lane.members = lane.members.filter((m) => m !== model.id)
       toast(`${model.id} removed from ${lane.name}`)
       render()
+      saveLanes()
     } else {
       render()
     }
@@ -455,6 +459,7 @@ function endDrag() {
 
   if (index === 0) toast(`${model.id} answers first in ${lane.name}`)
   render()
+  saveLanes()
 }
 
 // ------------------------------------------------------------------ interaction
@@ -476,6 +481,7 @@ document.addEventListener('pointerdown', (event) => {
     const lane = state.lanes.find((l) => l.slug === chip.closest('.lane').dataset.lane)
     lane.members = lane.members.filter((m) => m !== chip.dataset.model)
     render()
+    saveLanes()
     return
   }
 
@@ -487,6 +493,16 @@ document.addEventListener('pointerdown', (event) => {
 })
 
 document.addEventListener('click', async (event) => {
+  const remove = event.target.closest('.lane-remove')
+  if (remove) {
+    const lane = state.lanes.find((l) => l.slug === remove.closest('.lane').dataset.lane)
+    state.lanes = state.lanes.filter((l) => l !== lane)
+    render()
+    saveLanes()
+    toast(`${lane.name} deleted`)
+    return
+  }
+
   const url = event.target.closest('.lane-url')
   if (url) {
     const slug = url.closest('.lane').dataset.lane
@@ -517,6 +533,7 @@ document.addEventListener('focusout', (event) => {
   // The slug is fixed at creation: renaming must never move a live endpoint.
   lane.name = next || lane.name
   name.textContent = lane.name
+  saveLanes()
 })
 
 document.addEventListener('keydown', (event) => {
@@ -537,8 +554,9 @@ $('newLane').addEventListener('click', () => {
   let slug = base
   let n = 2
   while (state.lanes.some((l) => l.slug === slug)) slug = `${base}-${n++}`
-  state.lanes.unshift({ slug, name: 'New lane', members: [], kind: 'ladder', computed: false })
+  state.lanes.unshift({ slug, name: 'New lane', members: [] })
   render()
+  saveLanes()
   const el = document.querySelector(`.lane[data-lane="${slug}"] .lane-name`)
   el?.focus()
   document.getSelection()?.selectAllChildren(el)
@@ -743,6 +761,31 @@ $('pDelete').addEventListener('click', async () => {
   }
 })
 
+
+// ------------------------------------------------------------------ persistence
+
+/** Written on every change. Only the three fields that define a lane go to
+ *  disk — anything derived from the models is looked up fresh on load, so a
+ *  stale price or a renamed model can never be baked into the file. */
+async function saveLanes() {
+  try {
+    await api.lanesWrite(
+      state.lanes.map(({ slug, name, members }) => ({ slug, name, members }))
+    )
+  } catch (err) {
+    toast(`Could not save: ${err}`)
+  }
+}
+
+async function loadLanes() {
+  try {
+    state.lanes = (await api.lanesRead()) || []
+  } catch (err) {
+    state.lanes = []
+  }
+  renderLanes()
+}
+
 // ---------------------------------------------------------------------- refresh
 
 async function refresh() {
@@ -755,8 +798,6 @@ async function refresh() {
   state.gateway = data.gateway || ''
   state.updatedAt = Date.now()
 
-  // Reload lanes only on the first read; after that the canvas is the user's.
-  if (!state.lanes.length && data.lanes?.length) state.lanes = data.lanes
   render()
 }
 
@@ -766,6 +807,7 @@ document.addEventListener('click', async (event) => {
   toast('Gateway address copied')
 })
 
+loadLanes()
 loadProviders().then(() => {
   renderProviders()
   loadCatalog()
