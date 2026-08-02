@@ -1068,3 +1068,26 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .col-lock:hover { box-shadow: var(--in1); }
 
 .col-name .col-lock { top: -4px; right: -18px; }
+
+/* --- a locked column is simply a pressed one ------------------------------ */
+
+/* The press is the lock. In a surface where every control is either extruded
+   or pushed in, a column that is part of the sort should read as held down —
+   no badge required, and it stays consistent with every other control here. */
+.col-sort {
+  padding: 5px 0;
+  border-radius: 8px;
+  transition: box-shadow 0.16s var(--ease), color 0.16s var(--ease);
+}
+.col-sort:hover:not(.is-sorted) { box-shadow: var(--e1); }
+.col-sort.is-sorted {
+  box-shadow: var(--in2);
+  background: var(--pressed-bg);
+}
+.col-sort.is-sorted .metric-label { color: var(--accent); font-weight: 700; }
+
+/* The padlock is now only an exit. It has no job at rest — the depression
+   already says the column is locked in — so it appears only when the cursor is
+   on that column, looking for a way out. */
+.col-sort.is-sorted .col-lock { opacity: 0; }
+.col-sort.is-sorted:hover .col-lock { opacity: 1; }
