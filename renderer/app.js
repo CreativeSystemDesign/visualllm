@@ -52,6 +52,7 @@ const state = {
   browse: {             // the browser's own controls, separate from the sidebar's
     search: '',
     sort: 'intelligence',
+    desc: true,          // direction, flipped by clicking the active column
     author: '',
     context: 0,
     price: '',
@@ -151,6 +152,8 @@ function chipEl(model, { inTrack = false, rank = null } = {}) {
     bits.push(ranked == null ? `${SORT_LABEL[state.sort]} unrated` : `${SORT_LABEL[state.sort]} ${Math.round(ranked)}`)
   }
   if (model.source !== 'catalog' && !model.available && model.reason) bits.push(model.reason)
+
+  if (model.description) el.title = model.description
 
   const dot = health(model)
   el.innerHTML = `
@@ -909,11 +912,23 @@ function metric(value, label, dim = false) {
   </span>`
 }
 
+/** Escape anything that goes into an attribute. Model descriptions are written
+ *  by vendors and arrive with quotes and angle brackets in them. */
+function attr(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function rowEl(model) {
   const pooled = state.pool.includes(model.id)
   const el = document.createElement('div')
   el.className = `row${pooled ? ' is-pooled' : ''}`
   el.dataset.model = model.id
+
+  // The vendor's own description, on hover. It is the fastest way to tell two
+  // similarly-scored models apart, and it costs nothing — we already cache it.
+  if (model.description) el.title = model.description
 
   const inPrice = model.price_in != null && model.price_in >= 0
     ? (model.price_in * 1e6 === 0 ? 'free' : `$${(model.price_in * 1e6).toFixed(2)}`)
@@ -980,25 +995,93 @@ function browseMatches() {
     return true
   })
 
-  if (b.sort === 'name') models.sort((a, b2) => a.id.localeCompare(b2.id))
-  else if (b.sort === 'price' || b.sort === 'price_in') {
-    const field = b.sort === 'price' ? 'price_out' : 'price_in'
-    models.sort((x, y) => {
-      const a = x.free ? 0 : x[field] < 0 ? null : x[field]
-      const c = y.free ? 0 : y[field] < 0 ? null : y[field]
-      if (a == null && c == null) return x.id.localeCompare(y.id)
-      if (a == null) return 1
-      if (c == null) return -1
-      return a - c
-    })
-  } else models.sort(byDescending(b.sort))
-
+  models.sort(comparator(b.sort, b.desc))
   return models
+}
+
+/** Price for sorting: free is zero, negative means "variable" and is unknown. */
+function priceValue(model, field) {
+  if (model.free) return 0
+  const raw = model[field]
+  return raw == null || raw < 0 ? null : raw
+}
+
+/**
+ * One comparator for every column, with direction as a parameter.
+ *
+ * The rule worth stating: A MISSING VALUE ALWAYS SORTS LAST, in both
+ * directions. It is tempting to treat null as negative infinity and let it
+ * flip with everything else, but "unrated" is not the same as "worst" — 230 of
+ * 337 models carry no benchmark score, and reversing the sort should not bury
+ * every rated model beneath them.
+ */
+function comparator(field, desc) {
+  return (a, b) => {
+    if (field === 'name') {
+      return desc ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id)
+    }
+
+    let x, y
+    if (field === 'price' || field === 'price_in') {
+      const key = field === 'price' ? 'price_out' : 'price_in'
+      x = priceValue(a, key)
+      y = priceValue(b, key)
+    } else {
+      x = a[field]
+      y = b[field]
+    }
+
+    if (x == null && y == null) return a.id.localeCompare(b.id)
+    if (x == null) return 1
+    if (y == null) return -1
+    return desc ? y - x : x - y
+  }
+}
+
+/** Which direction a column means when you first click it. Cheapest-first for
+ *  money and A-Z for names; best-first for anything scored. */
+const ASCENDING_FIRST = new Set(['price', 'price_in', 'name'])
+
+const COLUMNS = [
+  ['intelligence', 'intel'],
+  ['coding', 'code'],
+  ['agentic', 'agent'],
+  ['context', 'ctx'],
+  ['price_in', 'in/M'],
+  ['price', 'out/M'],
+  ['created', 'age'],
+]
+
+/** A clickable header row, aligned to the metric columns beneath it.
+ *
+ * Reuses the same classes as a model row, so the widths line up by
+ * construction rather than by two sets of numbers that drift apart. */
+function renderBrowseHeader() {
+  const head = $('bHeader')
+  const arrow = state.browse.desc ? '↓' : '↑'
+  head.innerHTML = `
+    <span class="row-body"><span class="head-hint">click a column to sort, again to reverse</span></span>
+    <span class="row-metrics">
+      ${COLUMNS.map(([key, label]) => {
+        const on = state.browse.sort === key
+        return `<button class="metric col-sort${on ? ' is-sorted' : ''}" data-sort="${key}">
+          <span class="metric-label">${label}${on ? ` ${arrow}` : ''}</span>
+        </button>`
+      }).join('')}
+    </span>
+    <span class="row-caps"></span>
+    <span class="head-spacer"></span>
+  `
 }
 
 function renderBrowse() {
   const list = $('bList')
   const models = browseMatches()
+  renderBrowseHeader()
+
+  const direction = $('bDirection')
+  direction.textContent = state.browse.desc ? '↓  High to low' : '↑  Low to high'
+  direction.title = 'Reverse the order'
 
   $('bCount').textContent = `${models.length} of ${state.catalog.length} models · ${state.pool.length} in your pool`
 
@@ -1069,6 +1152,27 @@ $('browseScrim').addEventListener('click', (event) => {
     return
   }
 
+  const column = event.target.closest('.col-sort')
+  if (column) {
+    const key = column.dataset.sort
+    if (state.browse.sort === key) {
+      state.browse.desc = !state.browse.desc      // clicking again reverses
+    } else {
+      state.browse.sort = key
+      state.browse.desc = !ASCENDING_FIRST.has(key)
+      $('bSort').value = key
+    }
+    renderBrowse()
+    return
+  }
+
+  const flip = event.target.closest('#bDirection')
+  if (flip) {
+    state.browse.desc = !state.browse.desc
+    renderBrowse()
+    return
+  }
+
   const filter = event.target.closest('#bFilters .filter')
   if (filter) {
     const key = filter.dataset.filter
@@ -1079,7 +1183,11 @@ $('browseScrim').addEventListener('click', (event) => {
 })
 
 $('bSearch').addEventListener('input', (e) => { state.browse.search = e.target.value; renderBrowse() })
-$('bSort').addEventListener('change', (e) => { state.browse.sort = e.target.value; renderBrowse() })
+$('bSort').addEventListener('change', (e) => {
+  state.browse.sort = e.target.value
+  state.browse.desc = !ASCENDING_FIRST.has(e.target.value)
+  renderBrowse()
+})
 $('bAuthor').addEventListener('change', (e) => { state.browse.author = e.target.value; renderBrowse() })
 $('bContext').addEventListener('change', (e) => { state.browse.context = Number(e.target.value); renderBrowse() })
 $('bPrice').addEventListener('change', (e) => { state.browse.price = e.target.value; renderBrowse() })

@@ -180,14 +180,17 @@
       </header>
 
       <div class="browse-controls">
-        <div class="browse-row">
-          <div class="search grow">
-            <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>
-            </svg>
-            <input id="bSearch" type="text" placeholder="Search by name or id" spellcheck="false" />
-          </div>
-          <div class="field-select w-sort">
+        <div class="search">
+          <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>
+          </svg>
+          <input id="bSearch" type="text" placeholder="Search by name or id" spellcheck="false" />
+        </div>
+
+        <div class="control-group">
+          <span class="controls-label">Sort by</span>
+          <div class="browse-row">
+          <div class="field-select is-sort">
             <select id="bSort">
               <option value="intelligence">Most intelligent</option>
               <option value="coding">Best at coding</option>
@@ -200,9 +203,13 @@
             </select>
             <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
           </div>
+          <button class="btn-ghost direction" id="bDirection" type="button">↓  High to low</button>
+          </div>
         </div>
 
-        <div class="browse-row">
+        <div class="control-group">
+          <span class="controls-label">Narrow by</span>
+          <div class="browse-row">
           <div class="field-select">
             <select id="bAuthor"><option value="">All authors</option></select>
             <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
@@ -229,6 +236,8 @@
           </div>
         </div>
 
+        </div>
+
         <div class="browse-row filters" id="bFilters">
           <button class="filter" data-filter="vision">Vision</button>
           <button class="filter" data-filter="tools">Tools</button>
@@ -240,6 +249,7 @@
       </div>
 
       <div class="browse-count" id="bCount">—</div>
+      <div class="browse-header" id="bHeader"></div>
       <div class="browse-list" id="bList"></div>
     </section>
   </div>

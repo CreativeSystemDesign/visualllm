@@ -897,3 +897,114 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   background: var(--pressed-bg);
   color: var(--accent);
 }
+
+/* Grouped controls. Four identical dropdowns in a row made the sort look like
+   a fourth filter — labels and separation are what tell them apart. */
+.control-group { display: flex; flex-direction: column; }
+.control-group .browse-row { gap: 10px; }
+.field-select.is-sort select {
+  color: var(--accent-deep);
+  font-weight: 650;
+}
+
+/* Clickable column headers, aligned to the metrics below by sharing classes. */
+.browse-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px 8px;
+  margin: 0 22px;
+}
+.head-hint { font-size: 10.5px; font-style: italic; color: var(--text-faint); }
+.head-spacer { flex-shrink: 0; width: 78px; }
+
+.col-sort {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 3px 5px;
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.col-sort .metric-label { transition: color 0.14s var(--ease); }
+.col-sort:hover .metric-label { color: var(--text); }
+.col-sort.is-sorted { box-shadow: var(--in1); }
+.col-sort.is-sorted .metric-label { color: var(--accent); }
+
+/* Metric value above label. Without this they run together as "61INTEL" and
+   the widths blow out, squeezing the model name to a single letter. */
+.metric-value, .metric-label { display: block; }
+
+.direction {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 16px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* --- alignment corrections ------------------------------------------------ */
+
+/* The name column was collapsing to a single letter on narrower windows: seven
+   metric columns plus capabilities plus a button left it nothing to shrink
+   into. Give it a floor, and take the space back from the metrics. */
+.row-body { flex: 1 1 200px; min-width: 150px; }
+.row-metrics { gap: 14px; }
+.metric { min-width: 52px; }
+.row-caps { min-width: 88px; }
+
+/* The header sat five pixels left of the values beneath it, because the button
+   carried horizontal padding the plain metric spans did not. Padding is
+   vertical only, so both columns share the same right edge. */
+.col-sort { padding: 3px 0; }
+
+.head-hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* At tighter widths, drop the least decisive column rather than crushing the
+   model name — age is interesting, not decisive. */
+@media (max-width: 900px) {
+  .row-metrics .metric:last-child,
+  .browse-header .col-sort:last-child { display: none; }
+}
+
+/* --- the name column, properly ------------------------------------------- */
+
+/* `.row-body` and `.row-id` are spans, and `overflow: hidden` does nothing on
+   an inline element — so the id never clipped, ran under the metrics, and the
+   name box collapsed to a couple of letters. Blockifying both is the fix. */
+.row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 260px;
+  min-width: 190px;
+}
+
+.row-id {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Show the whole name. Wrapping to a second line is better than an ellipsis:
+   the name is the one field you are actually reading, and two lines cost far
+   less than not knowing which model you are looking at. */
+.row-title { flex-wrap: wrap; row-gap: 2px; }
+.row-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
+}
+
+/* A flex item will not shrink below its content by default, so a long name
+   pushed the row wider and got clipped instead of wrapping. Letting the title
+   flow as ordinary text — name, then author inline — makes it wrap naturally at
+   any width, which is what "show the whole name" actually requires. */
+.row-title { display: block; }
+.row-name { display: inline; min-width: 0; }
+.row-author { margin-left: 8px; }
