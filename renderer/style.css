@@ -755,3 +755,13 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .lane-remove svg { width: 10px; height: 10px; stroke-width: 2; }
 .lane:hover .lane-remove { opacity: 1; }
 .lane-remove:hover { color: var(--accent); box-shadow: var(--e1); }
+
+.controls-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}

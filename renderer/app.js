@@ -83,11 +83,22 @@ function health(model) {
   return model.healthy ? 'ok' : 'warn'
 }
 
-/** Per-token prices are unreadable. Everyone reasons in dollars per million. */
+/** Per-token prices are unreadable. Everyone reasons in dollars per million.
+ *
+ * OpenRouter prices its meta-routers (`openrouter/auto`, `fusion`) at -1, which
+ * means "whatever the model it picks costs". Multiplying that by a million
+ * produced `$-1000000.000/M`, and negative sorts as cheapest — so the junk sat
+ * at the top of the one view where price matters most. */
+function pricePerMillion(model) {
+  if (model.free) return 0
+  if (model.price_out == null || model.price_out < 0) return null
+  return model.price_out * 1e6
+}
+
 function fmtPrice(model) {
-  if (model.free) return 'free'
-  if (model.price_out == null) return null
-  const perMillion = model.price_out * 1e6
+  if (model.price_out != null && model.price_out < 0) return 'variable'
+  const perMillion = pricePerMillion(model)
+  if (perMillion == null) return null
   if (perMillion === 0) return 'free'
   return `$${perMillion < 1 ? perMillion.toFixed(3) : perMillion.toFixed(2)}/M`
 }
@@ -120,9 +131,13 @@ function chipEl(model, { inTrack = false, rank = null } = {}) {
   bits.push(fmtContext(model.context))
   // Show whatever the list is currently ranked by, so the ordering is legible
   // rather than something you have to take on trust.
-  const ranked = model[state.sort]
-  if (SORT_LABEL[state.sort] && ranked != null) {
-    bits.push(`${SORT_LABEL[state.sort]} ${Math.round(ranked)}`)
+  // Show whatever the list is currently ranked by, so the ordering is legible
+  // rather than something you have to take on trust. Only 107 of OpenRouter's
+  // 337 models carry benchmark scores, so saying "unrated" is far better than
+  // leaving a chip looking identical to a scored one.
+  if (SORT_LABEL[state.sort]) {
+    const ranked = model[state.sort]
+    bits.push(ranked == null ? `${SORT_LABEL[state.sort]} unrated` : `${SORT_LABEL[state.sort]} ${Math.round(ranked)}`)
   }
   if (model.source !== 'catalog' && !model.available && model.reason) bits.push(model.reason)
 
@@ -169,17 +184,22 @@ function renderSidebar() {
     return true
   })
 
-  if (state.sort === 'name') models.sort((a, b) => a.id.localeCompare(b.id))
-  else if (state.sort === 'price') {
+  if (state.sort === 'name') {
+    models.sort((a, b) => a.id.localeCompare(b.id))
+  } else if (state.sort === 'price') {
+    // Unpriced and variable-priced models go last. They are not cheap, they are
+    // unknown, and putting them first buries the answer to the question asked.
     models.sort((a, b) => {
-      const x = a.free ? 0 : a.price_out
-      const y = b.free ? 0 : b.price_out
+      const x = pricePerMillion(a)
+      const y = pricePerMillion(b)
       if (x == null && y == null) return a.id.localeCompare(b.id)
       if (x == null) return 1
       if (y == null) return -1
       return x - y
     })
-  } else models.sort(byDescending(state.sort === 'speed' ? 'tps' : state.sort))
+  } else {
+    models.sort(byDescending(state.sort === 'speed' ? 'tps' : state.sort))
+  }
 
   list.innerHTML = ''
   if (!models.length) {
