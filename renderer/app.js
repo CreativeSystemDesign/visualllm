@@ -784,8 +784,6 @@ function editProvider(id) {
   renderProviders()
 }
 
-fillPresetOptions()
-
 function renderProviders() {
   const list = $('providerList')
   list.innerHTML = ''
@@ -1603,6 +1601,13 @@ document.addEventListener('click', async (event) => {
   await api.copy(state.gateway || '')
   toast('Gateway address copied')
 })
+
+// Populated here rather than beside `renderProviders`, where it was: `PRESETS`
+// is a `const` declared further down the file, and a `const` cannot be read
+// before its declaration line. Calling it early threw a ReferenceError that
+// killed every line after it — the provider form, the browser, the sort
+// headers — with the UI still rendering perfectly and no button working.
+fillPresetOptions()
 
 loadLanes()
 loadPool().then(renderSidebar)
