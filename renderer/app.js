@@ -285,7 +285,7 @@ function laneEl(lane) {
     <button class="lane-url" title="Copy endpoint URL">
       ${ICON.copy}<span class="host">127.0.0.1:4000</span><span>/lane/${lane.slug}/v1</span>
     </button>
-    ${(lane.criteria || []).length ? `<span class="lane-criteria" title="Built by searching for these — click to search again">${
+    ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
     }</span>` : ''}
     <span class="lane-kind ${lane.computed ? 'computed' : ''}">${
@@ -630,15 +630,19 @@ document.addEventListener('click', async (event) => {
     return
   }
 
-  // The whole point of recording the criteria: ask the same question again
-  // against today's catalog, and see whether something better has appeared.
+  // Opens a FRESH SEARCH with these criteria. Deliberately not a rebuild of
+  // this lane: with several providers configured its members can come from
+  // catalogs that publish different metrics, so re-running the criteria would
+  // silently drop the ones nothing is published about. The chips are a record
+  // of intent; this is a convenient way to ask the same thing again and see
+  // what turns up today.
   const crit = event.target.closest('.lane-criteria')
   if (crit) {
     const lane = state.lanes.find((l) => l.slug === crit.closest('.lane').dataset.lane)
     if (lane?.criteria?.length) {
       state.browse.sorts = lane.criteria.map(({ field, desc }) => ({ field, desc }))
       openBrowse()
-      toast(`Searching again: ${lane.criteria.map(criterionWords).join(' + ')}`)
+      toast(`Searching: ${lane.criteria.map(criterionWords).join(' + ')}`)
     }
     return
   }

@@ -30,10 +30,23 @@ pub struct Lane {
     /// What the lane was built to be: the criteria that were locked in the
     /// browser when its models were chosen.
     ///
-    /// This is provenance, and it is the difference between a lane being a
-    /// snapshot and a standing question. Catalogs move constantly — the
-    /// cheapest fast agentic model in March is not the one in September — and a
-    /// lane that remembers its own question can be asked again.
+    /// A SNAPSHOT, deliberately — a record of intent, not a query that can be
+    /// re-run to reproduce the lane. Two reasons it cannot be the latter:
+    ///
+    ///   * Metric coverage is per-provider. Only OpenRouter publishes
+    ///     benchmarks, throughput and pricing in its catalog; a provider added
+    ///     directly returns little more than model ids. A lane mixing the two
+    ///     has members living in different metric spaces, and re-running its
+    ///     criteria would rank the direct-provider ones as unjudgeable and drop
+    ///     them — a lane whose own question cannot find half its members.
+    ///
+    ///   * Percentiles are computed across whatever is in the catalog. Add a
+    ///     provider carrying two hundred more models and every percentile
+    ///     shifts, so the same criteria return a different answer for reasons
+    ///     unrelated to any model changing.
+    ///
+    /// As a label it survives both, because it describes what someone was
+    /// looking for rather than computing anything.
     ///
     /// `#[serde(default)]` so lanes saved before this existed still load.
     #[serde(default)]
