@@ -154,6 +154,18 @@ be told about yesterday's loop while today's goes unnamed. This is the
 engine's only modification of a conversation; it is logged, and announced
 on the response in `x-visualllm-unstuck`.
 
+**Every failure is explained, never just badged.** The engine records each
+one with its receipts — the provider's own bytes, the loop counts, which
+lane toggles were on at the time — and the lane shows an "issues" pill that
+opens the diagnosis: what happened (evidence quoted verbatim), why it
+happens (the mechanism), and what to try (a specific control here, one
+click away when it is one of the lane's own toggles). The standard is
+strict in both directions: a malformed request is recorded as the client's
+fault, and a failure the evidence cannot attribute renders as "unexplained,
+receipts attached" rather than being rounded up to a verdict. This app is
+built for people who choose free models; free models earn reputations by
+rumour, and receipts beat rumours.
+
 `classify` (refusals) and the commit gate (acceptances) in `server.rs` are
 the judgement, and they are what the tests pin down — `cargo test` from
 `src-tauri/`.

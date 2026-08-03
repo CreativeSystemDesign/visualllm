@@ -38,6 +38,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod incidents;
 mod lanes;
 mod loopwatch;
 mod providers;
@@ -400,6 +401,13 @@ async fn stats_refresh(app: tauri::AppHandle) -> Result<usize, String> {
     Ok(providers::hydrate_stats(&dir, &models, &configured).await)
 }
 
+/// What went wrong lately, with receipts — the UI turns these into
+/// explanations on the canvas. Read-only; the engine is the only writer.
+#[tauri::command]
+fn incidents_read(app: tauri::AppHandle) -> Result<Vec<incidents::Incident>, String> {
+    Ok(incidents::load(&store_dir(&app)?))
+}
+
 #[tauri::command]
 fn pool_read(app: tauri::AppHandle) -> Result<Vec<lanes::Member>, String> {
     Ok(lanes::pool_load(&store_dir(&app)?))
@@ -445,6 +453,7 @@ fn main() {
             catalog_read,
             lanes_read,
             lanes_write,
+            incidents_read,
             pool_read,
             pool_write,
             stats_read,

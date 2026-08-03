@@ -79,7 +79,29 @@ use axum::{
 use serde_json::{json, Value};
 
 // `crate::` means "from this program", as opposed to an external library.
-use crate::{lanes, loopwatch, providers};
+use crate::{incidents, lanes, loopwatch, providers};
+
+/// Record one failure with its receipts, so the canvas can explain it later.
+/// The note given here is the same text the trail and the log carry — one set
+/// of facts, three audiences.
+fn note_incident(dir: &PathBuf, lane: &lanes::Lane, member: &str, note: &str, tools: u64) {
+    incidents::record(
+        dir,
+        incidents::Incident {
+            at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            lane: lane.slug.clone(),
+            member: member.to_string(),
+            kind: incidents::kind_of(note).to_string(),
+            evidence: note.to_string(),
+            no_think: lane.suppress_reasoning,
+            loopwatch: lane.unstick,
+            tools,
+        },
+    );
+}
 
 /// A member's catalog entry, honouring its provider when it has one.
 ///
@@ -930,11 +952,12 @@ async fn chat(
     // already collects. Cheap eyes for a process that had none: three separate
     // wrong guesses about live behaviour were made from TCP state alone the
     // night this went in.
+    let tool_count = body["tools"].as_array().map(|t| t.len()).unwrap_or(0) as u64;
     eprintln!(
         "engine: {} <- {} request: {} tools, budget {}, needs[vision={} tools={} ~{}tok], no-think={}",
         lane.slug,
         if streaming { "streaming" } else { "blocking" },
-        body["tools"].as_array().map(|t| t.len()).unwrap_or(0),
+        tool_count,
         budget.map(|b| b.to_string()).unwrap_or_else(|| "unset".into()),
         needs.vision,
         needs.tools,
@@ -953,6 +976,24 @@ async fn chat(
                 eprintln!(
                     "engine: {} loopwatch: {} on {} ({}x, {} pairs collapsed)",
                     lane.slug, broke.kind, broke.tool, broke.times, broke.collapsed
+                );
+                // A loop lives in the client's conversation, generated across
+                // earlier turns — usually by the primary, which is the best
+                // attribution available and is labelled as such.
+                let suspect = lane
+                    .members
+                    .first()
+                    .map(member_label)
+                    .unwrap_or_else(|| "(empty lane)".into());
+                note_incident(
+                    &engine.dir,
+                    lane,
+                    &suspect,
+                    &format!(
+                        "loop ({}): `{}` — {} calls, {} redundant pairs collapsed",
+                        broke.kind, broke.tool, broke.times, broke.collapsed
+                    ),
+                    tool_count,
                 );
                 body["messages"] = Value::Array(repaired);
                 unstuck = Some(broke);
@@ -990,6 +1031,21 @@ async fn chat(
 
         if !can_serve(model, &needs, known) {
             eprintln!("engine: {}   skip {label}: cannot serve this request", lane.slug);
+            // The receipts name both sides of the mismatch: what the request
+            // needed, and what the catalog says this member has. A wrong
+            // catalog entry is exactly the kind of thing these make visible.
+            note_incident(
+                &engine.dir,
+                lane,
+                &label,
+                &format!(
+                    "cannot serve this request: it needs vision={} tools={} ~{}tok; \
+                     the catalog lists vision={} tools={} context={}",
+                    needs.vision, needs.tools, needs.tokens,
+                    model.vision, model.tools, model.context
+                ),
+                tool_count,
+            );
             tried.push(Attempt::skipped(&label, "cannot serve this request"));
             continue; // never contacted — this is idea #1 from the header
         }
@@ -1093,6 +1149,7 @@ async fn chat(
                         }
                         Gated::Dead(why) => {
                             eprintln!("engine: {}   {label} died in-stream: {why}", lane.slug);
+                            note_incident(&engine.dir, lane, &label, &why, tool_count);
                             tried.push(Attempt::failed(&label, &why));
                             continue;
                         }
@@ -1120,6 +1177,7 @@ async fn chat(
                         }
                         Err(why) => {
                             eprintln!("engine: {}   {label} unusable body: {why}", lane.slug);
+                            note_incident(&engine.dir, lane, &label, &why, tool_count);
                             tried.push(Attempt::failed(&label, &why));
                             continue;
                         }
@@ -1154,11 +1212,23 @@ async fn chat(
                             lane.slug,
                             status.as_u16()
                         );
+                        // Explicitly NOT the model's fault, and the record
+                        // says so: every model would reject this request the
+                        // same way. Being sure cuts both directions.
+                        let snippet: String = message.chars().take(300).collect();
+                        note_incident(
+                            &engine.dir,
+                            lane,
+                            &label,
+                            &format!("request rejected by the provider ({}): {snippet}", status.as_u16()),
+                            tool_count,
+                        );
                         tried.push(Attempt::failed(&label, "request rejected"));
                         return error(status, message, "upstream_rejected", tried);
                     }
                     Verdict::TryNext(why) => {
                         eprintln!("engine: {}   {label} failed: {why}", lane.slug);
+                        note_incident(&engine.dir, lane, &label, &why, tool_count);
                         tried.push(Attempt::failed(&label, &why));
                     }
                 }
@@ -1174,6 +1244,7 @@ async fn chat(
                     err.to_string()
                 };
                 eprintln!("engine: {}   {label} unreachable: {why}", lane.slug);
+                note_incident(&engine.dir, lane, &label, &why, tool_count);
                 tried.push(Attempt::failed(&label, &why));
             }
         }

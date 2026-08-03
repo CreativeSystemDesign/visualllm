@@ -238,6 +238,29 @@
     </section>
   </div>
 
+  <!-- Lane issues. Every entry is a diagnosis with its receipts: what
+       happened (the provider's own bytes, quoted), why it happens (the
+       mechanism), and what to try (a specific control in this app). A
+       failure the evidence cannot clearly attribute says so — "unexplained"
+       with the raw bytes — because a verdict without receipts is folklore,
+       and people choosing free models deserve facts. -->
+  <div class="scrim" id="issuesScrim" hidden>
+    <section class="panel" role="dialog" aria-label="Lane issues">
+      <header class="panel-head">
+        <div>
+          <h2 id="issuesTitle">Issues</h2>
+          <p class="sub">What went wrong in this lane, with the evidence, the reason, and what to try. Entries age out as new ones arrive.</p>
+        </div>
+        <button class="wc" id="closeIssues" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+      <div class="panel-body">
+        <div id="issuesList"></div>
+      </div>
+    </section>
+  </div>
+
   <!-- Per-member dials. Opens from the gear on a chip in a lane; positioned
        beside that chip by app.js. Blank means "no opinion" — the client's own
        value, or the provider's default, is used. That is why these are number

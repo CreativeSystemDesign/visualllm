@@ -27,6 +27,7 @@ const api = T
       catalogRead: (id) => T.core.invoke('catalog_read', { id: id ?? null }),
       lanesRead: () => T.core.invoke('lanes_read'),
       lanesWrite: (lanes) => T.core.invoke('lanes_write', { lanes }),
+      incidentsRead: () => T.core.invoke('incidents_read'),
       poolRead: () => T.core.invoke('pool_read'),
       poolWrite: (ids) => T.core.invoke('pool_write', { ids }),
       statsRead: () => T.core.invoke('stats_read'),
@@ -50,6 +51,7 @@ const state = {
 
   providers: [],
   catalog: [],
+  incidents: [],       // engine-recorded failures, with receipts
   stats: {},
   statsFetchedAt: 0,
   pool: [],             // model ids the user kept — the sidebar shows only these
@@ -389,6 +391,9 @@ function laneEl(lane) {
     ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
     }</span>` : ''}
+    ${laneIssues(lane.slug).length ? `<button class="lane-issues" title="What went wrong in this lane recently — each entry with its evidence, the reason, and what to try.">${
+      laneIssues(lane.slug).length
+    } issue${laneIssues(lane.slug).length === 1 ? '' : 's'}</button>` : ''}
     <button class="lane-think${lane.suppress_reasoning ? ' is-on' : ''}" title="${
       lane.suppress_reasoning
         ? 'Members are asked to answer directly, without spending tokens on hidden reasoning. Click to allow thinking again.'
@@ -725,6 +730,246 @@ function endDrag() {
   saveLanes()
 }
 
+// -------------------------------------------------------------- lane issues
+//
+// The engine records failures with receipts; this is where they become
+// explanations. The contract, in order of importance:
+//
+//   1. EVIDENCE FIRST. Every diagnosis renders the provider's own bytes (or
+//      the engine's counts) beside its conclusion. No receipts, no verdict.
+//   2. MECHANISM, NOT LABEL. "Spent its budget thinking" is a label; WHY a
+//      thinking model returns an empty answer is an explanation someone can
+//      reason from next time.
+//   3. PRESCRIPTION, NOT SHRUG. Where the fix is a control in this app, name
+//      it — and when it is one of the lane's own toggles, offer the click.
+//   4. HONEST ATTRIBUTION. A malformed request is the client's fault and
+//      says so. A failure the evidence cannot attribute renders as
+//      "unexplained", receipts attached, no blame invented.
+//
+// This exists because the people this app is for choose free models, and
+// free models earn reputations by rumour. Receipts beat rumours.
+
+/** How old an incident can be and still count against a lane on the canvas. */
+const ISSUE_WINDOW_S = 24 * 3600
+
+const laneIssues = (slug) => {
+  const cutoff = Date.now() / 1000 - ISSUE_WINDOW_S
+  return state.incidents.filter((i) => i.lane === slug && i.at >= cutoff)
+}
+
+/** What each kind means and what to do about it. `why` and `advice` receive
+ *  the incident (with the lane-toggle state AT THE TIME) plus the lane as it
+ *  is NOW — the difference decides the advice: "turn thinking off" is only
+ *  advice when it wasn't already off when the failure happened. */
+const DIAGNOSIS = {
+  reasoning_burn: {
+    title: 'Spent the answer budget on hidden thinking',
+    why: () =>
+      'This model reasons before it answers, and reasoning spends the same token budget as the answer. ' +
+      'When the budget dies mid-thought, the visible reply never starts — a chat client renders that as an empty response.',
+    advice: (i, lane) =>
+      i.no_think
+        ? 'This happened with “no thinking” already on — the provider ignored the knob. Published capability rosters are optimistic: a setting can be listed and still dropped upstream. The commit gate kept this from reaching the client; if it keeps happening, this member is a poor fit for lanes that need prompt answers.'
+        : 'Turn on “no thinking” for this lane. It asks the provider to skip reasoning entirely — verified to stop exactly this on models that honour the knob.',
+    fix: (i, lane) => (!i.no_think && !lane.suppress_reasoning ? 'no-think' : null),
+  },
+  empty_response: {
+    title: 'Answered with nothing a client could show',
+    why: (i) =>
+      `The stream ended cleanly with no visible content and no tool call${
+        i.tools ? ` — under a ${i.tools}-tool request, which is a heavy ask for small models` : ''
+      }. The commit gate caught it and moved to the next member instead of forwarding a blank reply.`,
+    advice: () =>
+      'Keep at least one member behind this one — the gate turned this failure into a fallback. If it recurs mainly on tool-heavy requests, this member handles large tool sets poorly and belongs further left in the lane.',
+  },
+  midstream_error: {
+    title: 'The provider sent an error inside a success',
+    why: () =>
+      'Some providers return HTTP 200 and then deliver the actual failure as an event inside the stream — invisible to status-code handling. The gate reads the stream before trusting it, caught this, and walked on.',
+    advice: (i) =>
+      /rate.?limit|free/i.test(i.evidence)
+        ? 'The quoted message names a rate limit. A per-minute limit clears on its own; a per-day limit only clears at reset. Members on different providers dodge per-provider throttles; nothing but waiting fixes an account-wide one.'
+        : 'Read the quoted message — the provider named its own problem. If it recurs, that is this provider’s reliability speaking, not the model’s ability.',
+  },
+  rate_limited: {
+    title: 'Rate limited',
+    why: () =>
+      'The provider refused with 429. There are two species: this provider throttling you (another member fixes it — exactly what a lane is for) and an account-wide block (only waiting fixes it). They arrive with the same status code.',
+    advice: () =>
+      'Members spread across different providers dodge per-provider throttles. Telling the two species apart automatically by reading the error body is on the roadmap; until then, the quoted evidence usually names which limit was hit.',
+  },
+  out_of_credit: {
+    title: 'Out of credit',
+    why: () => 'The provider refused for billing reasons — the case fallback lanes were invented for.',
+    advice: () => 'The lane walked on if members remained. Check the provider account if this member should be working.',
+  },
+  key_rejected: {
+    title: 'API key rejected',
+    why: () => 'The provider refused the stored key. This is configuration, not the model.',
+    advice: () => 'Open Providers and use the pencil on this member’s provider to re-enter the key. Test before saving.',
+  },
+  model_missing: {
+    title: 'Model not found at the provider',
+    why: () => 'The provider no longer serves this id — retired, renamed, or never carried on this endpoint.',
+    advice: () => 'Browse the provider’s catalog and replace this chip with the current id.',
+  },
+  capability_gap: {
+    title: 'The catalog promised what the endpoint refused',
+    why: () =>
+      'Published capability lists are a union across every provider serving a model — optimistic by construction. The endpoint actually reached said no. The engine treats this as the model’s limitation and walks on.',
+    advice: () =>
+      'If the capability matters to this lane, put a member that natively supports it ahead of this one. The refusal is per-endpoint, so the same model via another provider may genuinely differ.',
+  },
+  context_overflow: {
+    title: 'Request larger than this member’s window',
+    why: () => 'The prompt did not fit. That is a ceiling, not an error — a later member with a bigger window can still serve it.',
+    advice: () => 'Order the lane so a large-window member sits behind the fast ones. The engine already skips members whose published window is clearly too small.',
+  },
+  provider_trouble: {
+    title: 'Provider-side trouble',
+    why: () => 'A 5xx or busy signal — the provider’s problem, not the model’s ability.',
+    advice: () => 'Transient unless it repeats. Recurring entries here are a provider reliability record, useful when deciding whose free tier to lean on.',
+  },
+  unreachable: {
+    title: 'Could not reach the provider',
+    why: () => 'Connection failed or timed out before any response existed.',
+    advice: () => 'Check the base URL in Providers if this recurs — for local servers, that the server is running.',
+  },
+  skipped_by_catalog: {
+    title: 'Skipped without being contacted',
+    why: () =>
+      'The cached catalog says this member cannot serve what the request needed, so the engine never sent it — sending anyway risks a silently wrong answer (an ignored image reads as a confident description of nothing).',
+    advice: () =>
+      'The receipts show both sides of the mismatch. If the catalog looks wrong, refresh it from Browse — a wrong cached entry is exactly the failure this record exists to expose.',
+  },
+  loop_repeat: {
+    title: 'Caught repeating the same call',
+    why: () =>
+      'The model re-issued an identical, already-answered tool call — pattern-matching its own transcript, where a run of identical calls reads as the thing to do next.',
+    advice: () =>
+      'Loopwatch collapsed the redundant pairs and named the loop at the tail of the conversation, which is the treatment that measured best. Recurring entries at high counts are this model losing the plot at depth — a capability fact worth knowing, with the numbers right here.',
+  },
+  loop_futile: {
+    title: 'Caught burning calls that taught it nothing',
+    why: () =>
+      'Different arguments, byte-identical results — a chunked read walking off a file’s end, or a batch of calls all failing the same way. Being stuck is not repeating yourself; it is receiving no new information.',
+    advice: () =>
+      'Loopwatch quoted the repeated result back to the model — the cause is always in the bytes it kept receiving. Both live catches tonight escaped after the note; entries that do not escape are the model ignoring evidence, which is worth knowing about a model.',
+  },
+  loop_sweep: {
+    title: 'Old duplicate calls swept from the conversation',
+    why: () =>
+      'Clients resend their whole transcript every turn, dead duplicates included. Nothing was looping now — this just removed the residue so the model reads a smaller, cleaner history.',
+    advice: () => 'No action needed; this is maintenance, recorded so the collapse counts are never mysterious.',
+  },
+  request_rejected: {
+    title: 'Not this model’s fault',
+    why: () =>
+      'The provider rejected the request as malformed — a complaint about the request itself, which every model would reject identically. Walking the lane would only have collected the same error N times.',
+    advice: () => 'The quoted rejection names what the client sent wrong. Fix the caller, not the lane.',
+  },
+  unattributed: {
+    title: 'Unexplained — receipts attached',
+    why: () => 'This failure does not match any pattern the engine knows. No verdict is invented for it.',
+    advice: () =>
+      'The evidence is preserved verbatim below. If the same bytes keep appearing, that pattern is the diagnosis waiting to be written — exactly how every rule above started.',
+  },
+}
+
+function fmtAgo(at) {
+  const s = Math.max(1, Math.round(Date.now() / 1000 - at))
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  return `${Math.round(s / 3600)}h ago`
+}
+
+/** Which lane the issues panel is showing, so refreshes keep it current. */
+let issuesLane = null
+
+function renderIssues() {
+  const lane = state.lanes.find((l) => l.slug === issuesLane)
+  const list = $('issuesList')
+  if (!lane) return
+  $('issuesTitle').textContent = `Issues — ${lane.name}`
+
+  // Newest first, and identical (member, kind) entries fold into one card
+  // with a count — fifty loop sweeps as fifty cards would bury the one
+  // rate-limit entry that matters.
+  const grouped = new Map()
+  for (const incident of laneIssues(lane.slug)) {
+    const key = `${incident.member} ${incident.kind}`
+    const group = grouped.get(key)
+    if (group) {
+      group.count += 1
+      if (incident.at > group.latest.at) group.latest = incident
+    } else {
+      grouped.set(key, { count: 1, latest: incident })
+    }
+  }
+  const groups = [...grouped.values()].sort((a, b) => b.latest.at - a.latest.at)
+
+  if (!groups.length) {
+    list.innerHTML = `<div class="empty-state"><strong>No recent issues</strong>Nothing has failed in this lane in the last 24 hours.</div>`
+    return
+  }
+
+  list.innerHTML = groups
+    .map(({ count, latest }) => {
+      const d = DIAGNOSIS[latest.kind] || DIAGNOSIS.unattributed
+      const fix = d.fix && d.fix(latest, lane)
+      return `
+      <article class="issue">
+        <header class="issue-head">
+          <span class="issue-title">${d.title}</span>
+          <span class="issue-meta">${attr(latest.member)} · ${fmtAgo(latest.at)}${
+            count > 1 ? ` · ×${count}` : ''
+          }</span>
+        </header>
+        <pre class="issue-evidence">${attr(latest.evidence)}</pre>
+        <p class="issue-why">${d.why(latest, lane)}</p>
+        <p class="issue-advice">${d.advice(latest, lane)}</p>
+        ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think">Turn on “no thinking” for this lane</button>` : ''}
+      </article>`
+    })
+    .join('')
+}
+
+function openIssues(slug) {
+  issuesLane = slug
+  $('issuesScrim').hidden = false
+  renderIssues()
+}
+
+$('closeIssues').addEventListener('click', () => {
+  $('issuesScrim').hidden = true
+  issuesLane = null
+})
+
+$('issuesScrim').addEventListener('click', (event) => {
+  if (event.target === $('issuesScrim')) {
+    $('issuesScrim').hidden = true
+    issuesLane = null
+    return
+  }
+  const fix = event.target.closest('.issue-fix')
+  if (fix && fix.dataset.fix === 'no-think') {
+    const lane = state.lanes.find((l) => l.slug === issuesLane)
+    if (!lane) return
+    lane.suppress_reasoning = true
+    saveLanes()
+    renderLanes()
+    renderIssues()
+    toast(`${lane.name}: members will be asked to answer without thinking`)
+  }
+})
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('issuesScrim').hidden) {
+    $('issuesScrim').hidden = true
+    issuesLane = null
+  }
+})
+
 // -------------------------------------------------------------- member dials
 //
 // The gear on a chip in a lane opens a small panel of request settings the
@@ -900,6 +1145,12 @@ document.addEventListener('click', async (event) => {
       openBrowse()
       toast(`Searching: ${lane.criteria.map(criterionWords).join(' + ')}`)
     }
+    return
+  }
+
+  const issues = event.target.closest('.lane-issues')
+  if (issues) {
+    openIssues(issues.closest('.lane').dataset.lane)
     return
   }
 
@@ -1950,6 +2201,14 @@ async function loadLanes() {
 
 async function refresh() {
   if (drag.active) return
+  // The engine's incident file rides along on the same tick — it is a small
+  // local read, and issues appearing on the canvas within seconds of
+  // happening is what makes them trustworthy.
+  try {
+    state.incidents = (await api.incidentsRead()) || []
+  } catch (err) {
+    // The canvas without issue counts still works; stale is fine here.
+  }
   const data = await api.readGateway()
   state.connected = data.connected
   state.error = data.error || null
@@ -1959,6 +2218,9 @@ async function refresh() {
   state.updatedAt = Date.now()
 
   render()
+  // Keep an open issues panel current — evidence a few seconds old is
+  // evidence; evidence from before the last five failures is a trap.
+  if (issuesLane) renderIssues()
 }
 
 document.addEventListener('click', async (event) => {
