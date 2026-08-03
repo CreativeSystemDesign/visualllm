@@ -2185,7 +2185,13 @@ function renderBrowse() {
   const cols = visibleColumns(models)
   renderBrowseHeader(cols)
 
-  $('bCount').textContent = `${models.length} of ${state.catalog.length} models · ${state.pool.length} in your pool`
+  const age = state.statsFetchedAt ? Math.max(0, Math.round(Date.now() / 1000 - state.statsFetchedAt)) : null
+  const freshness = age == null
+    ? 'speed data not fetched'
+    : age < 60 ? 'speed data updated just now'
+      : age < 3600 ? `speed data updated ${Math.round(age / 60)}m ago`
+        : `speed data is ${Math.floor(age / 3600)}h old`
+  $('bCount').textContent = `${models.length} of ${state.catalog.length} models · ${state.pool.length} in your pool · ${freshness}`
 
   list.innerHTML = ''
   if (!state.catalog.length) {
@@ -2249,6 +2255,22 @@ async function savePool() {
 // PointerEvent that matches no provider — a full catalog showing zero rows.
 $('openBrowse').addEventListener('click', () => openBrowse())
 $('closeBrowse').addEventListener('click', closeBrowse)
+$('bRefresh').addEventListener('click', async () => {
+  const button = $('bRefresh')
+  button.disabled = true
+  button.textContent = 'Refreshing…'
+  try {
+    await loadCatalog()
+    await loadStats({ refresh: true })
+    openBrowse(state.browse.provider || undefined)
+    toast('Catalog and speed data refreshed')
+  } catch (err) {
+    toast(`Refresh failed: ${err}`)
+  } finally {
+    button.disabled = false
+    button.textContent = 'Refresh catalogs'
+  }
+})
 
 $('browseScrim').addEventListener('click', (event) => {
   if (event.target === $('browseScrim')) return closeBrowse()
