@@ -1457,7 +1457,11 @@ function renderProviders() {
   const list = $('providerList')
   list.innerHTML = ''
   if (!state.providers.length) {
-    list.innerHTML = `<div class="empty-state"><strong>No providers yet</strong>Add one below and its models load straight into the sidebar.</div>`
+    list.innerHTML = `<div class="empty-state provider-onboarding">
+      <strong>Connect your first provider</strong>
+      <span>A provider is a service that supplies models, such as OpenRouter, OpenAI, Anthropic, or a local server.</span>
+      <span>Enter its API key below, test the connection, and its catalog will appear here.</span>
+    </div>`
     return
   }
   state.providers.forEach((provider) => {

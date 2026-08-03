@@ -886,6 +886,15 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .onboarding-empty .empty-explain { color: var(--text-dim); }
 .empty-action { margin-top: 8px; }
 
+.provider-onboarding {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  line-height: 1.45;
+}
+.provider-onboarding strong { font-size: 14px; color: var(--text); }
+.provider-onboarding span { color: var(--text-faint); }
+
 .lane-remove {
   flex-shrink: 0;
   width: 26px; height: 26px;
