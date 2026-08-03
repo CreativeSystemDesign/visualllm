@@ -35,7 +35,8 @@ The core product is already functional:
 - Provider configuration and catalog fetching.
 - OpenRouter and generic OpenAI-compatible providers.
 - Visual pool and drag-and-drop lane construction.
-- Ordered fallback routing on `127.0.0.1:4100`.
+- Ordered fallback routing on loopback, configurable from the engine settings
+   panel and defaulting to `127.0.0.1:4100`.
 - Capability and context filtering.
 - Blocking and streaming response handling.
 - A pre-forward commit gate for empty, stalled, or unusable 200 responses.
@@ -128,11 +129,11 @@ quota or depend on live upstream services.
 ### 7. Security and lifecycle maturity
 
 - [x] Store provider keys in the OS keychain.
-- [ ] Keep secrets out of logs, previews, diagnostics, and crash reports.
+- [x] Keep secrets out of logs, previews, diagnostics, and crash reports.
 - [ ] Improve port-conflict and engine-ownership messages.
 - [x] Support a deliberate configurable port without compromising stable URLs.
-- [ ] Document the localhost-only threat model and limitations.
-- [ ] Review all Tauri permissions and webview boundaries before release.
+- [x] Document the localhost-only threat model and limitations.
+- [x] Review all Tauri permissions and webview boundaries before release.
 
 **Done when:** the security model is explicit, tested, and appropriate for a
 public local desktop application.
@@ -164,10 +165,10 @@ The single-instance desktop milestone is implemented through Tauri's official
 single-instance plugin. The remaining work in that milestone is manual startup,
 duplicate-launch, restart, and shutdown verification on a packaged build.
 
-The next code milestone is **routing and persistence confidence**: add a local
-mock-provider harness for blocking and streaming fallback, then cover
-persistence migrations and corrupt-state recovery without spending provider
-quota. After that, continue the connection experience and release packaging.
+The next code milestone is **configuration portability**: add export/import or
+backup/restore for user configuration without exporting provider secrets.
+After that, complete packaged startup verification and prepare the first public
+release materials.
 
 ## Release criteria
 

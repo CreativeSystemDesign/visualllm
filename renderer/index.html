@@ -102,6 +102,7 @@
       <span class="stat" id="statModels">—</span>
       <span class="stat" id="statFastest">—</span>
       <span class="stat" id="statTraffic">—</span>
+      <button class="stat stat-link" id="statPort" title="Engine port settings">engine 127.0.0.1:4100</button>
       <span class="stat stat-right" id="statUpdated">—</span>
       <!-- The bell. Lit with a count when notifications arrived and faded
            away unviewed; quiet when everything has been seen or muted. -->
@@ -271,6 +272,34 @@
       </header>
       <div class="panel-body">
         <div id="notifList"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="scrim" id="settingsScrim" hidden>
+    <section class="panel" role="dialog" aria-label="Engine settings">
+      <header class="panel-head">
+        <div>
+          <h2>Engine settings</h2>
+          <p class="sub">The local OpenAI-compatible engine listens on loopback only.</p>
+        </div>
+        <button class="wc" id="closeSettings" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+      <div class="panel-body">
+        <form class="provider-form" id="settingsForm">
+          <label class="field">
+            <span>Engine port</span>
+            <input id="enginePort" type="number" min="1024" max="65535" step="1" required />
+          </label>
+          <p class="form-note">Use an unused port from 1024–65535. Changes apply after restarting VisualLLM.</p>
+          <div class="form-actions">
+            <span class="spacer"></span>
+            <button type="button" class="btn-ghost" id="cancelSettings">Cancel</button>
+            <button type="submit" class="btn-primary">Save port</button>
+          </div>
+        </form>
       </div>
     </section>
   </div>

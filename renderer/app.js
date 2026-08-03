@@ -507,6 +507,7 @@ function renderStatusBar() {
   $('statTraffic').innerHTML = requests
     ? `<b>${requests.toLocaleString()}</b> <span class="unit">requests</span> · <b>${failures}</b> <span class="unit">failed (${rate}%)</span>`
     : '<span class="unit">no traffic yet</span>'
+  $('statPort').textContent = `engine ${engineHost()}`
 }
 
 function renderUpdated() {
@@ -1559,6 +1560,39 @@ async function loadPort() {
   }
 }
 
+function openSettings() {
+  $('enginePort').value = enginePort
+  $('settingsScrim').hidden = false
+}
+
+function closeSettings() {
+  $('settingsScrim').hidden = true
+}
+
+$('statPort').addEventListener('click', openSettings)
+$('closeSettings').addEventListener('click', closeSettings)
+$('cancelSettings').addEventListener('click', closeSettings)
+$('settingsScrim').addEventListener('click', (event) => {
+  if (event.target === $('settingsScrim')) closeSettings()
+})
+$('settingsForm').addEventListener('submit', async (event) => {
+  event.preventDefault()
+  const port = Number($('enginePort').value)
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    toast('Choose a port from 1024 to 65535')
+    return
+  }
+  try {
+    await api.portSet(port)
+    enginePort = port
+    renderStatusBar()
+    closeSettings()
+    toast(`Port saved — restart VisualLLM to use ${port}`)
+  } catch (error) {
+    toast(`Could not save port: ${error.message}`)
+  }
+})
+
 function mergeStats() {
   const stats = state.stats || {}
   state.catalog.forEach((m) => {
@@ -2473,17 +2507,23 @@ document.addEventListener('click', async (event) => {
 // headers — with the UI still rendering perfectly and no button working.
 fillPresetOptions()
 
-loadPort()
-loadLanes()
-loadPool().then(renderSidebar)
-loadStats()
-loadProviders().then(() => {
-  renderProviders()
-  loadCatalog()
-})
+async function bootstrap() {
+  // The port is part of every endpoint URL, so load it before the first paint
+  // rather than briefly advertising the default while persisted state loads.
+  await loadPort()
+  await loadLanes()
+  await loadPool()
+  render()
+  loadStats()
+  loadProviders().then(() => {
+    renderProviders()
+    loadCatalog()
+  })
+  refresh()
+  setInterval(refresh, 4000)
+}
 
-refresh()
-setInterval(refresh, 4000)
+bootstrap()
 // The "updated Ns ago" clock ticks on its own; a repaint every second just to
 // age a label would throw away scroll positions for nothing.
 setInterval(renderUpdated, 1000)

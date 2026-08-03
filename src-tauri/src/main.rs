@@ -309,6 +309,9 @@ fn provider_save(app: tauri::AppHandle, input: ProviderInput) -> Result<Provider
 fn provider_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let dir = store_dir(&app)?;
     let mut all = providers::load(&dir);
+    // Remove the credential before dropping the provider record. Otherwise a
+    // deleted provider leaves a usable secret behind under its old id.
+    providers::forget_key(&id)?;
     all.retain(|p| p.id != id);
     providers::save(&dir, &all)
 }
@@ -501,12 +504,15 @@ fn port_load(dir: &PathBuf) -> u16 {
 fn port_save(dir: &PathBuf, port: u16) -> Result<(), String> {
     let clamped = port.max(1024).min(65535);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let path = port_path(dir);
+    let tmp = dir.join("port.json.tmp");
     std::fs::write(
-        port_path(dir),
+        &tmp,
         serde_json::to_string_pretty(&serde_json::json!({ "port": clamped }))
             .map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(tmp, path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -568,4 +574,59 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to start VisualLLM");
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::{port_load, port_save, DEFAULT_PORT};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("visualllm-port-test-{stamp}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_port_uses_default() {
+        let dir = temp_dir();
+        assert_eq!(port_load(&dir), DEFAULT_PORT);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn valid_port_round_trips() {
+        let dir = temp_dir();
+        port_save(&dir, 49123).unwrap();
+        assert_eq!(port_load(&dir), 49123);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unsafe_ports_fall_back_to_default() {
+        let dir = temp_dir();
+        for port in [22, 80, 443, 1023] {
+            fs::write(
+                dir.join("port.json"),
+                serde_json::json!({ "port": port }).to_string(),
+            )
+            .unwrap();
+            assert_eq!(port_load(&dir), DEFAULT_PORT);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_port_uses_default() {
+        let dir = temp_dir();
+        fs::write(dir.join("port.json"), "not json").unwrap();
+        assert_eq!(port_load(&dir), DEFAULT_PORT);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

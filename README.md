@@ -129,10 +129,11 @@ knowing because getting them wrong is silent:
 
 ## Known, and deliberate
 
-**API keys are stored in plaintext** in `providers.json` under the OS app-data
-directory, owner-read-only. That is a floor, not a solution: it wants the system
-keychain before anyone else installs this. Storage is behind a seam in
-`providers.rs`, so replacing the backend touches nothing else.
+**API keys are stored in the OS keychain**. `providers.json` contains blank key
+fields and is retained only for provider metadata. Legacy plaintext provider
+files remain readable for migration; saving a provider rewrites them without
+the secret. The renderer receives only a masked key hint and never receives a
+usable credential.
 
 **The two 429s are still treated alike.** OpenRouter returns the same status for
 "this provider is throttling you" — where another model fixes it — and "your

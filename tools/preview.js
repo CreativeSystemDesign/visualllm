@@ -116,6 +116,8 @@ const html = fs
         statsRead: () => ok(data.stats),
         statsRefresh: () => ok(0),
         incidentsRead: () => ok(data.incidents),
+        portGet: () => ok(4100),
+        portSet: (port) => ok(port),
       }
 
       // Ten seconds in, a synthetic failure arrives — so the notification

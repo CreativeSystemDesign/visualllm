@@ -161,9 +161,9 @@ pub fn save(dir: &PathBuf, providers: &[Provider]) -> Result<(), String> {
     write_state(path, &safe)?;
 
     for provider in providers {
-        if !provider.key.is_empty() {
-            keyring_set(&provider.id, &provider.key)?;
-        }
+        // Set empty values too: clearing a provider in the UI must remove the
+        // old credential rather than leaving an orphaned secret in the keychain.
+        keyring_set(&provider.id, &provider.key)?;
     }
     Ok(())
 }
@@ -637,6 +637,10 @@ fn keyring_set(provider_id: &str, key: &str) -> Result<(), String> {
     } else {
         entry.set_password(key).map_err(|e| e.to_string())
     }
+}
+
+pub fn forget_key(provider_id: &str) -> Result<(), String> {
+    keyring_set(provider_id, "")
 }
 
 fn hydrate_keys(providers: &mut [Provider]) {
