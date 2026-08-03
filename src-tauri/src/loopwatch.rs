@@ -113,6 +113,9 @@ fn results_by_id(messages: &[Value]) -> HashMap<String, String> {
 /// One verbatim repeat: the same (tool, arguments) issued `times` times.
 pub struct Repeat {
     pub tool: String,
+    /// The arguments, verbatim — kept so a repeat can be tested for
+    /// LIVENESS against the conversation's most recent call.
+    pub args: String,
     pub times: usize,
     /// Whether every one of those calls got a result back. An agent
     /// re-trying a call that never came back is behaving correctly, and
@@ -138,10 +141,20 @@ pub fn find_repeats(messages: &[Value], threshold: usize) -> Vec<Repeat> {
     let mut repeats: Vec<Repeat> = counts
         .into_iter()
         .filter(|(_, (times, _))| *times >= threshold)
-        .map(|((tool, _), (times, answered))| Repeat { tool, times, answered })
+        .map(|((tool, args), (times, answered))| Repeat { tool, args, times, answered })
         .collect();
     repeats.sort_by(|a, b| b.times.cmp(&a.times));
     repeats
+}
+
+/// The signature of the conversation's most recent tool call — what decides
+/// whether a detected pattern is a LIVE loop or old residue.
+fn last_call_signature(messages: &[Value]) -> Option<(String, String)> {
+    messages
+        .iter()
+        .rev()
+        .find(|m| m["role"].as_str() == Some("assistant") && !tool_calls_of(m).is_empty())
+        .and_then(|m| tool_calls_of(m).last().map(signature))
 }
 
 /// The futile species: one tool answering VARYING arguments with the same
@@ -341,13 +354,28 @@ fn with_tail_note(messages: Vec<Value>, note: String) -> Vec<Value> {
 /// Break a stuck agent out: remove the pattern, then name it — at the tail,
 /// where it will actually be read. Returns `None` when nothing is stuck,
 /// which is nearly always.
+///
+/// THE NOTE DESCRIBES THE LIVE LOOP, NOT HISTORY. A client resends its own
+/// transcript forever, duplicates included, so a verbatim repeat detected in
+/// the history may be long over — residue, not a loop. Residue is still
+/// collapsed (that is always safe and always shrinks the context), but the
+/// note only ever names a pattern whose most recent call proves it is
+/// happening now. Without this rule, old residue permanently outranks a live
+/// futile run, and the model is told about yesterday's problem on every turn
+/// while today's goes unnamed — observed live, 2026-08-02, ~50 turns of it.
 pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, Broke)> {
     let stuck: Vec<Repeat> = find_repeats(messages, threshold)
         .into_iter()
         .filter(|r| r.answered)
         .collect();
+    let last = last_call_signature(messages);
+    let is_live = |r: &&Repeat| {
+        last.as_ref()
+            .is_some_and(|(tool, args)| *tool == r.tool && *args == r.args)
+    };
 
-    if let Some(worst) = stuck.first() {
+    // A live verbatim loop gets the measured treatment: collapse plus note.
+    if let Some(worst) = stuck.iter().find(is_live) {
         let (collapsed_messages, collapsed) = collapse_repeats(messages, threshold);
         let out = with_tail_note(collapsed_messages, repeat_note(&worst.tool, worst.times));
         return Some((
@@ -356,13 +384,33 @@ pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, B
         ));
     }
 
-    // Verbatim species takes priority when both would fire: it is the one
-    // with measurements behind it.
-    let futile = find_futile(messages, threshold)?;
-    let out = with_tail_note(messages.to_vec(), futile_note(&futile));
+    // A live futile run gets its note — and any stale verbatim residue is
+    // swept in the same pass, so the model reads the right diagnosis over
+    // the smallest possible transcript.
+    if let Some(futile) = find_futile(messages, threshold) {
+        let (base, collapsed) = if stuck.is_empty() {
+            (messages.to_vec(), 0)
+        } else {
+            collapse_repeats(messages, threshold)
+        };
+        let out = with_tail_note(base, futile_note(&futile));
+        return Some((
+            out,
+            Broke { kind: "futile", tool: futile.tool, times: futile.times, collapsed },
+        ));
+    }
+
+    // Nothing live — but stale residue is still dead weight in every request
+    // that follows, so it is swept without a note. There is nothing to say,
+    // only something to tidy.
+    let worst = stuck.first()?;
+    let (out, collapsed) = collapse_repeats(messages, threshold);
+    if collapsed == 0 {
+        return None;
+    }
     Some((
         out,
-        Broke { kind: "futile", tool: futile.tool, times: futile.times, collapsed: 0 },
+        Broke { kind: "sweep", tool: worst.tool.clone(), times: worst.times, collapsed },
     ))
 }
 
@@ -514,6 +562,45 @@ mod tests {
         let tail = out.last().unwrap();
         assert_eq!(tail["role"], json!("user"));
         assert!(tail["content"].as_str().unwrap().contains("read_file"));
+    }
+
+    #[test]
+    fn stale_residue_is_swept_but_the_note_names_the_live_loop() {
+        // Old verbatim repeats sit at the top (the client never cleans its
+        // transcript); a fresh futile run is happening at the tail. The note
+        // must describe the live loop — quoting the result it keeps getting —
+        // while the residue is only collapsed. This exact confusion ran for
+        // ~50 turns on 2026-08-02 before the rule existed.
+        let messages = vec![
+            call("1", "read_file", r#"{"path":"a"}"#), result("1", "old text"),
+            call("2", "read_file", r#"{"path":"a"}"#), result("2", "old text"),
+            call("3", "read_file", r#"{"path":"a"}"#), result("3", "old text"),
+            call("4", "read_file", r#"{"lines":"130-170"}"#), result("4", "same tail"),
+            call("5", "read_file", r#"{"lines":"130-160"}"#), result("5", "same tail"),
+            call("6", "read_file", r#"{"lines":"155-170"}"#), result("6", "same tail"),
+        ];
+        let (out, broke) = break_loop(&messages, 3).expect("a live futile run");
+        assert_eq!(broke.kind, "futile");
+        assert_eq!(broke.collapsed, 2, "stale residue swept in the same pass");
+        let note = out.last().unwrap()["content"].as_str().unwrap();
+        assert!(note.contains("same tail"), "the live result is quoted");
+        assert!(!note.contains("these exact arguments"), "not the stale diagnosis");
+    }
+
+    #[test]
+    fn stale_residue_alone_is_swept_without_a_note() {
+        // The loop is over — the most recent call is something new. The dead
+        // weight still goes, but there is nothing to tell the model.
+        let messages = vec![
+            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
+            call("2", "read_file", r#"{"path":"a"}"#), result("2", "text"),
+            call("3", "read_file", r#"{"path":"a"}"#), result("3", "text"),
+            call("4", "grep", r#"{"q":"port"}"#), result("4", "4100"),
+        ];
+        let (out, broke) = break_loop(&messages, 3).expect("residue to sweep");
+        assert_eq!(broke.kind, "sweep");
+        assert_eq!(broke.collapsed, 2);
+        assert_eq!(out.last().unwrap()["role"], json!("tool"), "no note appended");
     }
 
     #[test]

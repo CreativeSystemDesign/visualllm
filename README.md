@@ -146,8 +146,12 @@ treatment is the one that measured 0/4 repeats against captured loops
 whose call *and* result are byte-identical to a later one, so an edit can
 never be hidden — and append a note naming the loop as the **last** message.
 Placement is the finding: the same note in the system prompt did nothing,
-because at 150K tokens the system prompt is 150K tokens in the past. This is
-the engine's only modification of a conversation; it is logged, and announced
+because at 150K tokens the system prompt is 150K tokens in the past. The
+note only ever describes a **live** loop — one the conversation's most
+recent call belongs to. Clients resend their transcripts forever,
+duplicates included, and stale residue is merely swept, or the model would
+be told about yesterday's loop while today's goes unnamed. This is the
+engine's only modification of a conversation; it is logged, and announced
 on the response in `x-visualllm-unstuck`.
 
 `classify` (refusals) and the commit gate (acceptances) in `server.rs` are
