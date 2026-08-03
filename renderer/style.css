@@ -54,12 +54,15 @@
 
 /* The window itself is transparent and undecorated; the rounded corners below
    are the real edge of the app, cut to the same radius as the frames inside it. */
-html, body { height: 100%; overflow: hidden; background: transparent; }
+/* Keep the native window opaque. Transparent undecorated GTK/WebKit windows
+  can expose holes in their input region under Wayland, which makes clicks
+  pass through to VS Code even though the painted surface is visible. */
+html, body { height: 100%; overflow: hidden; background: var(--bg); }
 
 body {
   /* Transparent margin around the app. Without somewhere to fall, an outer
      shadow has nowhere to go and the edge reads as a cut rather than a lift. */
-  padding: 26px 30px 40px;
+  padding: 0;
   color: var(--text);
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                "Helvetica Neue", Arial, sans-serif;
