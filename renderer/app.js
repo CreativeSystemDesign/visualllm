@@ -2224,10 +2224,20 @@ async function refresh() {
   state.gateway = data.gateway || ''
   state.updatedAt = Date.now()
 
-  render()
-  // Keep an open issues panel current — evidence a few seconds old is
-  // evidence; evidence from before the last five failures is a trap.
-  if (issuesLane) renderIssues()
+  // Repaint only when this poll actually changed something. Rebuilding
+  // identical DOM every four seconds is not just waste — it eats input: a
+  // click needs its element to survive from press to release, and a tick
+  // that swaps the tree mid-click silently kills it. A button that fails
+  // one time in fifty and never under scrutiny is this bug, and it was
+  // caught by an automated click losing the race that a finger usually wins.
+  const signature = JSON.stringify([data, state.incidents])
+  if (signature !== refresh.last) {
+    refresh.last = signature
+    render()
+    // Keep an open issues panel current — evidence a few seconds old is
+    // evidence; evidence from before the last five failures is a trap.
+    if (issuesLane) renderIssues()
+  }
 }
 
 document.addEventListener('click', async (event) => {
