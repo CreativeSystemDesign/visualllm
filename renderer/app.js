@@ -1584,11 +1584,11 @@ $('settingsForm').addEventListener('submit', async (event) => {
     return
   }
   try {
-    await api.portSet(port)
-    enginePort = port
-    renderStatusBar()
+    const activePort = Number(await api.portSet(port))
+    enginePort = activePort || port
+    render()
     closeSettings()
-    toast(`Port saved — restart VisualLLM to use ${port}`)
+    toast(`Engine moved to ${engineHost()}`)
   } catch (error) {
     toast(`Could not save port: ${error.message}`)
   }

@@ -45,11 +45,13 @@ mod providers;
 mod server;
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Manager;
+use tokio::sync::watch;
 
 use providers::{CatalogModel, Provider, ProviderView};
 
@@ -486,6 +488,8 @@ async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult
 /// The port the engine answers on. Defaults to 4100; persisted in port.json.
 const DEFAULT_PORT: u16 = 4100;
 
+static ENGINE_PORT_TX: OnceLock<watch::Sender<u16>> = OnceLock::new();
+
 fn port_path(dir: &PathBuf) -> PathBuf {
     dir.join("port.json")
 }
@@ -527,8 +531,21 @@ fn port_get(app: tauri::AppHandle) -> Result<u16, String> {
 #[tauri::command]
 fn port_set(app: tauri::AppHandle, port: u16) -> Result<u16, String> {
     let dir = store_dir(&app)?;
+    let port = port.max(1024).min(65535);
+    // Fail before changing persistence or notifying the server when another
+    // process already owns the requested loopback port. The listener reload
+    // still binds again as the final authority, but this avoids the normal
+    // conflict path leaving the UI advertising an endpoint that did not move.
+    if port_load(&dir) != port {
+        let probe = std::net::TcpListener::bind(("127.0.0.1", port))
+            .map_err(|error| format!("127.0.0.1:{port} is unavailable — {error}"))?;
+        drop(probe);
+    }
+    if let Some(sender) = ENGINE_PORT_TX.get() {
+        sender.send(port).map_err(|_| "engine is not running".to_string())?;
+    }
     port_save(&dir, port)?;
-    Ok(port.max(1024).min(65535))
+    Ok(port)
 }
 
 fn main() {
@@ -556,8 +573,10 @@ fn main() {
             // desktop app should have.
             let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
             let server_port = port_load(&dir);
+            let (port_tx, port_rx) = watch::channel(server_port);
+            let _ = ENGINE_PORT_TX.set(port_tx);
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = server::serve(dir, server_port).await {
+                if let Err(err) = server::serve(dir, server_port, port_rx).await {
                     eprintln!("engine: {err}");
                 }
             });

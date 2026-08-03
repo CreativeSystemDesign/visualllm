@@ -65,6 +65,7 @@
 //!    very next call — no reload, no restart.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 // `use` is just shorthand so we can write `Json` instead of `axum::Json`
 // everywhere. The braces group several imports from the same place.
@@ -77,6 +78,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use tokio::sync::{oneshot, watch};
 
 // `crate::` means "from this program", as opposed to an external library.
 use crate::{incidents, lanes, loopwatch, providers};
@@ -1356,14 +1358,66 @@ pub fn router(dir: PathBuf) -> Router {
 /// Bound to `127.0.0.1` deliberately: that address is reachable only from this
 /// machine. Using `0.0.0.0` would expose an unauthenticated proxy holding the
 /// user's API keys to the entire local network.
-pub async fn serve(dir: PathBuf, port: u16) -> Result<(), String> {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .map_err(|e| format!("could not listen on 127.0.0.1:{port} — {e}"))?;
+pub async fn serve(dir: PathBuf, port: u16, mut ports: watch::Receiver<u16>) -> Result<(), String> {
+    let dir = Arc::new(dir);
+    let listener = bind(port).await?;
+    let (mut stop_tx, stop_rx) = oneshot::channel();
+    let mut active = spawn(listener, Arc::clone(&dir), stop_rx);
+    let mut current = port;
 
-    axum::serve(listener, router(dir))
+    loop {
+        tokio::select! {
+            result = &mut active => {
+                return result
+                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string());
+            }
+            changed = ports.changed() => {
+                if changed.is_err() {
+                    let _ = stop_tx.send(());
+                    return active.await.map_err(|e| e.to_string())?.map_err(|e| e.to_string());
+                }
+                let next = *ports.borrow_and_update();
+                if next == current {
+                    continue;
+                }
+
+                // Bind first. A busy new port leaves the current listener live.
+                let listener = match bind(next).await {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        eprintln!("engine: keeping 127.0.0.1:{current}; could not switch to 127.0.0.1:{next}: {error}");
+                        continue;
+                    }
+                };
+                let _ = stop_tx.send(());
+                let _ = active.await;
+                let (next_stop_tx, next_stop_rx) = oneshot::channel();
+                stop_tx = next_stop_tx;
+                active = spawn(listener, Arc::clone(&dir), next_stop_rx);
+                current = next;
+                eprintln!("engine: now listening on 127.0.0.1:{current}");
+            }
+        }
+    }
+}
+
+async fn bind(port: u16) -> Result<tokio::net::TcpListener, String> {
+    tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("could not listen on 127.0.0.1:{port} — {e}"))
+}
+
+fn spawn(
+    listener: tokio::net::TcpListener,
+    dir: Arc<PathBuf>,
+    stop: oneshot::Receiver<()>,
+) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
+    tokio::spawn(async move {
+        axum::serve(listener, router((*dir).clone()))
+            .with_graceful_shutdown(async { let _ = stop.await; })
+            .await
+    })
 }
 
 // ============================================================================

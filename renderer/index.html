@@ -297,7 +297,7 @@
             <span>Engine port</span>
             <input id="enginePort" type="number" min="1024" max="65535" step="1" required />
           </label>
-          <p class="form-note">Use an unused port from 1024–65535. Changes apply after restarting VisualLLM.</p>
+          <p class="form-note">Use an unused port from 1024–65535. The loopback listener moves immediately; existing client connections may finish on the old port.</p>
           <div class="form-actions">
             <span class="spacer"></span>
             <button type="button" class="btn-ghost" id="cancelSettings">Cancel</button>
