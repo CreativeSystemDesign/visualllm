@@ -92,7 +92,7 @@ application without opening a terminal.
 ### 4. First-run onboarding
 
 - [x] Explain providers, models, pools, and lanes in the empty states.
-- [ ] Guide the first provider setup without hiding the advanced form.
+- [x] Guide the first provider setup without hiding the advanced form.
 - [x] Explain right-to-left fallback priority at the point of use.
 - [x] Show a clear next step after the first lane is created.
 - [ ] Make catalog freshness and refresh state visible.
