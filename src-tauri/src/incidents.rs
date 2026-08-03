@@ -107,7 +107,11 @@ pub fn kind_of(note: &str) -> &'static str {
     } else if text.starts_with("request rejected") {
         return "request_rejected";
     }
-    if text.contains("reasoning") {
+    // Checked before "no usable content": the gate's stall message contains
+    // both phrases, and silence is the sharper diagnosis of the two.
+    if text.contains("went silent") {
+        "stalled"
+    } else if text.contains("reasoning") {
         "reasoning_burn"
     } else if text.contains("error mid-stream") || text.contains("error in a 200 body") {
         "midstream_error"
@@ -189,5 +193,30 @@ mod tests {
         assert_eq!(kind_of("this model does not support tools (400)"), "capability_gap");
         assert_eq!(kind_of("prompt too long for this model (400)"), "context_overflow");
         assert_eq!(kind_of("something entirely new"), "unattributed");
+    }
+
+    #[test]
+    fn silence_is_named_before_its_symptoms() {
+        // The gate's stall message also says "no usable content" — the
+        // empty_response phrase. Silence must win that collision, or a dead
+        // connection gets diagnosed as a model that answered with nothing.
+        assert_eq!(
+            kind_of("went silent mid-stream before any usable content — connection presumed dead"),
+            "stalled"
+        );
+        assert_eq!(kind_of("went silent: no bytes for 300s — connection presumed dead"), "stalled");
+        // And a plain broken stream still reads as what it is.
+        assert_eq!(kind_of("stream broke with no usable content: connection reset"), "empty_response");
+    }
+
+    #[test]
+    fn a_quoted_excerpt_does_not_change_a_loops_kind() {
+        // Futile evidence now carries the result the model kept ignoring.
+        // Whatever those quoted bytes happen to say, the "loop (…)" prefix
+        // decides the kind — quotes are receipts, not verdicts.
+        assert_eq!(
+            kind_of(r#"loop (futile): `read_file` — 13 calls, 0 redundant pairs collapsed; every call returned the identical result: "Error: missing required parameter startLine. The model went silent.""#),
+            "loop_futile"
+        );
     }
 }

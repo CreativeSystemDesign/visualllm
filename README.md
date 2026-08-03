@@ -17,6 +17,23 @@ npm run dev      # run it
 npm run build    # .deb and AppImage in src-tauri/target/release/bundle/
 ```
 
+On Linux, the built desktop binary lives at `src-tauri/target/debug/visualllm`.
+It can be launched directly with a clean GTK/X11 environment:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+env -i \
+  HOME="$HOME" \
+  PATH="/usr/bin:/bin:$HOME/.cargo/bin" \
+  DISPLAY="${DISPLAY:-:0}" \
+  XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+  ./src-tauri/target/debug/visualllm
+```
+
+If the UI shows a connection error, the app is failing to reach its own engine
+on `http://127.0.0.1:4100`; the backend serves the renderer from `renderer/`
+and the engine endpoints from `/v1/models` and `/lane/{slug}/v1/chat/completions`.
+
 Requires the Rust toolchain, Node, and on Linux the WebKit development
 packages: `libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev
 librsvg2-dev`.
@@ -178,3 +195,127 @@ Next, in order: split the two 429 *statuses* by reading the error body (the
 mid-stream kind inside a 200 is already caught); move keys to the system
 keychain; check capabilities per-provider rather than trusting the catalog's
 union.
+
+---
+
+## Step-by-step launch (Linux)
+
+### 1. Install system dependencies
+
+```bash
+# Ubuntu / Debian
+sudo apt update && sudo apt install -y \
+  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
+  build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+# Fedora
+sudo dnf install -y webkit2gtk4.1-devel libxdo-devel libayatana-appindicator-gtk3-devel librsvg2-devel \
+  gcc gcc-c++ make openssl-devel gtk3-devel
+
+# Arch
+sudo pacman -S webkit2gtk-4.1 libxdo libayatana-appindicator librsvg base-devel openssl gtk3
+```
+
+### 2. Install Rust toolchain
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+rustup default stable
+```
+
+### 3. Install Node.js (for `npm run dev` / `npm run build`)
+
+```bash
+# via nvm (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install --lts
+
+# or via package manager
+# sudo apt install nodejs npm
+```
+
+### 4. Build the app
+
+```bash
+# From the repo root
+cd /path/to/visualllm
+
+# Development build (fast, unoptimised)
+cargo build --manifest-path src-tauri/Cargo.toml
+
+# Release build (optimised, used for .deb / AppImage)
+cargo build --release --manifest-path src-tauri/Cargo.toml
+```
+
+The binary will be at:
+- `src-tauri/target/debug/visualllm` (dev)
+- `src-tauri/target/release/visualllm` (release)
+
+### 5. Run the app (direct binary launch)
+
+The Tauri dev server (`npm run dev`) works but inherits the VS Code snap environment, which causes library conflicts. The reliable way is to launch the built binary directly with a clean GTK/X11 environment:
+
+```bash
+# From the repo root
+export PATH="$HOME/.cargo/bin:$PATH"
+
+env -i \
+  HOME="$HOME" \
+  PATH="/usr/bin:/bin:$HOME/.cargo/bin" \
+  DISPLAY="${DISPLAY:-:0}" \
+  XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+  ./src-tauri/target/debug/visualllm
+```
+
+**What each part does:**
+- `env -i` — start with an empty environment (no snap library paths)
+- `HOME="$HOME"` — needed for app data directory (`~/.local/share/app.visualllm`)
+- `PATH="/usr/bin:/bin:$HOME/.cargo/bin"` — system bins + cargo only
+- `DISPLAY="${DISPLAY:-:0}"` — your X11/Wayland display (usually `:0`)
+- `XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"` — X authority cookie (Wayland uses a mutter path like `/run/user/1000/.mutter-Xwaylandauth.*`)
+
+If the window doesn't appear, check your X authority file:
+
+```bash
+echo $XAUTHORITY
+ls -l "$XAUTHORITY"
+# If empty or missing, find it with:
+xauth list
+# Then use that path in the launch command above
+```
+
+### 6. Verify it's working
+
+The app opens a frameless window. The engine serves on `http://127.0.0.1:4100`:
+
+```bash
+# Health check
+curl http://127.0.0.1:4100/health
+
+# List lanes (OpenAI-compatible /v1/models)
+curl http://127.0.0.1:4100/v1/models
+
+# Chat completion through a lane
+curl -X POST http://127.0.0.1:4100/lane/new-lane/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"new-lane","messages":[{"role":"user","content":"Hello"}],"max_tokens":50}'
+```
+
+### 7. Package for distribution (optional)
+
+```bash
+npm run build
+# Outputs .deb and AppImage in src-tauri/target/release/bundle/
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `symbol lookup error: libpthread` | You're inheriting the snap `LD_LIBRARY_PATH`. Use the `env -i` launch command above. |
+| `Failed to initialize GTK` | Missing `DISPLAY` or `XAUTHORITY`. Ensure you're on a graphical session and the variables are set. |
+| `Address already in use (port 4100)` | A previous instance is still running: `pkill -f visualllm && fuser -k 4100/tcp` |
+| Window opens but shows "Could not connect" | The engine didn't start. Check the terminal for `engine: could not listen...` — usually a stale process on 4100. |
+| Transparent window shows black/garbled | Your compositor doesn't support ARGB visuals. Set `"transparent": false` in `src-tauri/tauri.conf.json` and rebuild. |

@@ -59,7 +59,7 @@ use providers::{CatalogModel, Provider, ProviderView};
 /// engine of its own. All that remains is the status bar's live health and
 /// throughput readings, and it comes out once the engine reports its own.
 fn gateway_url() -> String {
-    std::env::var("VISUALLLM_GATEWAY").unwrap_or_else(|_| "http://127.0.0.1:4000".into())
+    std::env::var("VISUALLLM_GATEWAY").unwrap_or_else(|_| "http://127.0.0.1:4100".into())
 }
 
 #[derive(Serialize)]

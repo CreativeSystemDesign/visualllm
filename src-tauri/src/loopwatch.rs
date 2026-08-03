@@ -62,6 +62,12 @@ pub struct Broke {
     /// Redundant call/result pairs removed. Zero for the futile species —
     /// nothing repeats verbatim there, so there is nothing safe to remove.
     pub collapsed: usize,
+    /// Futile species only: the result the model kept receiving, quoted and
+    /// truncated. The note shows it to the model; carrying it here lets the
+    /// incident show it to the *user* — the diagnosis card can then say
+    /// exactly what went unread, instead of leaving that to be inferred
+    /// from the client's transcript after the fact.
+    pub excerpt: Option<String>,
 }
 
 // ---------------------------------------------------------------- inspection
@@ -380,7 +386,7 @@ pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, B
         let out = with_tail_note(collapsed_messages, repeat_note(&worst.tool, worst.times));
         return Some((
             out,
-            Broke { kind: "repeat", tool: worst.tool.clone(), times: worst.times, collapsed },
+            Broke { kind: "repeat", tool: worst.tool.clone(), times: worst.times, collapsed, excerpt: None },
         ));
     }
 
@@ -396,7 +402,13 @@ pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, B
         let out = with_tail_note(base, futile_note(&futile));
         return Some((
             out,
-            Broke { kind: "futile", tool: futile.tool, times: futile.times, collapsed },
+            Broke {
+                kind: "futile",
+                tool: futile.tool,
+                times: futile.times,
+                collapsed,
+                excerpt: Some(futile.excerpt),
+            },
         ));
     }
 
@@ -410,7 +422,7 @@ pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, B
     }
     Some((
         out,
-        Broke { kind: "sweep", tool: worst.tool.clone(), times: worst.times, collapsed },
+        Broke { kind: "sweep", tool: worst.tool.clone(), times: worst.times, collapsed, excerpt: None },
     ))
 }
 
@@ -557,6 +569,7 @@ mod tests {
         let (out, broke) = break_loop(&messages, 3).expect("a stuck agent");
         assert_eq!(broke.kind, "repeat");
         assert_eq!(broke.collapsed, 2);
+        assert!(broke.excerpt.is_none(), "the verbatim species has no quote to carry");
         // The note is the LAST message and speaks as the user — placement is
         // the entire finding: the same text in the system prompt did nothing.
         let tail = out.last().unwrap();
@@ -585,6 +598,12 @@ mod tests {
         let note = out.last().unwrap()["content"].as_str().unwrap();
         assert!(note.contains("same tail"), "the live result is quoted");
         assert!(!note.contains("these exact arguments"), "not the stale diagnosis");
+        // The same quote rides out on the record, so the diagnosis card can
+        // show the user exactly what the model kept ignoring.
+        assert!(
+            broke.excerpt.as_deref().is_some_and(|e| e.contains("same tail")),
+            "the incident carries the quoted result"
+        );
     }
 
     #[test]

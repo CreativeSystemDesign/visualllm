@@ -588,6 +588,40 @@ impl SseScan {
 /// to the next member instead of holding memory open forever.
 const PRELUDE_CAP: usize = 8 * 1024 * 1024;
 
+// ---------------------------------------------------------------- deadlines
+//
+// Every deadline here is on SILENCE, never on total time. A free model
+// generating slowly is the normal case this app exists for and must never
+// be cut off for it — but a socket delivering nothing at all is a dead
+// connection wearing an open port, and without a deadline it would hold
+// the whole lane hostage forever. Loopwatch and these share one definition
+// of stuck: receiving no new information.
+
+/// Time allowed to establish the connection. No TCP+TLS in ten seconds means
+/// the host is down or the address is wrong — the next member's problem now.
+const CONNECT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Longest gap between bytes on a STREAMING response. Streams carry a pulse
+/// even while a model queues or thinks — deltas, or keep-alive comments
+/// (OpenRouter sends them every few seconds while processing) — so two
+/// minutes of true silence is not slowness, it is absence.
+const STREAM_PATIENCE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Longest wait for a BLOCKING response, which legitimately says nothing at
+/// all until the whole answer exists. Five minutes covers a slow model
+/// writing a long answer; a connection that silent for longer is gone.
+const BLOCKING_PATIENCE: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The per-request HTTP client, with its idle deadline chosen by mode. The
+/// read timeout resets on every byte received — it measures silence, so a
+/// trickle keeps a connection alive and only a flatline ends one.
+fn http_client(idle: std::time::Duration) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_PATIENCE)
+        .read_timeout(idle)
+        .build()
+}
+
 /// The gate's verdict on a streaming response.
 enum Gated {
     /// A usable delta arrived. `prelude` is every byte seen so far, verbatim
@@ -616,6 +650,16 @@ async fn gate(resp: reqwest::Response) -> Gated {
     while let Some(item) = rest.next().await {
         let chunk = match item {
             Ok(chunk) => chunk,
+            // A flatline gets its true name. The idle deadline firing inside
+            // the gate means the stream started, never committed, and then
+            // stopped carrying bytes altogether — distinct from a stream
+            // that breaks loudly, and diagnosed differently.
+            Err(err) if err.is_timeout() => {
+                return Gated::Dead(
+                    "went silent mid-stream before any usable content — connection presumed dead"
+                        .into(),
+                )
+            }
             Err(err) => return Gated::Dead(format!("stream broke with no usable content: {err}")),
         };
         held += chunk.len();
@@ -985,23 +1029,31 @@ async fn chat(
                     .first()
                     .map(member_label)
                     .unwrap_or_else(|| "(empty lane)".into());
-                note_incident(
-                    &engine.dir,
-                    lane,
-                    &suspect,
-                    &format!(
-                        "loop ({}): `{}` — {} calls, {} redundant pairs collapsed",
-                        broke.kind, broke.tool, broke.times, broke.collapsed
-                    ),
-                    tool_count,
+                // The counts alone say a loop happened; the futile species'
+                // quote says what the model kept ignoring — which is the
+                // diagnosis. It was already shown to the model in the note;
+                // the record shows the same thing to the user. Appended after
+                // the summary so the "loop (…)" prefix keeps naming the kind.
+                let mut receipts = format!(
+                    "loop ({}): `{}` — {} calls, {} redundant pairs collapsed",
+                    broke.kind, broke.tool, broke.times, broke.collapsed
                 );
+                if let Some(excerpt) = &broke.excerpt {
+                    receipts.push_str(&format!(
+                        "; every call returned the identical result: {excerpt}"
+                    ));
+                }
+                note_incident(&engine.dir, lane, &suspect, &receipts, tool_count);
                 body["messages"] = Value::Array(repaired);
                 unstuck = Some(broke);
             }
         }
     }
 
-    let client = match reqwest::Client::builder().build() {
+    // Streaming has a pulse to check; blocking earns more patience because
+    // its silence is legitimate right up until the answer lands whole.
+    let idle = if streaming { STREAM_PATIENCE } else { BLOCKING_PATIENCE };
+    let client = match http_client(idle) {
         Ok(client) => client,
         Err(err) => {
             return error(
@@ -1234,12 +1286,19 @@ async fn chat(
                 }
             }
 
-            // ---- we never reached it ----
+            // ---- we never reached it, or it went dead before answering ----
             Err(err) => {
-                let why = if err.is_timeout() {
-                    "timed out".to_string()
-                } else if err.is_connect() {
+                // Order matters: a connect timeout is both `is_connect` and
+                // `is_timeout`, and "could not connect" is the truer name.
+                // The idle deadline firing HERE means the provider accepted
+                // the connection and then never produced a response at all.
+                let why = if err.is_connect() {
                     "could not connect".to_string()
+                } else if err.is_timeout() {
+                    format!(
+                        "went silent: no bytes for {}s — connection presumed dead",
+                        idle.as_secs()
+                    )
                 } else {
                     err.to_string()
                 };
