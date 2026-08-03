@@ -435,7 +435,13 @@ function renderLanes() {
 
   host.innerHTML = ''
   if (!state.lanes.length) {
-    host.innerHTML = `<div class="empty-state"><strong>No lanes yet</strong>Create one, then drag models into it.</div>`
+    host.innerHTML = `<div class="empty-state onboarding-empty">
+      <strong>Build your first endpoint</strong>
+      <span>Add a provider, choose models for your pool, then drag them here.</span>
+      <span class="empty-explain">The model on the right answers first. Models to its left are fallbacks.</span>
+      <button class="btn-primary empty-action" type="button" id="emptyNewLane">Create a lane</button>
+    </div>`
+    $('emptyNewLane').addEventListener('click', () => $('newLane').click())
     return
   }
   state.lanes.forEach((lane) => host.appendChild(laneEl(lane)))
