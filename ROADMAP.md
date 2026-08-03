@@ -95,7 +95,7 @@ application without opening a terminal.
 - [x] Guide the first provider setup without hiding the advanced form.
 - [x] Explain right-to-left fallback priority at the point of use.
 - [x] Show a clear next step after the first lane is created.
-- [ ] Make catalog freshness and refresh state visible.
+- [x] Make catalog freshness and refresh state visible.
 
 **Done when:** a first-time user can create a working lane without reading the
 architecture documentation.
