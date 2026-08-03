@@ -1,5 +1,51 @@
 # VisualLLM
 
+> Build reliable OpenAI-compatible endpoints by arranging AI models visually.
+
+VisualLLM is a visual fallback router for AI models. Add the providers you use,
+browse their models, drag the ones worth keeping into a lane, and connect tools
+such as VS Code to the resulting local endpoint.
+
+The model on the right answers first. Models to its left are fallbacks. When a
+provider is out of credit, rate-limited, unavailable, too small for the request,
+or returns an unusable answer, VisualLLM explains what happened and tries the
+next suitable member.
+
+## Why VisualLLM
+
+Most model gateways make routing a configuration problem. VisualLLM makes it a
+visible arrangement you can understand at a glance:
+
+- **Providers** supply catalogs; credentials stay on the Rust side of the app.
+- **The pool** is your shortlist of models worth considering.
+- **Lanes** are local OpenAI-compatible endpoints with an explicit fallback
+  order.
+- **Receipts** show which model served, which models were passed over, and why.
+
+The current product is Linux-first and available from source. A packaged public
+release is planned; see [`ROADMAP.md`](ROADMAP.md).
+
+## Quick start
+
+For development from a cloned repository:
+
+```bash
+cd /home/shane/visualllm
+node tools/smoke.js
+./tools/launch-system.sh
+```
+
+Then add a provider, browse its catalog, create a lane, and copy the lane URL
+into an OpenAI-compatible client. The default engine listens on
+`http://127.0.0.1:4100`.
+
+## Documentation
+
+- [`ROADMAP.md`](ROADMAP.md) — public-release milestones and criteria.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development and pull-request guidance.
+- [`SECURITY.md`](SECURITY.md) — threat model and vulnerability reporting.
+- [`LICENSE`](LICENSE) — project license.
+
 Design LLM endpoints by hand.
 
 Point it at a provider, and every model that provider offers appears in the
