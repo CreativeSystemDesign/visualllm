@@ -19,7 +19,11 @@ fi
 
 # Preserve only the session values needed by GTK/WebKit and the app data path.
 # In particular, do not pass LD_LIBRARY_PATH from a VS Code Snap terminal.
+#
+# GDK_BACKEND=x11 avoids a Mutter/Wayland bug where transparent frameless windows
+# lose stacking position on click, hopping behind the window underneath them.
 env -i \
+  GDK_BACKEND=x11 \
   HOME="$HOME" \
   USER="${USER:-$(id -un)}" \
   PATH="/usr/bin:/bin:$HOME/.cargo/bin" \
