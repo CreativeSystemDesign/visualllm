@@ -13,18 +13,9 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-# Do not create a second broken window when the engine is already serving. The
-# desktop app may have a configured port, so only treat a process as owned by
-# VisualLLM when its health response identifies the engine.
-if command -v curl >/dev/null 2>&1; then
-  for port in 4100 4200 4300 4400 4500; do
-    if curl -fsS --max-time 1 "http://127.0.0.1:$port/health" | grep -q 'VisualLLM'; then
-      printf 'VisualLLM is already running on http://127.0.0.1:%s.\n' "$port" >&2
-      printf 'Use the existing window, or close it before launching another instance.\n' >&2
-      exit 0
-    fi
-  done
-fi
+# Always start the binary. Tauri's single-instance plugin owns duplicate
+# handling and focuses the existing window. A launcher-side health check cannot
+# focus that window, so it made clicking the launcher appear to do nothing.
 
 # Preserve only the session values needed by GTK/WebKit and the app data path.
 # In particular, do not pass LD_LIBRARY_PATH from a VS Code Snap terminal.

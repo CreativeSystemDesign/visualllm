@@ -538,8 +538,16 @@ fn main() {
         // keeps the original process authoritative.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
+                // On Linux, especially under Wayland, a hidden or previously
+                // backgrounded window may accept `show` without becoming the
+                // active surface. Toggle the transient always-on-top state to
+                // request focus, then immediately restore the user's normal
+                // window behavior.
+                let _ = window.unminimize();
                 let _ = window.show();
+                let _ = window.set_always_on_top(true);
                 let _ = window.set_focus();
+                let _ = window.set_always_on_top(false);
             }
         }))
         .setup(|app| {
