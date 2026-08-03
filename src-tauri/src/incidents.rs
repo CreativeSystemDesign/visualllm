@@ -29,6 +29,26 @@ use serde::{Deserialize, Serialize};
 /// the file stays hand-readable — it is debugging evidence, after all.
 const KEEP: usize = 200;
 
+const STATE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct VersionedState<T> {
+    schema_version: u32,
+    data: T,
+}
+
+fn read_state<T>(path: PathBuf) -> Option<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<VersionedState<T>>(&text)
+        .ok()
+        .filter(|state| state.schema_version <= STATE_SCHEMA_VERSION)
+        .map(|state| state.data)
+        .or_else(|| serde_json::from_str(&text).ok())
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Incident {
     /// Unix seconds.
@@ -60,10 +80,7 @@ pub fn store_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn load(dir: &PathBuf) -> Vec<Incident> {
-    std::fs::read_to_string(store_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    read_state(store_path(dir)).unwrap_or_default()
 }
 
 /// Append one incident, trimming to the newest `KEEP`. Best-effort by
@@ -82,7 +99,10 @@ pub fn record(dir: &PathBuf, incident: Incident) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    if let Ok(text) = serde_json::to_string_pretty(&all) {
+    if let Ok(text) = serde_json::to_string_pretty(&VersionedState {
+        schema_version: STATE_SCHEMA_VERSION,
+        data: &all,
+    }) {
         let temp = store_path(dir).with_extension("json.tmp");
         if std::fs::write(&temp, text).is_ok() {
             let _ = std::fs::rename(&temp, store_path(dir));

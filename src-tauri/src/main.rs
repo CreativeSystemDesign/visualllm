@@ -424,12 +424,73 @@ fn copy_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+struct LaneTestResult {
+    ok: bool,
+    status: u16,
+    served_by: Option<String>,
+    trail: Option<String>,
+    message: String,
+}
+
+/// Test a lane through the same loopback endpoint a client uses. The renderer
+/// asks Rust for this result; it never receives general network access.
+#[tauri::command]
+async fn lane_test(slug: String) -> Result<LaneTestResult, String> {
+    let url = format!("http://127.0.0.1:{ENGINE_PORT}/lane/{slug}/v1/chat/completions");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .post(url)
+        .json(&serde_json::json!({
+            "model": slug,
+            "messages": [{"role": "user", "content": "Reply with the single word READY."}],
+            "max_tokens": 8,
+            "stream": false,
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let served_by = response
+        .headers()
+        .get("x-visualllm-served-by")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let trail = response
+        .headers()
+        .get("x-visualllm-trail")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body = response.text().await.unwrap_or_default();
+    let message = if status < 300 {
+        "lane answered successfully".to_string()
+    } else {
+        serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("lane returned HTTP {status}"))
+    };
+    Ok(LaneTestResult { ok: status < 300, status, served_by, trail, message })
+}
+
 /// The port the engine answers on. Fixed for now; it belongs in the UI as soon
 /// as there is somewhere sensible to put it.
 const ENGINE_PORT: u16 = 4100;
 
 fn main() {
     tauri::Builder::default()
+        // The engine owns a fixed loopback port, so a second process cannot
+        // ever be a useful second window. The plugin exits the newcomer and
+        // keeps the original process authoritative.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .setup(|app| {
             // The engine runs beside the window, on the same state, in the same
             // process. Closing the window stops it, which is the behaviour a
@@ -457,7 +518,8 @@ fn main() {
             pool_read,
             pool_write,
             stats_read,
-            stats_refresh
+            stats_refresh,
+            lane_test
         ])
         .run(tauri::generate_context!())
         .expect("failed to start VisualLLM");

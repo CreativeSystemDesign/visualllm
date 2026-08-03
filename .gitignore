@@ -19,3 +19,6 @@ providers.json
 
 # Generated UI preview — embeds local lane/catalog data (keys masked), never committed
 tools/preview.local.html
+
+# Generated architecture graph — rebuild locally with graphify when needed
+graphify-out/

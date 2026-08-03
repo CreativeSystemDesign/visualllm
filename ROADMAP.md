@@ -54,10 +54,10 @@ VisualLLM.
 
 ### 1. Desktop correctness — release blocker
 
-- [ ] Implement single-instance behavior.
-- [ ] Make a second launch focus the existing window or exit cleanly.
-- [ ] Detect an existing healthy engine without opening a broken duplicate.
-- [ ] Handle stale coordination state after a crash.
+- [x] Implement single-instance behavior.
+- [x] Make a second launch focus the existing window or exit cleanly.
+- [x] Detect an existing healthy engine without opening a broken duplicate.
+- [x] Handle stale coordination state after a crash.
 - [ ] Test clean startup, duplicate startup, restart, and shutdown.
 
 **Done when:** launching VisualLLM twice never leaves a second window showing a
@@ -102,24 +102,24 @@ architecture documentation.
 
 ### 5. Make connection the product moment
 
-- [ ] Give every lane a prominent endpoint card.
-- [ ] Add copy endpoint and copy setup instructions actions.
-- [ ] Add a test-lane action with a useful result or diagnosis.
-- [ ] Show recent serving model and fallback activity.
-- [ ] Provide OpenAI-compatible and VS Code setup examples.
-- [ ] Explain whether an API key is needed by the local client.
+- [x] Give every lane a prominent endpoint card.
+- [x] Add copy endpoint and copy setup instructions actions.
+- [x] Add a test-lane action with a useful result or diagnosis.
+- [x] Show recent serving model and fallback activity.
+- [x] Provide OpenAI-compatible and VS Code setup examples.
+- [x] Explain whether an API key is needed by the local client.
 
 **Done when:** a user can create a lane and connect a client without guessing
 which URL, model name, or settings to use.
 
 ### 6. Routing and persistence confidence
 
-- [ ] Add mock-provider integration tests for blocking and streaming requests.
-- [ ] Test capability skips, context overflow, provider failures, and fallback
+- [x] Add mock-provider integration tests for blocking and streaming requests.
+- [x] Test capability skips, context overflow, provider failures, and fallback
   trails end to end.
-- [ ] Test stream errors and empty/reasoning-only 200 responses.
-- [ ] Add persistence schema versions and migration tests.
-- [ ] Define behavior for corrupt or partially written state files.
+- [x] Test stream errors and empty/reasoning-only 200 responses.
+- [x] Add persistence schema versions and migration tests.
+- [x] Define behavior for corrupt or partially written state files.
 - [ ] Add export/import or backup/restore for user configuration.
 
 **Done when:** routing behavior is protected by tests that do not spend provider
@@ -127,7 +127,7 @@ quota or depend on live upstream services.
 
 ### 7. Security and lifecycle maturity
 
-- [ ] Store provider keys in the OS keychain.
+- [x] Store provider keys in the OS keychain.
 - [ ] Keep secrets out of logs, previews, diagnostics, and crash reports.
 - [ ] Improve port-conflict and engine-ownership messages.
 - [ ] Support a deliberate configurable port without compromising stable URLs.
@@ -160,13 +160,14 @@ path for users to report what prevented success.
 
 ## Immediate next implementation
 
-The next code milestone is **single-instance desktop behavior**. It directly
-addresses the first real startup failure observed during development and is a
-release blocker because a duplicate launch currently creates a window whose
-engine cannot bind the fixed port.
+The single-instance desktop milestone is implemented through Tauri's official
+single-instance plugin. The remaining work in that milestone is manual startup,
+duplicate-launch, restart, and shutdown verification on a packaged build.
 
-After that, the next public-facing milestone is the README and first-run
-connection experience, followed by CI and release packaging.
+The next code milestone is **routing and persistence confidence**: add a local
+mock-provider harness for blocking and streaming fallback, then cover
+persistence migrations and corrupt-state recovery without spending provider
+quota. After that, continue the connection experience and release packaging.
 
 ## Release criteria
 

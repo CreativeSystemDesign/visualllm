@@ -32,6 +32,7 @@ const api = T
       poolWrite: (ids) => T.core.invoke('pool_write', { ids }),
       statsRead: () => T.core.invoke('stats_read'),
       statsRefresh: () => T.core.invoke('stats_refresh'),
+      laneTest: (slug) => T.core.invoke('lane_test', { slug }),
     }
   : window.vll
 
@@ -383,6 +384,24 @@ function renderTrack(track, lane) {
   )
 }
 
+function laneEndpoint(slug) {
+  return `http://${ENGINE_HOST}/lane/${slug}/v1`
+}
+
+function laneCurlExample(slug) {
+  return `curl ${laneEndpoint(slug)}/chat/completions \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
+}
+
+function laneActivity(lane) {
+  const recent = state.incidents
+    .filter((incident) => incident.lane === lane.slug)
+    .sort((a, b) => b.at - a.at)
+  if (!recent.length) return '<span class="lane-activity quiet">No recent activity</span>'
+  const latest = recent[0]
+  const kind = latest.kind.replaceAll('_', ' ')
+  return `<span class="lane-activity" title="${attr(latest.evidence)}">${recent.length} issue${recent.length === 1 ? '' : 's'} · ${attr(kind)}</span>`
+}
+
 function laneEl(lane) {
   const el = document.createElement('article')
   el.className = 'lane'
@@ -395,6 +414,9 @@ function laneEl(lane) {
     <button class="lane-url" title="Copy endpoint URL">
       ${ICON.copy}<span class="host">${ENGINE_HOST}</span><span>/lane/${lane.slug}/v1</span>
     </button>
+    <button class="lane-action lane-test" title="Test this lane">Test</button>
+    <button class="lane-action lane-copy-setup" title="Copy a curl setup example">Setup</button>
+    ${laneActivity(lane)}
     ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
     }</span>` : ''}
@@ -1325,8 +1347,29 @@ document.addEventListener('click', async (event) => {
   const url = event.target.closest('.lane-url')
   if (url) {
     const slug = url.closest('.lane').dataset.lane
-    await api.copy(`http://${ENGINE_HOST}/lane/${slug}/v1/chat/completions`)
+    await api.copy(`${laneEndpoint(slug)}/chat/completions`)
     toast('Endpoint URL copied')
+    return
+  }
+
+  const test = event.target.closest('.lane-test')
+  if (test) {
+    const lane = state.lanes.find((l) => l.slug === test.closest('.lane').dataset.lane)
+    if (!lane) return
+    try {
+      const result = await api.laneTest(lane.slug)
+      toast(`${lane.name}: ${result.message}`)
+    } catch (error) {
+      toast(`${lane.name}: ${error.message}`)
+    }
+    return
+  }
+
+  const setup = event.target.closest('.lane-copy-setup')
+  if (setup) {
+    const slug = setup.closest('.lane').dataset.lane
+    await api.copy(laneCurlExample(slug))
+    toast('Curl setup copied')
     return
   }
 

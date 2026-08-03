@@ -35,9 +35,34 @@ node tools/smoke.js
 ./tools/launch-system.sh
 ```
 
-Then add a provider, browse its catalog, create a lane, and copy the lane URL
-into an OpenAI-compatible client. The default engine listens on
+Then add a provider, browse its catalog, create a lane, and use the lane's
+**Setup** button to copy a ready-to-run example. The default engine listens on
 `http://127.0.0.1:4100`.
+
+### Connect an OpenAI-compatible client
+
+Use the lane URL as the client's **base URL**. The lane slug is the model name
+that appears in `GET /v1/models`; the local client does not need an API key.
+VisualLLM keeps provider credentials inside the desktop app and forwards the
+request using the configured provider credentials.
+
+A direct request looks like this:
+
+```bash
+curl http://127.0.0.1:4100/lane/<lane-slug>/v1/chat/completions \\
+  -H 'Content-Type: application/json' \\
+  -d '{"model":"<lane-slug>","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+For VS Code or another OpenAI-compatible tool, configure:
+
+- **Base URL:** `http://127.0.0.1:4100/lane/<lane-slug>/v1`
+- **Model:** `<lane-slug>`
+- **API key:** leave blank, or enter any placeholder if the client requires a value
+
+The lane response includes `x-visuallm-served-by`,
+`x-visuallm-passed-over`, and `x-visuallm-trail` headers so fallback behavior
+can be inspected without guessing which model answered.
 
 ## Documentation
 

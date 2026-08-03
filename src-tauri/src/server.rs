@@ -141,6 +141,7 @@ pub struct Engine {
 // READING THE REQUEST
 // ============================================================================
 
+
 /// What an incoming request actually requires, so members that can't supply it
 /// are skipped instead of being tried and failing (or worse, not failing).
 struct Needs {
@@ -243,6 +244,7 @@ fn can_serve(model: &providers::CatalogModel, needs: &Needs, known: bool) -> boo
 // DECIDING WHETHER TO KEEP GOING
 // ============================================================================
 
+
 /// The judgement at the heart of a fallback chain: this model failed — is the
 /// next one worth trying?
 ///
@@ -328,6 +330,14 @@ fn model_limitation(body: &str) -> Option<&'static str> {
 
 fn classify(status: StatusCode, body: &str) -> Verdict {
     let reason = |label: &str| format!("{label} ({})", status.as_u16());
+
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        let text = body.to_lowercase();
+        if text.contains("provider_name") && text.contains("null") {
+            return Verdict::TryNext(reason("account-wide free-tier limit"));
+        }
+        return Verdict::TryNext(reason("rate limited"));
+    }
 
     match status.as_u16() {
         // 400/422 mean "I don't understand this request" — usually fatal, but
@@ -869,6 +879,7 @@ fn error(status: StatusCode, message: String, kind: &str, tried: Vec<Attempt>) -
 // THE ROUTES
 // ============================================================================
 
+
 /// `GET /v1/models` — what a client asks to discover what it can use.
 ///
 /// This is why VS Code's model picker can show your lanes. Point it at this
@@ -1325,6 +1336,7 @@ async fn chat(
 // WIRING
 // ============================================================================
 
+
 /// The URL table. `{slug}` is a placeholder captured into the `Path` parameter.
 pub fn router(dir: PathBuf) -> Router {
     Router::new()
@@ -1366,6 +1378,10 @@ pub async fn serve(dir: PathBuf, port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::routing::post;
+    use tempfile::tempdir;
+    use tower::ServiceExt;
 
     fn verdict(status: u16, body: &str) -> Verdict {
         classify(StatusCode::from_u16(status).unwrap(), body)
@@ -1409,6 +1425,18 @@ mod tests {
     fn provider_trouble_always_keeps_walking() {
         for status in [401, 402, 403, 404, 408, 429, 500, 502, 503] {
             assert!(continues(status, ""), "{status} should try the next model");
+        }
+    }
+
+    #[test]
+    fn account_wide_rate_limits_are_named_from_the_body() {
+        match verdict(429, r#"{"error":{"provider_name":null,"message":"free tier exhausted"}}"#) {
+            Verdict::TryNext(note) => assert!(note.contains("account-wide free-tier limit")),
+            Verdict::Fatal(_, _) => panic!("rate limits should continue"),
+        }
+        match verdict(429, "provider temporarily throttled") {
+            Verdict::TryNext(note) => assert!(note.contains("rate limited")),
+            Verdict::Fatal(_, _) => panic!("rate limits should continue"),
         }
     }
 
@@ -1693,5 +1721,131 @@ mod tests {
         // A member whose provider vanished matches nothing, rather than
         // quietly borrowing another provider's entry (and key).
         assert!(find_model(&catalog, &member("closed")).is_none());
+    }
+
+    // ---------------------------------------------------------- HTTP boundary
+
+    fn test_lane(models: &[&str]) -> lanes::Lane {
+        lanes::Lane {
+            slug: "fallback".into(),
+            name: "Fallback".into(),
+            members: models
+                .iter()
+                .map(|id| lanes::Member {
+                    provider: "fake".into(),
+                    id: (*id).into(),
+                    params: Default::default(),
+                })
+                .collect(),
+            criteria: Vec::new(),
+            suppress_reasoning: false,
+            unstick: false,
+        }
+    }
+
+    async fn fake_provider(
+        axum::extract::State(calls): axum::extract::State<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
+        Json(body): Json<Value>,
+    ) -> Response {
+        let model = body["model"].as_str().unwrap_or_default().to_string();
+        calls.lock().unwrap().push(model.clone());
+        if model == "primary" {
+            return (StatusCode::SERVICE_UNAVAILABLE, "primary unavailable").into_response();
+        }
+        if body["stream"].as_bool().unwrap_or(false) {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/event-stream")
+                .body(Body::from(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"fallback\"}}]}\n\ndata: [DONE]\n\n",
+                ))
+                .unwrap()
+                .into_response();
+        }
+        Json(json!({"choices":[{"message":{"content":"fallback"}}]})).into_response()
+    }
+
+    async fn start_fake_provider(
+        calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/chat/completions", post(fake_provider))
+            .with_state(calls);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (address, task)
+    }
+
+    fn configure_test_files(dir: &std::path::Path, address: std::net::SocketAddr, models: &[&str]) {
+        providers::save(
+            &dir.to_path_buf(),
+            &[providers::Provider {
+                id: "fake".into(),
+                name: "Fake provider".into(),
+                kind: "generic".into(),
+                base_url: format!("http://{address}"),
+                key: String::new(),
+            }],
+        )
+        .unwrap();
+        lanes::save(&dir.to_path_buf(), &[test_lane(models)]).unwrap();
+    }
+
+    async fn call_lane(dir: &std::path::Path, stream: bool) -> Response {
+        let body = json!({
+            "model": "fallback",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": stream,
+            "max_tokens": 32,
+        });
+        router(dir.to_path_buf())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/lane/fallback/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn blocking_http_request_falls_back_and_reports_the_trail() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_test_files(dir.path(), address, &["primary", "fallback"]);
+
+        let response = call_lane(dir.path(), false).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-visualllm-passed-over"], "1");
+        assert!(response.headers()["x-visualllm-trail"].to_str().unwrap().contains("primary"));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body, r#"{"choices":[{"message":{"content":"fallback"}}]}"#);
+        assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn empty_stream_falls_back_before_headers_are_committed() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_test_files(dir.path(), address, &["primary", "fallback"]);
+
+        let response = call_lane(dir.path(), true).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-visualllm-passed-over"], "1");
+        assert!(response.headers()["x-visualllm-trail"].to_str().unwrap().contains("primary"));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("fallback"));
+        assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
+        task.abort();
     }
 }

@@ -155,34 +155,59 @@ pub struct Lane {
     pub unstick: bool,
 }
 
+const STATE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct VersionedState<T> {
+    schema_version: u32,
+    data: T,
+}
+
+fn read_state<T>(path: PathBuf) -> Option<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<VersionedState<T>>(&text)
+        .ok()
+        .filter(|state| state.schema_version <= STATE_SCHEMA_VERSION)
+        .map(|state| state.data)
+        .or_else(|| serde_json::from_str(&text).ok())
+}
+
+fn write_state<T>(path: PathBuf, data: &T) -> Result<(), String>
+where
+    T: Serialize + ?Sized,
+{
+    let text = serde_json::to_string_pretty(&VersionedState {
+        schema_version: STATE_SCHEMA_VERSION,
+        data,
+    })
+    .map_err(|e| e.to_string())?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&temp, path).map_err(|e| e.to_string())
+}
+
 pub fn store_path(dir: &PathBuf) -> PathBuf {
     dir.join("lanes.json")
 }
 
 pub fn load(dir: &PathBuf) -> Vec<Lane> {
-    std::fs::read_to_string(store_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    read_state(store_path(dir)).unwrap_or_default()
 }
 
 /// The whole set is rewritten on every change. At the scale a person can drag
 /// chips around, a diff would be more code than it saves.
 pub fn save(dir: &PathBuf, lanes: &[Lane]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(lanes).map_err(|e| e.to_string())?;
-    let path = store_path(dir);
-
-    // Written beside the target and renamed over it: a crash mid-write leaves
-    // the previous arrangement intact rather than a truncated file.
-    let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&temp, &path).map_err(|e| e.to_string())
+    write_state(store_path(dir), lanes)
 }
 
 // ============================================================================
 // THE POOL
 // ============================================================================
+
 
 /// The models the user has chosen to keep, as (provider, id) pairs.
 ///
@@ -195,19 +220,12 @@ pub fn pool_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn pool_load(dir: &PathBuf) -> Vec<Member> {
-    std::fs::read_to_string(pool_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    read_state(pool_path(dir)).unwrap_or_default()
 }
 
 pub fn pool_save(dir: &PathBuf, members: &[Member]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(members).map_err(|e| e.to_string())?;
-    let path = pool_path(dir);
-    let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&temp, &path).map_err(|e| e.to_string())
+    write_state(pool_path(dir), members)
 }
 
 #[cfg(test)]
@@ -245,5 +263,39 @@ mod tests {
             params: MemberParams::default(),
         };
         assert!(!serde_json::to_string(&plain).unwrap().contains("params"));
+    }
+
+    #[test]
+    fn state_writes_a_version_and_reads_legacy_arrays() {
+        let dir = tempfile::tempdir().unwrap();
+        let lane = Lane {
+            slug: "s".into(),
+            name: "N".into(),
+            members: Vec::new(),
+            criteria: Vec::new(),
+            suppress_reasoning: false,
+            unstick: false,
+        };
+        save(&dir.path().to_path_buf(), std::slice::from_ref(&lane)).unwrap();
+        let written = std::fs::read_to_string(store_path(&dir.path().to_path_buf())).unwrap();
+        assert!(written.contains("\"schema_version\": 1"));
+        assert_eq!(load(&dir.path().to_path_buf())[0].slug, "s");
+
+        std::fs::write(
+            store_path(&dir.path().to_path_buf()),
+            serde_json::to_string(&[lane]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(load(&dir.path().to_path_buf())[0].name, "N");
+    }
+
+    #[test]
+    fn corrupt_and_future_state_is_ignored_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&dir.path().to_path_buf());
+        std::fs::write(&path, "not json").unwrap();
+        assert!(load(&dir.path().to_path_buf()).is_empty());
+        std::fs::write(&path, r#"{\"schema_version\":99,\"data\":[]}"#).unwrap();
+        assert!(load(&dir.path().to_path_buf()).is_empty());
     }
 }

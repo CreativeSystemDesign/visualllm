@@ -139,24 +139,31 @@ pub fn store_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn load(dir: &PathBuf) -> Vec<Provider> {
-    std::fs::read_to_string(store_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    let mut providers: Vec<Provider> = read_state(store_path(dir)).unwrap_or_default();
+    hydrate_keys(&mut providers);
+    providers
 }
 
 pub fn save(dir: &PathBuf, providers: &[Provider]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = store_path(dir);
-    let text = serde_json::to_string_pretty(providers).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())?;
 
-    // The file holds API keys in plaintext. Owner-only is the floor, not the
-    // fix — this wants the OS keychain before anyone else installs it.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    // Keys live in the OS keychain, not in providers.json. Write the
+    // config with a blank string in place of each secret so the file
+    // remains editable by hand without exposing credentials.
+    let safe: Vec<Provider> = providers
+        .iter()
+        .map(|p| Provider {
+            key: String::new(),
+            ..p.clone()
+        })
+        .collect();
+    write_state(path, &safe)?;
+
+    for provider in providers {
+        if !provider.key.is_empty() {
+            keyring_set(&provider.id, &provider.key)?;
+        }
     }
     Ok(())
 }
@@ -172,19 +179,11 @@ pub fn cache_write(dir: &PathBuf, models: &[CatalogModel]) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    if let Ok(text) = serde_json::to_string(models) {
-        let temp = cache_path(dir).with_extension("json.tmp");
-        if std::fs::write(&temp, text).is_ok() {
-            let _ = std::fs::rename(&temp, cache_path(dir));
-        }
-    }
+    let _ = write_state(cache_path(dir), models);
 }
 
 pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
-    std::fs::read_to_string(cache_path(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    read_state(cache_path(dir)).unwrap_or_default()
 }
 
 // ------------------------------------------------------------------ catalogs
@@ -579,4 +578,71 @@ pub async fn hydrate_stats(dir: &PathBuf, models: &[CatalogModel], all: &[Provid
     }
     stats_write(dir, &file);
     with_data
+}
+
+const STATE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct VersionedState<T> {
+    schema_version: u32,
+    data: T,
+}
+
+fn read_state<T>(path: PathBuf) -> Option<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<VersionedState<T>>(&text)
+        .ok()
+        .filter(|state| state.schema_version <= STATE_SCHEMA_VERSION)
+        .map(|state| state.data)
+        .or_else(|| serde_json::from_str(&text).ok())
+}
+
+fn write_state<T>(path: PathBuf, data: &T) -> Result<(), String>
+where
+    T: Serialize + ?Sized,
+{
+    let text = serde_json::to_string_pretty(&VersionedState {
+        schema_version: STATE_SCHEMA_VERSION,
+        data,
+    })
+    .map_err(|e| e.to_string())?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&temp, path).map_err(|e| e.to_string())
+}
+
+const KEYRING_SERVICE: &str = "com.creativesystemdesign.visualllm";
+
+fn keyring_account(provider_id: &str) -> String {
+    format!("provider:{provider_id}")
+}
+
+fn keyring_get(provider_id: &str) -> Option<String> {
+    keyring::Entry::new(KEYRING_SERVICE, &keyring_account(provider_id))
+        .ok()
+        .and_then(|entry| entry.get_password().ok())
+}
+
+fn keyring_set(provider_id: &str, key: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_account(provider_id))
+        .map_err(|e| e.to_string())?;
+    if key.is_empty() {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    } else {
+        entry.set_password(key).map_err(|e| e.to_string())
+    }
+}
+
+fn hydrate_keys(providers: &mut [Provider]) {
+    for provider in providers {
+        if let Some(key) = keyring_get(&provider.id) {
+            provider.key = key;
+        }
+    }
 }
