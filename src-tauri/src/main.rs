@@ -60,8 +60,8 @@ use providers::{CatalogModel, Provider, ProviderView};
 /// SCAFFOLDING. This app read its lanes from that gateway before it had an
 /// engine of its own. All that remains is the status bar's live health and
 /// throughput readings, and it comes out once the engine reports its own.
-fn gateway_url() -> String {
-    std::env::var("VISUALLLM_GATEWAY").unwrap_or_else(|_| "http://127.0.0.1:4100".into())
+fn engine_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
 }
 
 #[derive(Serialize)]
@@ -107,10 +107,10 @@ struct State {
 }
 
 impl State {
-    fn offline(error: String) -> Self {
+    fn offline(gateway: String, error: String) -> Self {
         State {
             connected: false,
-            gateway: gateway_url(),
+            gateway,
             error: Some(error.chars().take(200).collect()),
             models: Vec::new(),
             lanes: Vec::new(),
@@ -123,7 +123,7 @@ fn as_u64(value: Option<&Value>) -> u64 {
     value.and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn parse(raw: &Value) -> State {
+fn parse(raw: &Value, gateway: String) -> State {
     let models: Vec<Model> = raw["lanes"]
         .as_array()
         .map(|lanes| {
@@ -191,7 +191,7 @@ fn parse(raw: &Value) -> State {
 
     State {
         connected: true,
-        gateway: gateway_url(),
+        gateway,
         error: None,
         models,
         lanes,
@@ -200,26 +200,27 @@ fn parse(raw: &Value) -> State {
 }
 
 #[tauri::command]
-async fn read_gateway() -> State {
+async fn read_gateway(app: tauri::AppHandle) -> State {
+    let gateway = match store_dir(&app) {
+        Ok(dir) => engine_url(port_load(&dir)),
+        Err(_) => engine_url(DEFAULT_PORT),
+    };
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
     {
         Ok(client) => client,
-        Err(err) => return State::offline(err.to_string()),
+        Err(err) => return State::offline(gateway, err.to_string()),
     };
 
-    // The local VisualLLM engine exposes `/health`; `/status` belonged to the
-    // legacy Python gateway and produced a misleading 404 in the status bar
-    // after the Rust engine became the default backend.
-    match client.get(format!("{}/health", gateway_url())).send().await {
+    match client.get(format!("{gateway}/health")).send().await {
         Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
-            Ok(raw) => parse(&raw),
-            Err(err) => State::offline(format!("unreadable response: {err}")),
+            Ok(raw) => parse(&raw, gateway),
+            Err(err) => State::offline(gateway, format!("unreadable response: {err}")),
         },
-        Ok(resp) => State::offline(format!("gateway returned {}", resp.status().as_u16())),
-        Err(err) if err.is_connect() => State::offline("gateway offline".into()),
-        Err(err) => State::offline(err.to_string()),
+        Ok(resp) => State::offline(gateway, format!("gateway returned {}", resp.status().as_u16())),
+        Err(err) if err.is_connect() => State::offline(gateway, "gateway offline".into()),
+        Err(err) => State::offline(gateway, err.to_string()),
     }
 }
 
