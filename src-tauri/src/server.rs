@@ -79,7 +79,7 @@ use axum::{
 use serde_json::{json, Value};
 
 // `crate::` means "from this program", as opposed to an external library.
-use crate::{lanes, providers};
+use crate::{lanes, loopwatch, providers};
 
 /// A member's catalog entry, honouring its provider when it has one.
 ///
@@ -745,6 +745,7 @@ fn success_headers(
     slug: &str,
     served: &str,
     tried: &[Attempt],
+    unstuck: Option<&loopwatch::Broke>,
 ) -> axum::http::response::Builder {
     let mut out = Response::builder()
         .status(StatusCode::OK)
@@ -756,6 +757,24 @@ fn success_headers(
     // worth asking, and the trail is the answer.
     if !tried.is_empty() {
         out = out.header("x-visualllm-trail", trail_header(tried));
+    }
+    // A repaired conversation is announced, never done quietly. Tool names
+    // come from the client's own request, so they get the same ASCII scrub
+    // the trail does.
+    if let Some(broke) = unstuck {
+        let tool: String = broke
+            .tool
+            .chars()
+            .map(|c| if c.is_ascii_graphic() { c } else { '?' })
+            .take(60)
+            .collect();
+        out = out.header(
+            "x-visualllm-unstuck",
+            format!(
+                "{} tool={} times={} collapsed={}",
+                broke.kind, tool, broke.times, broke.collapsed
+            ),
+        );
     }
     out
 }
@@ -923,6 +942,24 @@ async fn chat(
         lane.suppress_reasoning,
     );
 
+    // Loopwatch, before any member is contacted: the conversation the client
+    // sent may already show an agent going in circles, and forwarding a loop
+    // faithfully is not a service. Opt-in per lane, and never silent — the
+    // repair is logged here and announced on the response.
+    let mut unstuck: Option<loopwatch::Broke> = None;
+    if lane.unstick {
+        if let Some(messages) = body["messages"].as_array() {
+            if let Some((repaired, broke)) = loopwatch::break_loop(messages, loopwatch::THRESHOLD) {
+                eprintln!(
+                    "engine: {} loopwatch: {} on {} ({}x, {} pairs collapsed)",
+                    lane.slug, broke.kind, broke.tool, broke.times, broke.collapsed
+                );
+                body["messages"] = Value::Array(repaired);
+                unstuck = Some(broke);
+            }
+        }
+    }
+
     let client = match reqwest::Client::builder().build() {
         Ok(client) => client,
         Err(err) => {
@@ -1044,7 +1081,7 @@ async fn chat(
                                 lane.slug,
                                 tried.len()
                             );
-                            let out = success_headers(&lane.slug, &served, &tried)
+                            let out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref())
                                 .header("content-type", "text/event-stream");
                             let replay = futures_util::stream::iter(
                                 prelude.into_iter().map(Ok::<Bytes, reqwest::Error>),
@@ -1074,7 +1111,7 @@ async fn chat(
                                 lane.slug,
                                 tried.len()
                             );
-                            let mut out = success_headers(&lane.slug, &served, &tried);
+                            let mut out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref());
                             out = match upstream_type {
                                 Some(kind) => out.header("content-type", kind),
                                 None => out.header("content-type", "application/json"),
@@ -1091,7 +1128,7 @@ async fn chat(
 
                 // Ungated (a tiny-budget probe): pipe straight through, the
                 // pre-commit-gate behaviour.
-                let mut out = success_headers(&lane.slug, &served, &tried);
+                let mut out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref());
                 if streaming {
                     out = out.header("content-type", "text/event-stream");
                 } else if let Some(kind) = upstream_type {

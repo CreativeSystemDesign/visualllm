@@ -488,8 +488,8 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   box-shadow: var(--in1);
   color: var(--accent);
 }
-/* The toggle takes over the push-right job so the pair sits together. */
-.lane-think + .lane-kind { margin-left: 0; }
+/* The first pill takes over the push-right job so the group sits together. */
+.lane-think ~ .lane-kind, .lane-think + .lane-think { margin-left: 0; }
 
 /* --------------------------------------------------------------------- track */
 

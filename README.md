@@ -137,6 +137,19 @@ a lane injects the reasoning-off knob for providers that expose one (today:
 OpenRouter, which normalises it across models). It is a preference, not a
 guarantee; the commit gate catches the models that think anyway.
 
+**Loopwatch** (per-lane, opt-in) watches for an agent stuck re-calling the
+same tool. Agentic clients resend the whole conversation every turn, so a
+loop is visible inside a single request — no cross-request state needed.
+Two species, one definition of stuck: *receiving no new information*. The
+treatment is the one that measured 0/4 repeats against captured loops
+(control: 4/4): collapse the redundant call/result pairs — only ever a pair
+whose call *and* result are byte-identical to a later one, so an edit can
+never be hidden — and append a note naming the loop as the **last** message.
+Placement is the finding: the same note in the system prompt did nothing,
+because at 150K tokens the system prompt is 150K tokens in the past. This is
+the engine's only modification of a conversation; it is logged, and announced
+on the response in `x-visualllm-unstuck`.
+
 `classify` (refusals) and the commit gate (acceptances) in `server.rs` are
 the judgement, and they are what the tests pin down — `cargo test` from
 `src-tauri/`.

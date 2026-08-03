@@ -394,6 +394,11 @@ function laneEl(lane) {
         ? 'Members are asked to answer directly, without spending tokens on hidden reasoning. Click to allow thinking again.'
         : 'Members may spend tokens thinking before they answer — slower first words, and a thinker can burn the whole budget. Click to ask them not to.'
     }">${lane.suppress_reasoning ? 'no thinking' : 'thinking ok'}</button>
+    <button class="lane-think lane-unstick${lane.unstick ? ' is-on' : ''}" title="${
+      lane.unstick
+        ? 'Loopwatch is on: an agent stuck re-calling the same tool gets its redundant calls collapsed and a note at the tail of the conversation. Announced in a response header, never silent. Click to turn off.'
+        : 'Loopwatch is off. When on, the engine detects an agent stuck in a tool-call loop and repairs the conversation before forwarding it. Click to turn on.'
+    }">${lane.unstick ? 'loopwatch' : 'loopwatch off'}</button>
     <span class="lane-kind ${lane.computed ? 'computed' : ''}">${
       lane.computed ? lane.kind : 'ordered'
     }</span>
@@ -895,6 +900,22 @@ document.addEventListener('click', async (event) => {
       openBrowse()
       toast(`Searching: ${lane.criteria.map(criterionWords).join(' + ')}`)
     }
+    return
+  }
+
+  // Loopwatch shares the pill class for its look, so it is checked before
+  // the general thinking-toggle handler that would otherwise swallow it.
+  const unstick = event.target.closest('.lane-unstick')
+  if (unstick) {
+    const lane = state.lanes.find((l) => l.slug === unstick.closest('.lane').dataset.lane)
+    lane.unstick = !lane.unstick
+    render()
+    saveLanes()
+    toast(
+      lane.unstick
+        ? `${lane.name}: stuck agents will be unstuck (collapsed + noted, announced in headers)`
+        : `${lane.name}: conversations pass through untouched`
+    )
     return
   }
 
@@ -1895,7 +1916,7 @@ document.addEventListener('keydown', (event) => {
 async function saveLanes() {
   try {
     await api.lanesWrite(
-      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning }) => ({
+      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick }) => ({
         slug,
         name,
         members: members.map(({ provider, id, params }) => ({
@@ -1905,6 +1926,7 @@ async function saveLanes() {
         })),
         criteria: criteria || [],
         suppress_reasoning: !!suppress_reasoning,
+        unstick: !!unstick,
       }))
     )
   } catch (err) {

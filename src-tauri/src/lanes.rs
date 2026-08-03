@@ -144,6 +144,15 @@ pub struct Lane {
     /// thinking is only a problem when a lane exists to answer fast.
     #[serde(default)]
     pub suppress_reasoning: bool,
+    /// Watch for a stuck agent and break it out (see `loopwatch.rs`).
+    ///
+    /// When on, a request whose own conversation shows a tool-call loop gets
+    /// the measured treatment — redundant pairs collapsed, a note at the
+    /// tail — before any member is contacted. This is the engine's one
+    /// modification of a conversation, so it is opt-in per lane, logged, and
+    /// announced in an `x-visualllm-unstuck` header rather than done quietly.
+    #[serde(default)]
+    pub unstick: bool,
 }
 
 pub fn store_path(dir: &PathBuf) -> PathBuf {
