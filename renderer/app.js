@@ -18,6 +18,7 @@ const api = T
       minimize: () => T.window.getCurrentWindow().minimize(),
       toggleMaximize: () => T.window.getCurrentWindow().toggleMaximize(),
       close: () => T.window.getCurrentWindow().close(),
+      startDragging: () => T.window.getCurrentWindow().startDragging(),
 
       providersList: () => T.core.invoke('providers_list'),
       providerSave: (input) => T.core.invoke('provider_save', { input }),
@@ -1441,6 +1442,10 @@ $('newLane').addEventListener('click', () => {
 $('wcMin').addEventListener('click', () => api.minimize())
 $('wcMax').addEventListener('click', () => api.toggleMaximize())
 $('wcClose').addEventListener('click', () => api.close())
+$('titlebar').addEventListener('mousedown', (event) => {
+  if (event.button !== 0 || event.target.closest('.window-controls, button, input, select')) return
+  api.startDragging()
+})
 
 
 // ------------------------------------------------------------------ providers

@@ -104,6 +104,7 @@ const html = fs
         }),
         copy: (text) => { console.log('[preview] copy:', text); return ok() },
         minimize: () => ok(), toggleMaximize: () => ok(), close: () => ok(),
+        startDragging: () => ok(),
         providersList: () => ok(data.providers),
         providerSave: (input) => { console.log('[preview] providerSave', input); return ok({ ...input, id: input.id || 'preview', key_hint: '', has_key: false }) },
         providerDelete: () => ok(),
