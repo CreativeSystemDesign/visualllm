@@ -77,9 +77,10 @@ security model, and how to participate in under five minutes.
 
 ### 3. Install and release normally
 
-- [ ] Add GitHub Actions CI for Rust, renderer smoke tests, and packaging.
+- [x] Add GitHub Actions CI for Rust, renderer smoke tests, and packaging.
+- [x] Add a tagged Linux release workflow for `.deb` and AppImage artifacts.
+- [x] Generate checksums for release artifacts.
 - [ ] Publish tested `.deb` and AppImage artifacts.
-- [ ] Publish checksums for release artifacts.
 - [ ] Verify desktop-menu launch on a clean Linux installation.
 - [ ] Document supported distributions and runtime requirements.
 - [ ] Decide whether Linux is the initial supported platform or whether
