@@ -19,6 +19,7 @@ const api = T
       toggleMaximize: () => T.window.getCurrentWindow().toggleMaximize(),
       close: () => T.window.getCurrentWindow().close(),
       startDragging: () => T.window.getCurrentWindow().startDragging(),
+      focus: () => T.window.getCurrentWindow().setFocus(),
 
       providersList: () => T.core.invoke('providers_list'),
       providerSave: (input) => T.core.invoke('provider_save', { input }),
@@ -1252,6 +1253,7 @@ function toast(message) {
 
 document.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return
+  api.focus()
 
   // A press anywhere outside the open popover closes it. Without a rerender:
   // if this press is also the start of a drag, rebuilding the DOM here would
