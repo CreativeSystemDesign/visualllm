@@ -140,6 +140,24 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 
 .window-controls { display: flex; justify-content: flex-end; gap: 8px; }
 
+.settings-btn {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 100px;
+  background: var(--raised);
+  box-shadow: var(--e1);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease);
+}
+.settings-btn svg { width: 14px; height: 14px; }
+.settings-btn:hover { color: var(--accent); }
+.settings-btn:active { box-shadow: var(--in1); }
+
 .wc {
   width: 28px; height: 28px;
   display: grid; place-items: center;

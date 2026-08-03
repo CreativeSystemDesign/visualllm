@@ -1570,6 +1570,7 @@ function closeSettings() {
 }
 
 $('statPort').addEventListener('click', openSettings)
+$('openSettings').addEventListener('click', openSettings)
 $('closeSettings').addEventListener('click', closeSettings)
 $('cancelSettings').addEventListener('click', closeSettings)
 $('settingsScrim').addEventListener('click', (event) => {

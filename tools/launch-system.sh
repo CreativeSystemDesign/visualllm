@@ -14,12 +14,16 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 # Do not create a second broken window when the engine is already serving. The
-# desktop app currently has one engine port, so an existing healthy response
-# means another VisualLLM process owns the application state.
-if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 1 http://127.0.0.1:4100/health >/dev/null 2>&1; then
-  printf 'VisualLLM is already running on http://127.0.0.1:4100.\n' >&2
-  printf 'Use the existing window, or close it before launching another instance.\n' >&2
-  exit 0
+# desktop app may have a configured port, so only treat a process as owned by
+# VisualLLM when its health response identifies the engine.
+if command -v curl >/dev/null 2>&1; then
+  for port in 4100 4200 4300 4400 4500; do
+    if curl -fsS --max-time 1 "http://127.0.0.1:$port/health" | grep -q 'VisualLLM'; then
+      printf 'VisualLLM is already running on http://127.0.0.1:%s.\n' "$port" >&2
+      printf 'Use the existing window, or close it before launching another instance.\n' >&2
+      exit 0
+    fi
+  done
 fi
 
 # Preserve only the session values needed by GTK/WebKit and the app data path.

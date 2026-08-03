@@ -207,7 +207,10 @@ async fn read_gateway() -> State {
         Err(err) => return State::offline(err.to_string()),
     };
 
-    match client.get(format!("{}/status", gateway_url())).send().await {
+    // The local VisualLLM engine exposes `/health`; `/status` belonged to the
+    // legacy Python gateway and produced a misleading 404 in the status bar
+    // after the Rust engine became the default backend.
+    match client.get(format!("{}/health", gateway_url())).send().await {
         Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
             Ok(raw) => parse(&raw),
             Err(err) => State::offline(format!("unreadable response: {err}")),

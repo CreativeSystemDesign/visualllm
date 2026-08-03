@@ -936,6 +936,7 @@ async fn models(State(engine): State<Engine>) -> Json<Value> {
 /// `GET /health` — a cheap "are you alive" for scripts and for us.
 async fn health(State(engine): State<Engine>) -> Json<Value> {
     Json(json!({
+        "service": "VisualLLM",
         "ok": true,
         "lanes": lanes::load(&engine.dir).len(),
         "models_cached": providers::cache_read(&engine.dir).len(),
