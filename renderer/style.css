@@ -289,6 +289,10 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .chip-body { min-width: 0; flex: 1; }
 
 .chip-name {
+  /* `display: block`, or the ellipsis below is a wish: overflow does not
+     apply to inline elements, so a span quietly lets a long id sail past
+     the card edge. Same spec trap .row-id fell into, same cure. */
+  display: block;
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.1px;

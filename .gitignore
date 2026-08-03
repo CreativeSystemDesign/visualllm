@@ -16,3 +16,6 @@ providers.json
 .vscode/
 .idea/
 *.swp
+
+# Generated UI preview — embeds local lane/catalog data (keys masked), never committed
+tools/preview.local.html

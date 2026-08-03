@@ -229,7 +229,14 @@ function chipEl(model, { inTrack = false, rank = null, tuned = false } = {}) {
     <span class="chip-bar"></span>
     ${rank ? `<span class="rank">${rank}</span>` : ''}
     <span class="chip-body">
-      <span class="chip-name">${model.id}</span>
+      <span class="chip-name">${
+        // Track chips are narrow, and the vendor prefix is the least
+        // distinguishing part of an id: truncated, "nvidia/nemotron-3-nano"
+        // and "nvidia/nemotron-3-super" both read "nvidia/nemotron-…". In a
+        // lane, spend the pixels on the part that tells members apart; the
+        // sidebar is wide enough to keep the full id.
+        inTrack && model.id.includes('/') ? model.id.split('/').slice(1).join('/') : model.id
+      }</span>
       <span class="chip-meta">${bits
         .map((b, i) => (i ? `<span class="sep">·</span>${b}` : b))
         .join(' ')}</span>
