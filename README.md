@@ -365,3 +365,9 @@ npm run build
 | `Address already in use (port 4100)` | A previous instance is still running: `pkill -f visualllm && fuser -k 4100/tcp` |
 | Window opens but shows "Could not connect" | The engine didn't start. Check the terminal for `engine: could not listen...` — usually a stale process on 4100. |
 | Transparent window shows black/garbled | Your compositor doesn't support ARGB visuals. Set `"transparent": false` in `src-tauri/tauri.conf.json` and rebuild. |
+
+## Public project roadmap
+
+The public-release plan, milestones, non-goals, and release criteria live in
+[`ROADMAP.md`](ROADMAP.md). Contributions and security guidance are documented
+in [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md).
