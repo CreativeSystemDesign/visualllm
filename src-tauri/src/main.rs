@@ -436,8 +436,9 @@ struct LaneTestResult {
 /// Test a lane through the same loopback endpoint a client uses. The renderer
 /// asks Rust for this result; it never receives general network access.
 #[tauri::command]
-async fn lane_test(slug: String) -> Result<LaneTestResult, String> {
-    let url = format!("http://127.0.0.1:{ENGINE_PORT}/lane/{slug}/v1/chat/completions");
+async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult, String> {
+    let port = port_load(&store_dir(&app)?);
+    let url = format!("http://127.0.0.1:{port}/lane/{slug}/v1/chat/completions");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -476,9 +477,50 @@ async fn lane_test(slug: String) -> Result<LaneTestResult, String> {
     Ok(LaneTestResult { ok: status < 300, status, served_by, trail, message })
 }
 
-/// The port the engine answers on. Fixed for now; it belongs in the UI as soon
-/// as there is somewhere sensible to put it.
-const ENGINE_PORT: u16 = 4100;
+/// The port the engine answers on. Defaults to 4100; persisted in port.json.
+const DEFAULT_PORT: u16 = 4100;
+
+fn port_path(dir: &PathBuf) -> PathBuf {
+    dir.join("port.json")
+}
+
+fn port_load(dir: &PathBuf) -> u16 {
+    let stored = std::fs::read_to_string(port_path(dir))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|v| v["port"].as_u64())
+        .unwrap_or(DEFAULT_PORT as u64) as u16;
+    // Loopback safety: refuse ports that would expose the engine to the LAN.
+    if stored < 1024 || stored == 22 || stored == 80 || stored == 443 {
+        DEFAULT_PORT
+    } else {
+        stored
+    }
+}
+
+fn port_save(dir: &PathBuf, port: u16) -> Result<(), String> {
+    let clamped = port.max(1024).min(65535);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::write(
+        port_path(dir),
+        serde_json::to_string_pretty(&serde_json::json!({ "port": clamped }))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn port_get(app: tauri::AppHandle) -> Result<u16, String> {
+    let dir = store_dir(&app)?;
+    Ok(port_load(&dir))
+}
+
+#[tauri::command]
+fn port_set(app: tauri::AppHandle, port: u16) -> Result<u16, String> {
+    let dir = store_dir(&app)?;
+    port_save(&dir, port)?;
+    Ok(port.max(1024).min(65535))
+}
 
 fn main() {
     tauri::Builder::default()
@@ -496,8 +538,9 @@ fn main() {
             // process. Closing the window stops it, which is the behaviour a
             // desktop app should have.
             let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            let server_port = port_load(&dir);
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = server::serve(dir, ENGINE_PORT).await {
+                if let Err(err) = server::serve(dir, server_port).await {
                     eprintln!("engine: {err}");
                 }
             });
@@ -519,7 +562,9 @@ fn main() {
             pool_write,
             stats_read,
             stats_refresh,
-            lane_test
+            lane_test,
+            port_get,
+            port_set
         ])
         .run(tauri::generate_context!())
         .expect("failed to start VisualLLM");

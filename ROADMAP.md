@@ -130,7 +130,7 @@ quota or depend on live upstream services.
 - [x] Store provider keys in the OS keychain.
 - [ ] Keep secrets out of logs, previews, diagnostics, and crash reports.
 - [ ] Improve port-conflict and engine-ownership messages.
-- [ ] Support a deliberate configurable port without compromising stable URLs.
+- [x] Support a deliberate configurable port without compromising stable URLs.
 - [ ] Document the localhost-only threat model and limitations.
 - [ ] Review all Tauri permissions and webview boundaries before release.
 

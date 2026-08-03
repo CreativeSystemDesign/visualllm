@@ -33,6 +33,8 @@ const api = T
       statsRead: () => T.core.invoke('stats_read'),
       statsRefresh: () => T.core.invoke('stats_refresh'),
       laneTest: (slug) => T.core.invoke('lane_test', { slug }),
+      portGet: () => T.core.invoke('port_get'),
+      portSet: (port) => T.core.invoke('port_set', { port }),
     }
   : window.vll
 
@@ -75,7 +77,8 @@ const $ = (id) => document.getElementById(id)
 
 /** The engine's address. The old Python gateway lived on 4000 and is only
  *  polled for the status bar now; lanes are SERVED from here. */
-const ENGINE_HOST = '127.0.0.1:4100'
+let enginePort = 4100
+const engineHost = () => `127.0.0.1:${enginePort}`
 
 // ------------------------------------------------------------------- identity
 //
@@ -385,7 +388,7 @@ function renderTrack(track, lane) {
 }
 
 function laneEndpoint(slug) {
-  return `http://${ENGINE_HOST}/lane/${slug}/v1`
+  return `http://${engineHost()}/lane/${slug}/v1`
 }
 
 function laneCurlExample(slug) {
@@ -412,7 +415,7 @@ function laneEl(lane) {
   head.innerHTML = `
     <span class="lane-name" contenteditable="plaintext-only" spellcheck="false">${lane.name}</span>
     <button class="lane-url" title="Copy endpoint URL">
-      ${ICON.copy}<span class="host">${ENGINE_HOST}</span><span>/lane/${lane.slug}/v1</span>
+      ${ICON.copy}<span class="host">${engineHost()}</span><span>/lane/${lane.slug}/v1</span>
     </button>
     <button class="lane-action lane-test" title="Test this lane">Test</button>
     <button class="lane-action lane-copy-setup" title="Copy a curl setup example">Setup</button>
@@ -1548,6 +1551,14 @@ async function loadProviders() {
   }
 }
 
+async function loadPort() {
+  try {
+    enginePort = Number(await api.portGet()) || 4100
+  } catch {
+    enginePort = 4100
+  }
+}
+
 function mergeStats() {
   const stats = state.stats || {}
   state.catalog.forEach((m) => {
@@ -2462,6 +2473,7 @@ document.addEventListener('click', async (event) => {
 // headers — with the UI still rendering perfectly and no button working.
 fillPresetOptions()
 
+loadPort()
 loadLanes()
 loadPool().then(renderSidebar)
 loadStats()
