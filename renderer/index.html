@@ -103,6 +103,15 @@
       <span class="stat" id="statFastest">—</span>
       <span class="stat" id="statTraffic">—</span>
       <span class="stat stat-right" id="statUpdated">—</span>
+      <!-- The bell. Lit with a count when notifications arrived and faded
+           away unviewed; quiet when everything has been seen or muted. -->
+      <button class="notif-bell" id="notifBell" type="button" title="Notifications">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 2.2a3.9 3.9 0 0 0-3.9 3.9c0 3-1.3 4.1-1.3 4.1h10.4s-1.3-1.1-1.3-4.1A3.9 3.9 0 0 0 8 2.2z"/>
+          <path d="M6.7 12.6a1.4 1.4 0 0 0 2.6 0"/>
+        </svg>
+        <span class="bell-badge" id="bellBadge" hidden>0</span>
+      </button>
     </footer>
   </div>
 
@@ -238,28 +247,36 @@
     </section>
   </div>
 
-  <!-- Lane issues. Every entry is a diagnosis with its receipts: what
-       happened (the provider's own bytes, quoted), why it happens (the
+  <!-- The notification center. Every entry is a diagnosis with its receipts:
+       what happened (the provider's own bytes, quoted), why it happens (the
        mechanism), and what to try (a specific control in this app). A
        failure the evidence cannot clearly attribute says so — "unexplained"
        with the raw bytes — because a verdict without receipts is folklore,
-       and people choosing free models deserve facts. -->
-  <div class="scrim" id="issuesScrim" hidden>
-    <section class="panel" role="dialog" aria-label="Lane issues">
+       and people choosing free models deserve facts. Opening this marks
+       everything in it as seen; per-type "ignore" silences a kind without
+       stopping the engine from recording it. -->
+  <div class="scrim" id="notifScrim" hidden>
+    <section class="panel" role="dialog" aria-label="Notifications">
       <header class="panel-head">
         <div>
-          <h2 id="issuesTitle">Issues</h2>
-          <p class="sub">What went wrong in this lane, with the evidence, the reason, and what to try. Entries age out as new ones arrive.</p>
+          <h2>Notifications</h2>
+          <p class="sub">What went wrong across your lanes, with the evidence, the reason, and what to try. Ignored types stay recorded but arrive silently.</p>
         </div>
-        <button class="wc" id="closeIssues" type="button" title="Close">
+        <button class="wc" id="closeNotif" type="button" title="Close">
           <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
         </button>
       </header>
       <div class="panel-body">
-        <div id="issuesList"></div>
+        <div id="notifList"></div>
       </div>
     </section>
   </div>
+
+  <!-- Live notifications land here, bottom-right, and wait to be clicked.
+       Click one and it counts as viewed; let it fade and the bell keeps the
+       score. Hovering pauses the fade — a notification exists to be read,
+       and a timer must never win a race against a reader. -->
+  <div class="notif-stack" id="notifStack"></div>
 
   <!-- Per-member dials. Opens from the gear on a chip in a lane; positioned
        beside that chip by app.js. Blank means "no opinion" — the client's own

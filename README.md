@@ -156,15 +156,19 @@ on the response in `x-visualllm-unstuck`.
 
 **Every failure is explained, never just badged.** The engine records each
 one with its receipts — the provider's own bytes, the loop counts, which
-lane toggles were on at the time — and the lane shows an "issues" pill that
-opens the diagnosis: what happened (evidence quoted verbatim), why it
-happens (the mechanism), and what to try (a specific control here, one
-click away when it is one of the lane's own toggles). The standard is
-strict in both directions: a malformed request is recorded as the client's
-fault, and a failure the evidence cannot attribute renders as "unexplained,
-receipts attached" rather than being rounded up to a verdict. This app is
-built for people who choose free models; free models earn reputations by
-rumour, and receipts beat rumours.
+lane toggles were on at the time — and they arrive as notifications: a card
+at the bottom right that waits to be clicked, and a bell in the status bar
+that lights up with a count when cards fade away unviewed. Click a card (or
+the bell) and the full diagnosis opens: what happened (evidence quoted
+verbatim), why it happens (the mechanism), and what to try (a specific
+control here, one click away when it is one of the lane's own toggles). Any
+type can be ignored — the engine keeps recording it; only the announcement
+goes silent, reversibly. The standard is strict in both directions: a
+malformed request is recorded as the client's fault, and a failure the
+evidence cannot attribute renders as "unexplained, receipts attached"
+rather than being rounded up to a verdict. This app is built for people who
+choose free models; free models earn reputations by rumour, and receipts
+beat rumours.
 
 `classify` (refusals) and the commit gate (acceptances) in `server.rs` are
 the judgement, and they are what the tests pin down — `cargo test` from

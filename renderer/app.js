@@ -398,9 +398,6 @@ function laneEl(lane) {
     ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
     }</span>` : ''}
-    ${laneIssues(lane.slug).length ? `<button class="lane-issues" title="What went wrong in this lane recently — each entry with its evidence, the reason, and what to try.">${
-      laneIssues(lane.slug).length
-    } issue${laneIssues(lane.slug).length === 1 ? '' : 's'}</button>` : ''}
     <button class="lane-think${lane.suppress_reasoning ? ' is-on' : ''}" title="${
       lane.suppress_reasoning
         ? 'Members are asked to answer directly, without spending tokens on hidden reasoning. Click to allow thinking again.'
@@ -737,10 +734,18 @@ function endDrag() {
   saveLanes()
 }
 
-// -------------------------------------------------------------- lane issues
+// ------------------------------------------------------------- notifications
 //
 // The engine records failures with receipts; this is where they become
-// explanations. The contract, in order of importance:
+// explanations, delivered the way a person can actually absorb them: a
+// notification slides in at the bottom right and waits to be clicked. Click
+// it and it counts as viewed. Let it fade, and the bell in the status bar
+// lights up and keeps the score. Open the bell and everything in it is
+// marked seen. Any type can be ignored — the engine keeps recording it, the
+// delivery just goes silent. Facts are never suppressed; only their
+// announcement is.
+//
+// The diagnosis contract, in order of importance:
 //
 //   1. EVIDENCE FIRST. Every diagnosis renders the provider's own bytes (or
 //      the engine's counts) beside its conclusion. No receipts, no verdict.
@@ -756,12 +761,188 @@ function endDrag() {
 // This exists because the people this app is for choose free models, and
 // free models earn reputations by rumour. Receipts beat rumours.
 
-/** How old an incident can be and still count against a lane on the canvas. */
+/** How old an incident can be and still count as news. */
 const ISSUE_WINDOW_S = 24 * 3600
 
-const laneIssues = (slug) => {
+const windowedIncidents = () => {
   const cutoff = Date.now() / 1000 - ISSUE_WINDOW_S
-  return state.incidents.filter((i) => i.lane === slug && i.at >= cutoff)
+  return state.incidents.filter((i) => i.at >= cutoff)
+}
+
+/** An incident's identity, since the engine stores facts, not ids. Good
+ *  enough: two failures in the same second, on the same member, of the same
+ *  kind, are the same news. */
+const incidentKey = (i) => `${i.at}|${i.member}|${i.kind}`
+
+/**
+ * Read receipts and mutes live in localStorage, not in the engine's files —
+ * deliberately. "Which explanations has this person already seen" is
+ * interface state: losing it costs one extra glance at old news, never a
+ * fact. The facts stay in incidents.json, which this layer only ever reads.
+ */
+/** localStorage, when the surface actually has one. The smoke stub does not,
+ *  and file:// pages in some engines refuse access — either way the fallback
+ *  is an in-memory map, which degrades to "read receipts last one session"
+ *  rather than to a crash that kills every listener below this line. */
+const receipts = (() => {
+  try {
+    localStorage.setItem('notif.probe', '1')
+    localStorage.removeItem('notif.probe')
+    return localStorage
+  } catch {
+    const memory = new Map()
+    return { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v) }
+  }
+})()
+
+const notif = {
+  /** Only incidents newer than the moment the app opened get a live toast.
+   *  The backlog still counts as unread on the bell — it was never viewed —
+   *  but a wall of toasts about yesterday is noise, not news. */
+  baseline: Date.now() / 1000,
+  toasted: new Set(),
+  read: new Set(JSON.parse(receipts.getItem('notif.read') || '[]')),
+  muted: new Set(JSON.parse(receipts.getItem('notif.muted') || '[]')),
+}
+
+function notifPersist() {
+  // Read receipts for incidents that have aged out of the window are dead
+  // weight; prune by the timestamp each key carries in its prefix.
+  const cutoff = Date.now() / 1000 - ISSUE_WINDOW_S * 2
+  const kept = [...notif.read].filter((key) => Number(key.split('|')[0] || 0) >= cutoff)
+  notif.read = new Set(kept)
+  receipts.setItem('notif.read', JSON.stringify(kept))
+  receipts.setItem('notif.muted', JSON.stringify([...notif.muted]))
+}
+
+const unreadIncidents = () =>
+  windowedIncidents().filter((i) => !notif.read.has(incidentKey(i)) && !notif.muted.has(i.kind))
+
+function renderBell() {
+  const badge = $('bellBadge')
+  const count = unreadIncidents().length
+  badge.hidden = count === 0
+  badge.textContent = count > 99 ? '99+' : String(count)
+  $('notifBell').classList.toggle('is-lit', count > 0)
+}
+
+/** Called on every incidents poll: toast what is genuinely new, then let the
+ *  bell recount. Muted kinds pass through silently — recorded, not announced. */
+function processIncidents() {
+  for (const incident of windowedIncidents()) {
+    const key = incidentKey(incident)
+    if (incident.at < notif.baseline) continue
+    if (notif.toasted.has(key)) continue
+    notif.toasted.add(key)
+    if (notif.muted.has(incident.kind)) continue
+    if (notif.read.has(key)) continue
+    showNotifToast(incident)
+  }
+  renderBell()
+}
+
+/** One live notification, bottom right. Click = viewed, and the center opens
+ *  on the full diagnosis. The ✕ also counts as viewed — closing something is
+ *  handling it. Fading away unclicked is the only path that leaves it unread. */
+function showNotifToast(incident) {
+  const d = DIAGNOSIS[incident.kind] || DIAGNOSIS.unattributed
+  const card = document.createElement('div')
+  card.className = 'notif-toast'
+  card.innerHTML = `
+    <span class="notif-toast-body">
+      <span class="notif-toast-title">${d.title}</span>
+      <span class="notif-toast-meta">${attr(incident.member)} · lane ${attr(incident.lane)}</span>
+    </span>
+    <button class="notif-toast-close" title="Dismiss">${ICON.close}</button>
+  `
+  const stack = $('notifStack')
+  stack.appendChild(card)
+
+  const key = incidentKey(incident)
+  const done = () => {
+    card.remove()
+    renderBell()
+  }
+  // The fade timer, pausable: a notification exists to be read, and a timer
+  // must never win a race against a reader who is hovering over it.
+  let timer = setTimeout(done, 8000)
+  card.addEventListener('mouseenter', () => clearTimeout(timer))
+  card.addEventListener('mouseleave', () => (timer = setTimeout(done, 4000)))
+
+  card.addEventListener('click', (event) => {
+    clearTimeout(timer)
+    notif.read.add(key)
+    notifPersist()
+    card.remove()
+    if (!event.target.closest('.notif-toast-close')) openNotifications()
+    renderBell()
+  })
+}
+
+function openNotifications() {
+  $('notifScrim').hidden = false
+  renderNotifCenter()
+  // Opening the center is viewing it: everything listed is now seen, and the
+  // bell goes quiet. Muted kinds were never counted to begin with.
+  for (const incident of windowedIncidents()) notif.read.add(incidentKey(incident))
+  notifPersist()
+  renderBell()
+}
+
+function closeNotifications() {
+  $('notifScrim').hidden = true
+}
+
+function renderNotifCenter() {
+  const list = $('notifList')
+
+  // Newest first; identical (member, kind) entries fold into one card with a
+  // count — fifty loop sweeps as fifty cards would bury the one rate-limit
+  // entry that matters.
+  const grouped = new Map()
+  for (const incident of windowedIncidents()) {
+    const key = `${incident.member} ${incident.kind}`
+    const group = grouped.get(key)
+    if (group) {
+      group.count += 1
+      if (incident.at > group.latest.at) group.latest = incident
+    } else {
+      grouped.set(key, { count: 1, latest: incident })
+    }
+  }
+  const groups = [...grouped.values()].sort((a, b) => b.latest.at - a.latest.at)
+
+  if (!groups.length) {
+    list.innerHTML = `<div class="empty-state"><strong>Nothing to report</strong>No failures recorded in the last 24 hours.</div>`
+    return
+  }
+
+  list.innerHTML = groups
+    .map(({ count, latest }) => {
+      const d = DIAGNOSIS[latest.kind] || DIAGNOSIS.unattributed
+      const lane = state.lanes.find((l) => l.slug === latest.lane)
+      const muted = notif.muted.has(latest.kind)
+      const fix = !muted && lane && d.fix && d.fix(latest, lane)
+      return `
+      <article class="issue${muted ? ' is-muted' : ''}">
+        <header class="issue-head">
+          <span class="issue-title">${d.title}</span>
+          <span class="issue-meta">${attr(latest.member)} · lane ${attr(latest.lane)} · ${fmtAgo(latest.at)}${
+            count > 1 ? ` · ×${count}` : ''
+          }</span>
+        </header>
+        <pre class="issue-evidence">${attr(latest.evidence)}</pre>
+        <p class="issue-why">${d.why(latest, lane)}</p>
+        <p class="issue-advice">${d.advice(latest, lane)}</p>
+        <div class="issue-actions">
+          ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-lane="${attr(latest.lane)}">Turn on “no thinking” for this lane</button>` : ''}
+          <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}">${
+            muted ? 'Ignored — click to restore' : 'Ignore this type'
+          }</button>
+        </div>
+      </article>`
+    })
+    .join('')
 }
 
 /** What each kind means and what to do about it. `why` and `advice` receive
@@ -890,91 +1071,39 @@ function fmtAgo(at) {
   return `${Math.round(s / 3600)}h ago`
 }
 
-/** Which lane the issues panel is showing, so refreshes keep it current. */
-let issuesLane = null
+$('notifBell').addEventListener('click', openNotifications)
+$('closeNotif').addEventListener('click', closeNotifications)
 
-function renderIssues() {
-  const lane = state.lanes.find((l) => l.slug === issuesLane)
-  const list = $('issuesList')
-  if (!lane) return
-  $('issuesTitle').textContent = `Issues — ${lane.name}`
+$('notifScrim').addEventListener('click', (event) => {
+  if (event.target === $('notifScrim')) return closeNotifications()
 
-  // Newest first, and identical (member, kind) entries fold into one card
-  // with a count — fifty loop sweeps as fifty cards would bury the one
-  // rate-limit entry that matters.
-  const grouped = new Map()
-  for (const incident of laneIssues(lane.slug)) {
-    const key = `${incident.member} ${incident.kind}`
-    const group = grouped.get(key)
-    if (group) {
-      group.count += 1
-      if (incident.at > group.latest.at) group.latest = incident
-    } else {
-      grouped.set(key, { count: 1, latest: incident })
-    }
-  }
-  const groups = [...grouped.values()].sort((a, b) => b.latest.at - a.latest.at)
-
-  if (!groups.length) {
-    list.innerHTML = `<div class="empty-state"><strong>No recent issues</strong>Nothing has failed in this lane in the last 24 hours.</div>`
-    return
-  }
-
-  list.innerHTML = groups
-    .map(({ count, latest }) => {
-      const d = DIAGNOSIS[latest.kind] || DIAGNOSIS.unattributed
-      const fix = d.fix && d.fix(latest, lane)
-      return `
-      <article class="issue">
-        <header class="issue-head">
-          <span class="issue-title">${d.title}</span>
-          <span class="issue-meta">${attr(latest.member)} · ${fmtAgo(latest.at)}${
-            count > 1 ? ` · ×${count}` : ''
-          }</span>
-        </header>
-        <pre class="issue-evidence">${attr(latest.evidence)}</pre>
-        <p class="issue-why">${d.why(latest, lane)}</p>
-        <p class="issue-advice">${d.advice(latest, lane)}</p>
-        ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think">Turn on “no thinking” for this lane</button>` : ''}
-      </article>`
-    })
-    .join('')
-}
-
-function openIssues(slug) {
-  issuesLane = slug
-  $('issuesScrim').hidden = false
-  renderIssues()
-}
-
-$('closeIssues').addEventListener('click', () => {
-  $('issuesScrim').hidden = true
-  issuesLane = null
-})
-
-$('issuesScrim').addEventListener('click', (event) => {
-  if (event.target === $('issuesScrim')) {
-    $('issuesScrim').hidden = true
-    issuesLane = null
-    return
-  }
   const fix = event.target.closest('.issue-fix')
   if (fix && fix.dataset.fix === 'no-think') {
-    const lane = state.lanes.find((l) => l.slug === issuesLane)
+    const lane = state.lanes.find((l) => l.slug === fix.dataset.lane)
     if (!lane) return
     lane.suppress_reasoning = true
     saveLanes()
     renderLanes()
-    renderIssues()
+    renderNotifCenter()
     toast(`${lane.name}: members will be asked to answer without thinking`)
+    return
+  }
+
+  // Muting silences a TYPE, not the record: the engine keeps writing these,
+  // the bell and toasts just stop announcing them. Reversible in place.
+  const mute = event.target.closest('.issue-mute')
+  if (mute) {
+    const kind = mute.dataset.mute
+    if (notif.muted.has(kind)) notif.muted.delete(kind)
+    else notif.muted.add(kind)
+    notifPersist()
+    renderNotifCenter()
+    renderBell()
   }
 })
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !$('issuesScrim').hidden) {
-    $('issuesScrim').hidden = true
-    issuesLane = null
-  }
+  if (event.key === 'Escape' && !$('notifScrim').hidden) closeNotifications()
 })
 
 // -------------------------------------------------------------- member dials
@@ -1152,12 +1281,6 @@ document.addEventListener('click', async (event) => {
       openBrowse()
       toast(`Searching: ${lane.criteria.map(criterionWords).join(' + ')}`)
     }
-    return
-  }
-
-  const issues = event.target.closest('.lane-issues')
-  if (issues) {
-    openIssues(issues.closest('.lane').dataset.lane)
     return
   }
 
@@ -1430,6 +1553,11 @@ async function loadCatalog() {
   }
   renderSidebar()
   renderProviders()
+  // Lanes render before the catalog exists, so their members draw as dead
+  // until this repaint. The four-second poll used to hide that by repainting
+  // unconditionally; now that it repaints only on change, the catalog's
+  // arrival must announce itself.
+  renderLanes()
 }
 
 $('openProviders').addEventListener('click', openPanel)
@@ -2224,6 +2352,12 @@ async function refresh() {
   state.gateway = data.gateway || ''
   state.updatedAt = Date.now()
 
+  // New incidents become notifications on every poll — toasts for what just
+  // happened, the bell's count for what faded unseen. This runs regardless
+  // of the repaint decision below: news is news even when the canvas has
+  // nothing new to draw.
+  processIncidents()
+
   // Repaint only when this poll actually changed something. Rebuilding
   // identical DOM every four seconds is not just waste — it eats input: a
   // click needs its element to survive from press to release, and a tick
@@ -2234,9 +2368,9 @@ async function refresh() {
   if (signature !== refresh.last) {
     refresh.last = signature
     render()
-    // Keep an open issues panel current — evidence a few seconds old is
-    // evidence; evidence from before the last five failures is a trap.
-    if (issuesLane) renderIssues()
+    // Keep an open notification center current — evidence a few seconds old
+    // is evidence; evidence from before the last five failures is a trap.
+    if (!$('notifScrim').hidden) renderNotifCenter()
   }
 }
 

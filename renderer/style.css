@@ -468,24 +468,96 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 }
 .lane-kind.computed { color: var(--accent); }
 
-/* Recent failures, as a door to their explanations. Accent-coloured because
-   unlike every other pill this one is news, and it should read as news. */
-.lane-issues {
+/* ------------------------------------------------------------ notifications */
+
+/* The bell, in the status bar's right corner. Quiet when everything has been
+   seen; lit with a count when news faded away unread. */
+.notif-bell {
+  position: relative;
   flex-shrink: 0;
-  padding: 5px 13px;
-  border-radius: 100px;
-  background: var(--pressed-bg);
-  box-shadow: var(--in1);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--accent);
-  white-space: nowrap;
+  width: 30px; height: 30px;
+  margin-left: 10px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--raised);
+  box-shadow: var(--e1);
+  color: var(--text-faint);
   cursor: pointer;
-  transition: box-shadow 0.14s var(--ease);
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
 }
-.lane-issues:hover { box-shadow: var(--e1); }
+.notif-bell svg { width: 14px; height: 14px; }
+.notif-bell:hover { color: var(--text); box-shadow: var(--e2); }
+.notif-bell:active { box-shadow: var(--in1); }
+.notif-bell.is-lit { color: var(--accent); }
+
+.bell-badge {
+  position: absolute;
+  top: -5px; right: -7px;
+  min-width: 15px; height: 15px;
+  padding: 0 4px;
+  display: grid; place-items: center;
+  border-radius: 100px;
+  background: linear-gradient(145deg, #f8756f, var(--accent-deep));
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 1px 1px 3px rgba(200, 80, 76, 0.4);
+}
+
+/* Live notifications, bottom right, above the status bar. Fixed and pointer-
+   transparent as a container so only the cards themselves catch the mouse. */
+.notif-stack {
+  position: fixed;
+  right: 14px; bottom: 52px;
+  z-index: 650;
+  display: flex; flex-direction: column; gap: 10px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.notif-toast {
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 10px;
+  width: 320px;
+  padding: 12px 14px;
+  border-radius: var(--r);
+  background: var(--bg);
+  box-shadow: -6px -6px 16px rgba(255, 255, 255, 0.65), 10px 12px 26px rgba(146, 154, 172, 0.5);
+  cursor: pointer;
+  animation: rise 0.18s var(--ease);
+}
+.notif-toast-body { min-width: 0; flex: 1; }
+.notif-toast-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text);
+}
+.notif-toast-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.notif-toast-close {
+  flex-shrink: 0;
+  width: 20px; height: 20px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.notif-toast-close svg { width: 9px; height: 9px; stroke-width: 2; }
+.notif-toast-close:hover { color: var(--accent); box-shadow: var(--e1); }
+
+/* A muted type's history is still shown in the center — dimmed, with its
+   restore control — because silenced is not erased. */
+.issue.is-muted { opacity: 0.55; }
+.issue-actions { display: flex; gap: 8px; margin-top: 10px; }
+.issue-mute { height: 30px; padding: 0 14px; font-size: 11px; }
 
 /* Thinking is a lane property. Extruded = members may reason; pressed-in =
    the lane asks them not to. Same grammar as every other control here. */

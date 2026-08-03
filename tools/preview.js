@@ -117,6 +117,24 @@ const html = fs
         statsRefresh: () => ok(0),
         incidentsRead: () => ok(data.incidents),
       }
+
+      // Ten seconds in, a synthetic failure arrives — so the notification
+      // path (toast, fade, bell, center) can be watched and driven without
+      // waiting for a real provider to have a bad day. Clearly labelled as
+      // synthetic in its own evidence, because even test receipts are
+      // receipts.
+      setTimeout(() => {
+        data.incidents.push({
+          at: Math.floor(Date.now() / 1000),
+          lane: (data.lanes[0] || {}).slug || 'preview',
+          member: 'preview/synthetic-member',
+          kind: 'reasoning_burn',
+          evidence: 'finish_reason: length — 379 of 600 tokens were hidden reasoning (synthetic preview event)',
+          no_think: false,
+          loopwatch: false,
+          tools: 0,
+        })
+      }, 10000)
     })()
     </script>
     <script src="file://${path.join(rendererDir, 'app.js')}"></script>`
