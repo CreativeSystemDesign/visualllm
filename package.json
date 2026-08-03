@@ -1,16 +1,17 @@
 {
   "name": "visualllm",
   "version": "0.1.0",
-  "description": "",
+  "description": "Design reliable OpenAI-compatible endpoints by arranging AI models visually",
   "main": "renderer/index.html",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "smoke": "node tools/smoke.js",
     "tauri": "tauri"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["llm", "ai", "openai-compatible", "fallback", "routing", "tauri"],
+  "author": "Shane Gross",
+  "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4"

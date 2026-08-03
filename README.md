@@ -46,43 +46,24 @@ into an OpenAI-compatible client. The default engine listens on
 - [`SECURITY.md`](SECURITY.md) — threat model and vulnerability reporting.
 - [`LICENSE`](LICENSE) — project license.
 
-Design LLM endpoints by hand.
+## Development prerequisites
 
-Point it at a provider, and every model that provider offers appears in the
-sidebar. Drag the ones you want into a lane. The model on the right answers
-first; everything to its left is a fallback, tried in order when the one ahead
-of it cannot serve — out of credit, rate limited, context too small, provider
-down. The lane gets a name and a URL, and any OpenAI-compatible client can call
-it.
+Source development requires Node.js, the Rust toolchain, and on Linux the
+WebKit development packages:
 
-Routing is configuration in every other tool of this kind. Here it is the
-interface.
+`libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev`
 
-```bash
-npm run dev      # run it
-npm run build    # .deb and AppImage in src-tauri/target/release/bundle/
-```
-
-On Linux, the built desktop binary lives at `src-tauri/target/debug/visualllm`.
-It can be launched directly with a clean GTK/X11 environment:
+The renderer has no build step. For desktop development, use the system
+launcher documented above rather than starting Tauri from a VS Code Snap
+terminal. `npm run dev` remains available when the environment is known to be
+compatible.
 
 ```bash
-export PATH="$HOME/.cargo/bin:$PATH"
-env -i \
-  HOME="$HOME" \
-  PATH="/usr/bin:/bin:$HOME/.cargo/bin" \
-  DISPLAY="${DISPLAY:-:0}" \
-  XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
-  ./src-tauri/target/debug/visualllm
+npm ci
+node tools/smoke.js
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run build
 ```
-
-If the UI shows a connection error, the app is failing to reach its own engine
-on `http://127.0.0.1:4100`; the backend serves the renderer from `renderer/`
-and the engine endpoints from `/v1/models` and `/lane/{slug}/v1/chat/completions`.
-
-Requires the Rust toolchain, Node, and on Linux the WebKit development
-packages: `libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev
-librsvg2-dev`.
 
 ## How it is put together
 

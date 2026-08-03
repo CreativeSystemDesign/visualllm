@@ -1,9 +1,13 @@
 [package]
 name = "visualllm"
 version = "0.1.0"
-description = "Design LLM endpoints by hand"
+description = "Design reliable OpenAI-compatible endpoints by arranging AI models visually"
 edition = "2021"
 rust-version = "1.77"
+authors = ["Shane Gross"]
+license = "MIT"
+repository = "https://github.com/CreativeSystemDesign/visualllm"
+homepage = "https://github.com/CreativeSystemDesign/visualllm"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
