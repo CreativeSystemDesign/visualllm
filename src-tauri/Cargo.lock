@@ -4571,7 +4571,9 @@ name = "visualllm"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "cairo-rs",
  "futures-util",
+ "gtk",
  "keyring",
  "reqwest 0.12.28",
  "serde",

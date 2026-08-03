@@ -581,6 +581,28 @@ fn main() {
                     eprintln!("engine: {err}");
                 }
             });
+
+            // Force Mutter to recognize the entire frameless transparent window
+            // surface as clickable, preventing Z-order drops on click.
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                use gtk::prelude::WidgetExt;
+                if let Ok(gtk_window) = window.gtk_window() {
+                    gtk_window.connect_realize(move |win| {
+                        let rect = cairo::RectangleInt::new(
+                            0,
+                            0,
+                            win.allocated_width(),
+                            win.allocated_height(),
+                        );
+                        let region = cairo::Region::create_rectangle(&rect);
+                        if let Some(gdk_window) = win.window() {
+                            gdk_window.input_shape_combine_region(&region, 0, 0);
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())
