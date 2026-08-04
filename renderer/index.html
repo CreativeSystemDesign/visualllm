@@ -334,6 +334,25 @@
     <div class="pop-actions"><button class="btn-ghost" id="popClear" type="button">Clear all</button></div>
   </div>
 
+  <!-- The chip menu. Right-click on a lane member: the gear and the
+       drag-out-to-remove gesture are invisible until you know them, so this is
+       how those actions are discovered. Park keeps a member's place and dials
+       while the lane skips it — tuning by subtraction without losing work. -->
+  <div class="chip-menu" id="chipMenu" hidden>
+    <button class="chip-menu-item" data-menu="settings" type="button">
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.6v1.9M8 11.5v1.9M2.6 8h1.9M11.5 8h1.9M4.2 4.2l1.3 1.3M10.5 10.5l1.3 1.3M11.8 4.2l-1.3 1.3M5.5 10.5l-1.3 1.3"/></svg>
+      <span>Member settings</span>
+    </button>
+    <button class="chip-menu-item" data-menu="park" type="button">
+      <svg viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>
+      <span id="chipMenuParkLabel">Park this member</span>
+    </button>
+    <button class="chip-menu-item chip-menu-danger" data-menu="remove" type="button">
+      <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+      <span>Remove from lane</span>
+    </button>
+  </div>
+
   <div class="toast" id="toast"></div>
   <script src="app.js"></script>
 </body>

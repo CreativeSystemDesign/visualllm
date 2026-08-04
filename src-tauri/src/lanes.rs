@@ -67,6 +67,11 @@ pub struct Member {
     pub id: String,
     #[serde(default, skip_serializing_if = "MemberParams::is_empty")]
     pub params: MemberParams,
+    /// Parked members keep their place and their dials but are skipped at
+    /// request time, so a lane can be tuned by subtraction without losing the
+    /// work of arranging it. Off the disk when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 /// Accept every file shape this type has ever had: `"model-id"` from before
@@ -87,11 +92,13 @@ impl<'de> Deserialize<'de> for Member {
                 id: String,
                 #[serde(default)]
                 params: MemberParams,
+                #[serde(default)]
+                disabled: bool,
             },
         }
         Ok(match Raw::deserialize(de)? {
-            Raw::Bare(id) => Member { provider: String::new(), id, params: MemberParams::default() },
-            Raw::Full { provider, id, params } => Member { provider, id, params },
+            Raw::Bare(id) => Member { provider: String::new(), id, params: MemberParams::default(), disabled: false },
+            Raw::Full { provider, id, params, disabled } => Member { provider, id, params, disabled },
         })
     }
 }
@@ -273,8 +280,10 @@ mod tests {
             provider: "p".into(),
             id: "m".into(),
             params: MemberParams::default(),
+            disabled: false,
         };
         assert!(!serde_json::to_string(&plain).unwrap().contains("params"));
+        assert!(!serde_json::to_string(&plain).unwrap().contains("disabled"));
     }
 
     #[test]

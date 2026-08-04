@@ -1146,6 +1146,16 @@ async fn chat(
 
     for member in &lane.members {
         let label = member_label(member);
+
+        // A parked member keeps its place and dials but is never contacted.
+        // The skip is named, so the trail says "parked" rather than a
+        // capability miss — the difference between "can't" and "asked not to".
+        if member.disabled {
+            eprintln!("engine: {}   skip {label}: parked by the lane", lane.slug);
+            tried.push(Attempt::skipped(&label, "parked"));
+            continue;
+        }
+
         let entry = find_model(&catalog, member);
         let known = entry.is_some();
 
@@ -1914,6 +1924,7 @@ mod tests {
             provider: provider.into(),
             id: "deepseek-chat".into(),
             params: Default::default(),
+            disabled: false,
         };
 
         assert_eq!(find_model(&catalog, &member("deepseek")).unwrap().provider_id, "deepseek");
@@ -1938,6 +1949,7 @@ mod tests {
                     provider: "fake".into(),
                     id: (*id).into(),
                     params: Default::default(),
+                    disabled: false,
                 })
                 .collect(),
             criteria: Vec::new(),

@@ -138,8 +138,8 @@ const engineHost = () => `127.0.0.1:${enginePort}`
  *  reset a tuned member every time the app restarted. */
 const asRef = (r) =>
   typeof r === 'string'
-    ? { provider: '', id: r, params: {} }
-    : { provider: r.provider || '', id: r.id, params: r.params || {} }
+    ? { provider: '', id: r, params: {}, disabled: false }
+    : { provider: r.provider || '', id: r.id, params: r.params || {}, disabled: !!r.disabled }
 
 /** Does this member carry any dial at all? Drives the gear's "tuned" dot. */
 const hasParams = (ref) => Object.values(ref.params || {}).some((v) => v != null)
@@ -235,7 +235,7 @@ const ICON = {
 /** More than one provider in play means every model needs to say whose it is. */
 const multiProvider = () => new Set(state.catalog.map((m) => m.provider_id)).size > 1
 
-function chipEl(model, { inTrack = false, rank = null, tuned = false } = {}) {
+function chipEl(model, { inTrack = false, rank = null, tuned = false, disabled = false } = {}) {
   const el = document.createElement('div')
   el.className = 'chip'
   el.dataset.model = model.id
@@ -243,6 +243,10 @@ function chipEl(model, { inTrack = false, rank = null, tuned = false } = {}) {
   el.dataset.class = model.klass
   if (inTrack) el.classList.add('in-track')
   if (rank === 1) el.classList.add('is-primary')
+  if (disabled) {
+    el.classList.add('is-parked')
+    el.title = 'Parked — keeps its place and dials, but the lane skips it at request time. Right-click to resume.'
+  }
 
   // Cost first. It is the one figure that matters on every single decision,
   // and it should not be something the eye has to hunt for behind a speed
@@ -268,6 +272,7 @@ function chipEl(model, { inTrack = false, rank = null, tuned = false } = {}) {
   }
   // Which provider serves this chip — but only once there are two to confuse.
   if (model.provider_name && multiProvider()) bits.push(model.provider_name)
+  if (disabled) bits.push('parked')
   if (model.source !== 'catalog' && !model.available && model.reason) bits.push(model.reason)
 
   if (model.description) el.title = model.description
@@ -420,7 +425,7 @@ function renderTrack(track, lane) {
     // model its own canvas refused to show, which is undebuggable from the UI.
     track.appendChild(
       model
-        ? chipEl(model, { inTrack: true, rank, tuned: hasParams(ref) })
+        ? chipEl(model, { inTrack: true, rank, tuned: hasParams(ref), disabled: !!ref.disabled })
         : deadChipEl(ref, rank)
     )
   })
@@ -1359,6 +1364,97 @@ $('memberPop').addEventListener('change', (event) => {
     }
   }
   saveLanes()
+})
+
+// ------------------------------------------------------------- chip menu
+//
+// Right-click on a lane member. The gear and the drag-out-to-remove gesture
+// are invisible until you already know them; a menu is how they are found.
+// "Park" is the third action — a member that keeps its place and its dials
+// but is skipped at request time, so a lane can be tuned by subtraction
+// without losing the work of arranging it.
+
+/** Which member the open menu is aimed at, by identity. */
+const menuTarget = { lane: null, provider: '', id: '' }
+
+function menuMember() {
+  const lane = state.lanes.find((l) => l.slug === menuTarget.lane)
+  if (!lane) return null
+  return (
+    lane.members.find(
+      (r) => r.id === menuTarget.id && (r.provider || '') === menuTarget.provider
+    ) || lane.members.find((r) => r.id === menuTarget.id)
+  )
+}
+
+function openChipMenu(chip, x, y) {
+  const laneEl = chip.closest('.lane')
+  if (!laneEl) return
+  menuTarget.lane = laneEl.dataset.lane
+  menuTarget.provider = chip.dataset.provider || ''
+  menuTarget.id = chip.dataset.model
+  const member = menuMember()
+  if (!member) return
+  $('chipMenuParkLabel').textContent = member.disabled ? 'Resume this member' : 'Park this member'
+  const menu = $('chipMenu')
+  menu.hidden = false
+  const box = menu.getBoundingClientRect()
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - box.width - 8))}px`
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - box.height - 8))}px`
+}
+
+function closeChipMenu() {
+  $('chipMenu').hidden = true
+  menuTarget.lane = null
+}
+
+document.addEventListener('contextmenu', (event) => {
+  const chip = event.target.closest('.track .chip')
+  if (!chip) return
+  event.preventDefault()
+  openChipMenu(chip, event.clientX, event.clientY)
+})
+
+$('chipMenu').addEventListener('click', (event) => {
+  const item = event.target.closest('[data-menu]')
+  if (!item) return
+  const member = menuMember()
+  if (!member) return closeChipMenu()
+  const lane = state.lanes.find((l) => l.slug === menuTarget.lane)
+
+  if (item.dataset.menu === 'settings') {
+    const chip = document.querySelector(
+      `.lane[data-lane="${menuTarget.lane}"] .chip[data-model="${CSS.escape(menuTarget.id)}"] .chip-gear`
+    )
+    closeChipMenu()
+    if (chip) openMemberPop(chip)
+    return
+  }
+
+  if (item.dataset.menu === 'park') {
+    member.disabled = !member.disabled
+    closeChipMenu()
+    renderLanes()
+    saveLanes()
+    toast(member.disabled
+      ? `${member.id} parked — the lane will skip it`
+      : `${member.id} resumed`)
+    return
+  }
+
+  if (item.dataset.menu === 'remove') {
+    closeChipMenu()
+    mutateLanes(`${member.id} removed from ${lane.name}`, () => {
+      lane.members = lane.members.filter((r) => r !== member)
+    })
+  }
+})
+
+document.addEventListener('pointerdown', (event) => {
+  if (!$('chipMenu').hidden && !event.target.closest('#chipMenu')) closeChipMenu()
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeChipMenu()
 })
 
 $('popClose').addEventListener('click', () => closeMemberPop())
@@ -2666,10 +2762,11 @@ async function saveLanes() {
       state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick }) => ({
         slug,
         name,
-        members: members.map(({ provider, id, params }) => ({
+        members: members.map(({ provider, id, params, disabled }) => ({
           provider,
           id,
           params: params || {},
+          disabled: !!disabled,
         })),
         criteria: criteria || [],
         suppress_reasoning: !!suppress_reasoning,
