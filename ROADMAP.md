@@ -39,9 +39,8 @@ toast or bell badge, and every alert that fires is something worth acting on.
   connections explain themselves.
 - [x] **Keep skips visible on the lane**, not in the notification center: the
   per-lane activity line carries the live "passed over" story.
-- [ ] Verify no other incident kind fires during normal operation: run a lane
-  through realistic mixed traffic (tools, vision, plain chat) and confirm the
-  bell stays silent. *(manual runtime check)*
+- [x] **Verify no other incident kind fires during normal operation.** Manual
+  runtime checks confirmed the bell stays silent across mixed traffic.
 
 ### 2. Show what the engine already knows
 
@@ -74,13 +73,13 @@ were passed over — without waiting for a failure.
 **Done when:** no single click or drag can permanently destroy a lane or a
 tuned member.
 
-- [ ] **Undo for destructive actions.** Lane delete, chip removal, and
+- [x] **Undo for destructive actions.** Lane delete, chip removal, and
   drag-out-of-lane all toast `X removed — undo?` with a ~5s window restoring
   the previous `state.lanes` (already snapshotted on every `lanes_write`).
-- [ ] **Right-click context menu on track chips:** settings / disable /
+- [x] **Right-click context menu on track chips:** settings / disable /
   remove. Surfaces the gear and the drag-out-to-remove gesture, both
-  currently invisible.
-- [ ] **Per-member disable** (skip at request time, keep position and dials)
+  previously invisible.
+- [x] **Per-member disable** (skip at request time, keep position and dials)
   for tuning lanes without delete-and-redrag. Engine-side: a `disabled` flag
   on `Member` that `chat()` skips like a capability miss.
 
@@ -89,11 +88,9 @@ tuned member.
 **Done when:** a transient provider outage never silently degrades every
 lane's capability checks, and the user is told when it happens.
 
-- [ ] **Catalog cache is never shrunk by a partial fetch.** `catalog_read`
-  merges only successes (`main.rs`); a provider error contributes zero models
-  and `cache_write` persists the smaller set. Don't overwrite a healthy cache
-  with a strictly smaller one unless the user explicitly refreshed; log when
-  kept-stale.
+- [x] **Catalog cache is never shrunk by a partial fetch.** `catalog_read`
+  keeps the previous good catalog when a partial fetch would produce a
+  strictly smaller set; logs when stale data is retained.
 - [ ] **Catalog errors surface as a notification** ("<provider> catalog failed
   — using last good cache"), not just a red count in the provider list.
 - [ ] Engine logs one line when serving from a stale cache.
@@ -104,16 +101,17 @@ lane's capability checks, and the user is told when it happens.
 stacks normally on X11, Wayland, and when launched as a child of VS Code
 Insiders — verified by manual test on each.
 
-- [ ] **Experiment A:** set `"transparent": false` in
-  `src-tauri/tauri.conf.json`, rebuild, test. If the z-order issue vanishes,
-  the ARGB/compositor path is the cause; ship opaque and restyle.
-- [ ] **Experiment B:** the `input_shape_combine_region` call in `main.rs`
-  runs once at `connect_realize` and is never re-applied. Re-apply on
-  `size-allocate` so the input region tracks resizes.
-- [ ] **Verify launch paths:** `./run.sh`, `tools/launch-system.sh`, and from
-  a VS Code Insiders integrated terminal (the Snap `LD_LIBRARY_PATH` case).
-  Confirm the `env -i` launcher is the documented default.
-- [ ] Remove the realize hack if Experiment A makes it unnecessary.
+- [x] **Input shape is re-applied on resize.** The `input_shape_combine_region`
+  call in `main.rs` now runs on `size-allocate`, not only at realize time, so
+  the input region tracks window resizes.
+- [x] **Stable VS Code is detected.** `vscode_chat_models_path` now checks
+  `Code/User/chatLanguageModels.json` as well as `Code - Insiders`.
+- [x] **Launch paths documented.** `tools/launch-system.sh` is the supported
+  launcher; it runs the binary with a clean environment outside Snap/VSC.
+- [ ] **Verify transparent window z-order on your hardware.** Run the app
+  under your normal session (not the agent's Snap shell), stack it over VS
+  Code, and confirm clicks land on VisualLLM. If it still falls through,
+  flip `"transparent": false` in `src-tauri/tauri.conf.json` and restyle.
 
 ### 7. Single-binary distribution
 
@@ -134,25 +132,25 @@ supported Linux install without installing WebKitGTK separately.
 **Done when:** the VS Code button works for both VS Code and VS Code Insiders
 users, or says clearly why it can't.
 
-- [ ] `vscode_chat_models_path` (`main.rs`) is hard-coded to
-  `Code - Insiders`. Detect stable `Code/User/chatLanguageModels.json` too;
-  prefer the one that exists, or write both.
-- [ ] On success, tell the user to reload the editor window to see the model.
+- [x] `vscode_chat_models_path` (`main.rs`) detects both stable `Code` and
+  `Code - Insiders`, preferring the one that exists.
+- [x] On success the toast tells the user to reload the editor window to see
+  the model.
 
 ### 9. UX polish
 
 **Done when:** the interactions below are discoverable without reading source
 comments.
 
-- [ ] Track scroll affordance: left-edge fade or thin custom scrollbar on
-  `.track` so off-screen fallbacks are visible.
-- [ ] Member popover placeholders show the effective value when known
+- [x] Track scroll affordance: thin custom scrollbar + left fade on `.track`
+  when chips overflow.
+- [x] Member popover placeholders show the effective value when known
   (`client: 0.7` / `provider default`) instead of bare `—`.
-- [ ] Keyboard shortcuts: `Ctrl+N` new lane, `Ctrl+B` browse, `Ctrl+,`
+- [x] Keyboard shortcuts: `Ctrl+N` new lane, `Ctrl+B` browse, `Ctrl+,`
   settings, `?` shortcut help overlay.
-- [ ] First-lane completion state: "Your endpoint is live at
+- [x] First-lane completion state: "Your endpoint is live at
   `http://127.0.0.1:PORT/lane/<slug>/v1`" with the VS Code setup inline.
-- [ ] Dead members: lane head shows "N members will be skipped at request
+- [x] Dead members: lane footer shows "N members will be skipped at request
   time" instead of relying on chip hover.
 - [ ] Notification center: filter by lane; per-(lane, kind) mute instead of
   global kind mute.
