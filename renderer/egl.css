@@ -1194,8 +1194,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   gap: 7px;
 }
 
-/* An offering in the gallery. */
-.offering {
+/* An offering in the gallery. app.js builds these as `.row` — the offering
+   alias is kept for any template that uses it. */
+.row, .offering {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -1205,18 +1206,18 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   border: 1px solid var(--glass-edge);
   transition: all var(--t-fast) var(--ease-mass);
 }
-.offering:hover { border-color: var(--glass-edge-hi); transform: translateX(2px); }
-.offering.is-pooled { background: var(--glass-lo); border-color: rgba(255, 95, 86, 0.22); }
+.row:hover, .offering:hover { border-color: var(--glass-edge-hi); transform: translateX(2px); }
+.row.is-pooled, .offering.is-pooled { background: var(--glass-lo); border-color: rgba(255, 95, 86, 0.22); }
 
-.offering-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.offering-title { display: flex; align-items: baseline; gap: 8px; }
-.offering-name {
+.row-body, .offering-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.row-title, .offering-title { display: flex; align-items: baseline; gap: 8px; }
+.row-name, .offering-name {
   font-size: 13px;
   font-weight: 650;
   color: var(--ink);
   line-height: 1.3;
 }
-.offering-author {
+.row-author, .offering-author {
   flex-shrink: 0;
   font-size: 9px;
   font-weight: 700;
@@ -1224,7 +1225,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   text-transform: uppercase;
   color: var(--ink-faint);
 }
-.offering-id {
+.row-id, .offering-id {
   font-family: var(--f-mono);
   font-size: 9.5px;
   color: var(--ink-faint);
@@ -1233,7 +1234,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   text-overflow: ellipsis;
 }
 
-.offering-metrics {
+.row-metrics, .offering-metrics {
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1253,7 +1254,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   margin-top: 1px;
 }
 
-.offering-caps { display: flex; gap: 5px; flex-shrink: 0; min-width: 92px; }
+.row-caps, .offering-caps { display: flex; gap: 5px; flex-shrink: 0; min-width: 92px; }
 .cap {
   width: 22px; height: 22px;
   display: grid;
@@ -1268,7 +1269,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .cap.on { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
 .cap.unknown { opacity: 0.38; }
 
-.offering-add {
+.row-add, .offering-add {
   flex-shrink: 0;
   height: 32px;
   padding: 0 16px;
@@ -1280,8 +1281,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   color: var(--ink-dim);
   transition: all 260ms var(--ease-mass);
 }
-.offering-add:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
-.offering-add.added { background: var(--signal-soft); color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+.row-add:hover, .offering-add:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+.row-add.added, .offering-add.added { background: var(--signal-soft); color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
 
 .col-sort { cursor: pointer; border-radius: 6px; padding: 4px 2px; transition: all 260ms var(--ease-mass); position: relative; }
 .col-sort:hover .metric-label { color: var(--ink); }
