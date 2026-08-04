@@ -1096,22 +1096,20 @@ async fn chat(
         let model = entry.unwrap_or(&blank);
 
         if !can_serve(model, &needs, known) {
-            eprintln!("engine: {}   skip {label}: cannot serve this request", lane.slug);
-            // The receipts name both sides of the mismatch: what the request
-            // needed, and what the catalog says this member has. A wrong
-            // catalog entry is exactly the kind of thing these make visible.
-            note_incident(
-                &engine.dir,
-                lane,
-                &label,
-                &format!(
-                    "cannot serve this request: it needs vision={} tools={} ~{}tok; \
-                     the catalog lists vision={} tools={} context={}",
-                    needs.vision, needs.tools, needs.tokens,
-                    model.vision, model.tools, model.context
-                ),
-                tool_count,
+            eprintln!(
+                "engine: {}   skip {label}: cannot serve this request \
+                 (needs vision={} tools={} ~{}tok; catalog lists vision={} tools={} context={})",
+                lane.slug,
+                needs.vision, needs.tools, needs.tokens,
+                model.vision, model.tools, model.context
             );
+            // A capability skip is the lane working as designed — the fast
+            // primary being passed over for a request it can't serve is the
+            // entire point of the app. It is NOT an incident: recording it as
+            // one trained users to ignore the bell, which then missed real
+            // failures. The skip is still fully visible where it belongs — in
+            // the `x-visualllm-trail` header and on the lane's activity line,
+            // which the renderer derives from the trail, not from incidents.
             tried.push(Attempt::skipped(&label, "cannot serve this request"));
             continue; // never contacted — this is idea #1 from the header
         }

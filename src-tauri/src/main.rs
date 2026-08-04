@@ -86,14 +86,28 @@ struct VscodeProviderEntry {
 /// The full chatLanguageModels.json structure (array of providers).
 type VscodeChatModels = Vec<VscodeProviderEntry>;
 
-/// Path to VS Code Insiders' chatLanguageModels.json.
+/// Path to the editor's chatLanguageModels.json.
+///
+/// Both VS Code and VS Code Insiders are supported; the old code named
+/// Insiders unconditionally, so stable users wrote a config file for an
+/// editor they did not have and saw the model never appear. A config that
+/// already exists wins (we extend what is there rather than seed a parallel
+/// one); otherwise Insiders is preferred only when its directory exists, and
+/// stable is the default — a new file lands where the commonest editor reads.
 fn vscode_chat_models_path() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("Code - Insiders")
-        .join("User")
-        .join("chatLanguageModels.json"))
+    let config = PathBuf::from(home).join(".config");
+    let candidates = [
+        config.join("Code").join("User").join("chatLanguageModels.json"),
+        config.join("Code - Insiders").join("User").join("chatLanguageModels.json"),
+    ];
+    if let Some(existing) = candidates.iter().find(|p| p.exists()) {
+        return Ok(existing.clone());
+    }
+    // Neither file exists yet: prefer the editor whose config directory does.
+    let insiders_dir = config.join("Code - Insiders");
+    let chosen = if insiders_dir.is_dir() { &candidates[1] } else { &candidates[0] };
+    Ok(chosen.clone())
 }
 
 /// Read the existing chatLanguageModels.json.
@@ -606,10 +620,15 @@ async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult
         .map_err(|e| e.to_string())?;
     let response = client
         .post(url)
+        // A probe must exercise the same path a real request takes. Budgets
+        // under 16 bypass the engine's commit gate (server.rs), so a tiny
+        // probe would pass lanes that return empty or reasoning-only bodies —
+        // exactly the failures Test exists to catch. 64 is enough to answer
+        // and far over the bypass, so the gate's verdict is what is measured.
         .json(&serde_json::json!({
             "model": slug,
             "messages": [{"role": "user", "content": "Reply with the single word READY."}],
-            "max_tokens": 8,
+            "max_tokens": 64,
             "stream": false,
         }))
         .send()
@@ -736,11 +755,17 @@ fn main() {
 
             // Force Mutter to recognize the entire frameless transparent window
             // surface as clickable, preventing Z-order drops on click.
+            //
+            // The region must track the window: applied only at realize it
+            // goes stale on the first resize, and clicks then fall through the
+            // uncovered area to whatever window is stacked below — the "z-order"
+            // bug this exists to fix. So it is re-applied on every allocation,
+            // not just the first.
             #[cfg(target_os = "linux")]
             if let Some(window) = app.get_webview_window("main") {
                 use gtk::prelude::WidgetExt;
                 if let Ok(gtk_window) = window.gtk_window() {
-                    gtk_window.connect_realize(move |win| {
+                    fn shape_to_allocation(win: &gtk::ApplicationWindow) {
                         let rect = cairo::RectangleInt::new(
                             0,
                             0,
@@ -751,7 +776,9 @@ fn main() {
                         if let Some(gdk_window) = win.window() {
                             gdk_window.input_shape_combine_region(&region, 0, 0);
                         }
-                    });
+                    }
+                    gtk_window.connect_realize(shape_to_allocation);
+                    gtk_window.connect_size_allocate(|win, _| shape_to_allocation(win));
                 }
             }
 

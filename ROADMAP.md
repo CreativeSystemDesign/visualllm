@@ -1,15 +1,12 @@
-# VisualLLM Roadmap
+# VisualLLM Action Plan
 
-VisualLLM is a visual fallback router for models.
+VisualLLM is a visual fallback router: arrange models into lanes, each lane is a
+local OpenAI-compatible endpoint, the rightmost model answers first and
+everything to its left is a fallback.
 
-It lets people add providers, browse the models they offer, arrange models into
-ordered lanes, and expose each lane as a local OpenAI-compatible endpoint. The
-model on the right answers first; models to its left are fallbacks.
-
-This roadmap describes the work required to turn the current working prototype
-into a public project that is safe to install, easy to understand, and worthy
-of trust. It is intentionally outcome-oriented: implementation details may
-change as real users try the product.
+This file replaces the old milestone roadmap. It is a working plan: items are
+checked off as they land. Each workstream lists its goal ("done when") up
+front, then the concrete tasks.
 
 ## Product principles
 
@@ -27,128 +24,182 @@ change as real users try the product.
 5. **Compatibility matters.** Existing lanes and OpenAI-compatible clients
    should keep working as the application evolves.
 
-## Current state
+---
 
-The core product is already functional:
+## Workstreams
 
-- Tauri desktop shell with a framework-free renderer.
-- Provider configuration and catalog fetching.
-- OpenRouter and generic OpenAI-compatible providers.
-- Visual pool and drag-and-drop lane construction.
-- Ordered fallback routing on loopback, configurable from the engine settings
-   panel and defaulting to `127.0.0.1:4100`.
-- Capability and context filtering.
-- Blocking and streaming response handling.
-- A pre-forward commit gate for empty, stalled, or unusable 200 responses.
-- Per-member request dials and lane-level reasoning suppression.
-- Opt-in Loopwatch for stuck tool-call conversations.
-- Evidence-backed incident records and renderer notifications.
-- Browser preview harness and renderer smoke test.
-- Reliable system-terminal launcher for Linux development.
+### 1. Stop crying wolf — signal quality
 
-The legacy Python gateway remains the current development safety connection for
-this conversation through its isolated `workbench/luna` endpoint. It is a
-reference implementation and operational fallback, not a dependency of
-VisualLLM.
+**Done when:** normal, by-design behavior (capability skips) never produces a
+toast or bell badge, and every alert that fires is something worth acting on.
 
-## Milestones
+- [ ] **Don't record `skipped_by_catalog` as an incident.** It is the lane
+  working as designed — the fast primary being passed over for a request it
+  can't serve is the entire point of the app. The skip already appears in the
+  `x-visualllm-trail` header. Remove the `note_incident` call for capability
+  skips in `src-tauri/src/server.rs`, or demote it to a lane-level activity
+  entry that never toasts/badges.
+- [ ] **Keep skips visible on the lane**, not in the notification center: fold
+  skip counts into the per-lane activity line ("2 passed over by capability"),
+  receipts on hover.
+- [ ] Verify no other incident kind fires during normal operation: run a lane
+  through realistic mixed traffic (tools, vision, plain chat) and confirm the
+  bell stays silent.
 
-### 1. Desktop correctness — release blocker
+### 2. Show what the engine already knows
 
-- [x] Implement single-instance behavior.
-- [x] Make a second launch focus the existing window or exit cleanly.
-- [x] Detect an existing healthy engine without opening a broken duplicate.
-- [x] Handle stale coordination state after a crash.
-- [ ] Test clean startup, duplicate startup, restart, and shutdown.
+**Done when:** testing a lane and looking at a lane both tell you which model
+answered and what was passed over, using data the engine already returns.
 
-**Done when:** launching VisualLLM twice never leaves a second window showing a
-port or engine error.
+- [ ] **Lane test shows served-by + trail.** `lane_test` already returns
+  `served_by` and `trail` (`src-tauri/src/main.rs`); the renderer toasts only
+  `result.message` (`renderer/app.js`). Toast
+  `answered by <model> · passed over N (<reasons>)` on success.
+- [ ] **Lane test exercises the commit gate.** The fixed probe uses
+  `max_tokens: 8`, and `budget < 16` bypasses the gate (`server.rs`) — so Test
+  never validates the most interesting failure path (empty/reasoning-only
+  200s). Raise the probe budget so Test covers what production hits.
+- [ ] **Per-lane trail view.** The lane activity line becomes clickable into a
+  list of the last N attempts for that lane (member, outcome, evidence),
+  grouped by lane instead of by (member, kind). All data is already in
+  `state.incidents`.
 
-### 2. Public repository foundation
+### 3. Live request visibility — make fallback visible
 
-- [x] Add a project roadmap.
-- [x] Add a license, security policy, contribution guide, and code of conduct.
-- [x] Add issue and pull-request templates.
-- [ ] Add screenshots or a short product demo.
-- [ ] Define the first public release version and support policy.
-- [ ] Separate beginner documentation from implementation history.
+**Done when:** while a client request is in flight, the lane shows which
+member is being tried and, on completion, which member answered and how many
+were passed over — without waiting for a failure.
 
-**Done when:** a new visitor can understand the project, its license, its
-security model, and how to participate in under five minutes.
+- [ ] Engine appends one line per attempt to `activity.jsonl` in
+  `src-tauri/src/server.rs` (same write pattern as incidents): timestamp,
+  lane, member, phase (trying/committed/failed), outcome.
+- [ ] Renderer polls it on the existing 4s tick (faster while a request is
+  active) and shows on the lane: `trying <model>…` live, then
+  `answered by <model> · N passed over` for ~30s.
+- [ ] Cap and rotate the activity file so it can't grow unbounded.
 
-### 3. Install and release normally
+### 4. Protect the central interaction
 
-- [x] Add GitHub Actions CI for Rust, renderer smoke tests, and packaging.
-- [x] Add a tagged Linux release workflow for `.deb` and AppImage artifacts.
-- [x] Generate checksums for release artifacts.
-- [ ] Publish tested `.deb` and AppImage artifacts.
-- [ ] Verify desktop-menu launch on a clean Linux installation.
-- [ ] Document supported distributions and runtime requirements.
-- [ ] Decide whether Linux is the initial supported platform or whether
-  macOS/Windows will be release targets too.
+**Done when:** no single click or drag can permanently destroy a lane or a
+tuned member.
 
-**Done when:** a non-developer can download, install, launch, and remove the
-application without opening a terminal.
+- [ ] **Undo for destructive actions.** Lane delete, chip removal, and
+  drag-out-of-lane all toast `X removed — undo?` with a ~5s window restoring
+  the previous `state.lanes` (already snapshotted on every `lanes_write`).
+- [ ] **Right-click context menu on track chips:** settings / disable /
+  remove. Surfaces the gear and the drag-out-to-remove gesture, both
+  currently invisible.
+- [ ] **Per-member disable** (skip at request time, keep position and dials)
+  for tuning lanes without delete-and-redrag. Engine-side: a `disabled` flag
+  on `Member` that `chat()` skips like a capability miss.
 
-### 4. First-run onboarding
+### 5. Engine robustness the user can feel
 
-- [x] Explain providers, models, pools, and lanes in the empty states.
-- [x] Guide the first provider setup without hiding the advanced form.
-- [x] Explain right-to-left fallback priority at the point of use.
-- [x] Show a clear next step after the first lane is created.
-- [x] Make catalog freshness and refresh state visible.
+**Done when:** a transient provider outage never silently degrades every
+lane's capability checks, and the user is told when it happens.
 
-**Done when:** a first-time user can create a working lane without reading the
-architecture documentation.
+- [ ] **Catalog cache is never shrunk by a partial fetch.** `catalog_read`
+  merges only successes (`main.rs`); a provider error contributes zero models
+  and `cache_write` persists the smaller set. Don't overwrite a healthy cache
+  with a strictly smaller one unless the user explicitly refreshed; log when
+  kept-stale.
+- [ ] **Catalog errors surface as a notification** ("<provider> catalog failed
+  — using last good cache"), not just a red count in the provider list.
+- [ ] Engine logs one line when serving from a stale cache.
 
-### 5. Make connection the product moment
+### 6. Window and compositor correctness (z-order)
 
-- [x] Give every lane a prominent endpoint card.
-- [x] Add copy endpoint and copy setup instructions actions.
-- [x] Add a test-lane action with a useful result or diagnosis.
-- [x] Show recent serving model and fallback activity.
-- [x] Provide OpenAI-compatible and VS Code setup examples.
-- [x] Explain whether an API key is needed by the local client.
+**Done when:** clicks never fall through to windows below, and the window
+stacks normally on X11, Wayland, and when launched as a child of VS Code
+Insiders — verified by manual test on each.
 
-**Done when:** a user can create a lane and connect a client without guessing
-which URL, model name, or settings to use.
+- [ ] **Experiment A:** set `"transparent": false` in
+  `src-tauri/tauri.conf.json`, rebuild, test. If the z-order issue vanishes,
+  the ARGB/compositor path is the cause; ship opaque and restyle.
+- [ ] **Experiment B:** the `input_shape_combine_region` call in `main.rs`
+  runs once at `connect_realize` and is never re-applied. Re-apply on
+  `size-allocate` so the input region tracks resizes.
+- [ ] **Verify launch paths:** `./run.sh`, `tools/launch-system.sh`, and from
+  a VS Code Insiders integrated terminal (the Snap `LD_LIBRARY_PATH` case).
+  Confirm the `env -i` launcher is the documented default.
+- [ ] Remove the realize hack if Experiment A makes it unnecessary.
 
-### 6. Routing and persistence confidence
+### 7. Single-binary distribution
 
-- [x] Add mock-provider integration tests for blocking and streaming requests.
-- [x] Test capability skips, context overflow, provider failures, and fallback
-  trails end to end.
-- [x] Test stream errors and empty/reasoning-only 200 responses.
-- [x] Add persistence schema versions and migration tests.
-- [x] Define behavior for corrupt or partially written state files.
-- [ ] Add export/import or backup/restore for user configuration.
+**Done when:** a user can download one file and run VisualLLM on a clean
+supported Linux install without installing WebKitGTK separately.
 
-**Done when:** routing behavior is protected by tests that do not spend provider
-quota or depend on live upstream services.
+- [ ] Confirm the built binary embeds the renderer (it does — `frontendDist`)
+  and needs no repo files at runtime.
+- [ ] Verify the AppImage bundles WebKitGTK and runs on a clean VM (no
+  `libwebkit2gtk-4.1-dev` installed).
+- [ ] Decide: is the AppImage the canonical "single binary"? If yes, make it
+  the primary download; keep `.deb` for apt users. Document in README.
+- [ ] Add a release checklist entry: run the AppImage on a clean VM before
+  tagging.
 
-### 7. Security and lifecycle maturity
+### 8. Editor integration correctness
 
-- [x] Store provider keys in the OS keychain.
-- [x] Keep secrets out of logs, previews, diagnostics, and crash reports.
-- [ ] Improve port-conflict and engine-ownership messages.
-- [x] Support a deliberate configurable port without compromising stable URLs.
-- [x] Document the localhost-only threat model and limitations.
-- [x] Review all Tauri permissions and webview boundaries before release.
+**Done when:** the VS Code button works for both VS Code and VS Code Insiders
+users, or says clearly why it can't.
 
-**Done when:** the security model is explicit, tested, and appropriate for a
-public local desktop application.
+- [ ] `vscode_chat_models_path` (`main.rs`) is hard-coded to
+  `Code - Insiders`. Detect stable `Code/User/chatLanguageModels.json` too;
+  prefer the one that exists, or write both.
+- [ ] On success, tell the user to reload the editor window to see the model.
 
-### 8. Public launch
+### 9. UX polish
 
-- [ ] Record a short add-provider → drag-models → connect-client demo.
-- [ ] Publish a launch-quality README with screenshots.
-- [ ] Create the first tagged release and GitHub release notes.
-- [ ] Add issue labels and a small triage process.
-- [ ] Invite users to test provider setup, lane creation, and fallback behavior.
-- [ ] Use real feedback to prioritize the next release.
+**Done when:** the interactions below are discoverable without reading source
+comments.
 
-**Done when:** the project is easy to discover, easy to try, and has a clear
-path for users to report what prevented success.
+- [ ] Track scroll affordance: left-edge fade or thin custom scrollbar on
+  `.track` so off-screen fallbacks are visible.
+- [ ] Member popover placeholders show the effective value when known
+  (`client: 0.7` / `provider default`) instead of bare `—`.
+- [ ] Keyboard shortcuts: `Ctrl+N` new lane, `Ctrl+B` browse, `Ctrl+,`
+  settings, `?` shortcut help overlay.
+- [ ] First-lane completion state: "Your endpoint is live at
+  `http://127.0.0.1:PORT/lane/<slug>/v1`" with the VS Code setup inline.
+- [ ] Dead members: lane head shows "N members will be skipped at request
+  time" instead of relying on chip hover.
+- [ ] Notification center: filter by lane; per-(lane, kind) mute instead of
+  global kind mute.
+- [ ] Sidebar (300) and browse (150) caps gain a "show all" /
+  render-on-scroll instead of only "narrow the search".
+
+### 10. Portability, packaging, and launch (carried over)
+
+**Done when:** configuration moves between machines without moving secrets,
+the packaged app is verified on a clean install, and the project is ready for
+public users.
+
+- [ ] Export/import (backup/restore) of lanes, pool, providers — excluding
+  API keys (they stay in the keychain; re-entered on the new machine).
+- [ ] Manual startup verification: clean start, duplicate launch, restart,
+  shutdown, on a packaged build.
+- [ ] Publish tested `.deb` + AppImage; verify desktop-menu launch on a clean
+  install.
+- [ ] Screenshots or a short add-provider → drag-models → connect-client demo.
+- [ ] Define the first public release version and support policy; separate
+  beginner documentation from implementation history.
+- [ ] Add issue labels and a small triage process; invite users to test
+  provider setup, lane creation, and fallback behavior.
+
+## Release criteria
+
+A first public release should meet all of these conditions:
+
+- The app installs and launches from a packaged artifact on a clean supported
+  Linux system; a second launch behaves cleanly.
+- A user can create a lane and copy a working endpoint without guessing.
+- Provider keys never appear in the renderer or logs.
+- Routing and persistence tests pass without live provider access.
+- The README explains the product, installation, first lane, client connection,
+  limitations, and security model.
+- A failed upstream response produces an understandable diagnosis, and a normal
+  capability skip produces none.
+- The window stacks correctly on X11, Wayland, and when launched from VS Code.
 
 ## Non-goals for the first public release
 
@@ -158,29 +209,3 @@ path for users to report what prevented success.
 - Automatically spending money or selecting paid models without an explicit
   user decision.
 - Replacing every provider-specific feature with a universal abstraction.
-
-## Immediate next implementation
-
-The single-instance desktop milestone is implemented through Tauri's official
-single-instance plugin. The remaining work in that milestone is manual startup,
-duplicate-launch, restart, and shutdown verification on a packaged build.
-
-The next code milestone is **configuration portability**: add export/import or
-backup/restore for user configuration without exporting provider secrets.
-After that, complete packaged startup verification and prepare the first public
-release materials.
-
-## Release criteria
-
-A first public release should meet all of these conditions:
-
-- The app installs and launches from a packaged artifact on a clean supported
-  Linux system.
-- A second launch behaves cleanly.
-- A user can create a lane and copy a working endpoint.
-- Provider keys never appear in the renderer or logs.
-- Routing and persistence tests pass without live provider access.
-- The README explains the product, installation, first lane, client connection,
-  limitations, and security model.
-- A failed upstream response produces an understandable diagnosis rather than
-  a silent or empty client result.

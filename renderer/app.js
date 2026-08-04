@@ -97,6 +97,25 @@ const state = {
 
 const $ = (id) => document.getElementById(id)
 
+/** One-shot undo for destructive lane edits. A delete or drag-out is a
+ *  mis-click away from losing a tuned lane, and re-dragging members back
+ *  (with their dials) is real work. The snapshot is taken just before the
+ *  change and held for one toast window; acting on it restores and clears. */
+let pendingUndo = null
+
+function armUndo(lanes, label) {
+  pendingUndo = { lanes, label }
+  clearTimeout(armUndo._t)
+  armUndo._t = setTimeout(() => (pendingUndo = null), 6000)
+}
+
+function takeUndo() {
+  const undo = pendingUndo
+  pendingUndo = null
+  clearTimeout(armUndo._t)
+  return undo
+}
+
 /** The engine's address. The old Python gateway lived on 4000 and is only
  *  polled for the status bar now; lanes are SERVED from here. */
 let enginePort = 4100
@@ -756,10 +775,9 @@ function endDrag() {
     // Dropped nowhere. Out of a lane means remove; out of the sidebar means nothing.
     if (from) {
       const lane = state.lanes.find((l) => l.slug === from)
-      lane.members = lane.members.filter((r) => !refMatches(r, model))
-      toast(`${model.id} removed from ${lane.name}`)
-      render()
-      saveLanes()
+      mutateLanes(`${model.id} removed from ${lane.name}`, () => {
+        lane.members = lane.members.filter((r) => !refMatches(r, model))
+      })
     } else {
       render()
     }
@@ -870,8 +888,15 @@ function notifPersist() {
   receipts.setItem('notif.muted', JSON.stringify([...notif.muted]))
 }
 
+/** Kinds that stay recorded and listed but never badge the bell or fire a
+ *  toast: by-design behavior, not news. Capability skips are the lane doing
+ *  its job — announcing them trained users to ignore alerts entirely. */
+const SILENT_KINDS = new Set(['skipped_by_catalog'])
+
 const unreadIncidents = () =>
-  windowedIncidents().filter((i) => !notif.read.has(incidentKey(i)) && !notif.muted.has(i.kind))
+  windowedIncidents().filter(
+    (i) => !SILENT_KINDS.has(i.kind) && !notif.read.has(incidentKey(i)) && !notif.muted.has(i.kind)
+  )
 
 function renderBell() {
   const badge = $('bellBadge')
@@ -889,6 +914,7 @@ function processIncidents() {
     if (incident.at < notif.baseline) continue
     if (notif.toasted.has(key)) continue
     notif.toasted.add(key)
+    if (SILENT_KINDS.has(incident.kind)) continue
     if (notif.muted.has(incident.kind)) continue
     if (notif.read.has(key)) continue
     showNotifToast(incident)
@@ -934,7 +960,8 @@ function showNotifToast(incident) {
   })
 }
 
-function openNotifications() {
+function openNotifications(laneSlug) {
+  notifLaneFilter = laneSlug || null
   $('notifScrim').hidden = false
   renderNotifCenter()
   // Opening the center is viewing it: everything listed is now seen, and the
@@ -946,16 +973,25 @@ function openNotifications() {
 
 function closeNotifications() {
   $('notifScrim').hidden = true
+  notifLaneFilter = null
 }
+
+/** When opened from a lane's activity line, the center shows just that lane.
+ *  `null` is the whole system. */
+let notifLaneFilter = null
 
 function renderNotifCenter() {
   const list = $('notifList')
+
+  const visible = notifLaneFilter
+    ? windowedIncidents().filter((i) => i.lane === notifLaneFilter)
+    : windowedIncidents()
 
   // Newest first; identical (member, kind) entries fold into one card with a
   // count — fifty loop sweeps as fifty cards would bury the one rate-limit
   // entry that matters.
   const grouped = new Map()
-  for (const incident of windowedIncidents()) {
+  for (const incident of visible) {
     const key = `${incident.member} ${incident.kind}`
     const group = grouped.get(key)
     if (group) {
@@ -967,12 +1003,18 @@ function renderNotifCenter() {
   }
   const groups = [...grouped.values()].sort((a, b) => b.latest.at - a.latest.at)
 
+  const scopeChip = notifLaneFilter
+    ? `<div class="notif-scope">Lane: ${attr(notifLaneFilter)} <button class="notif-scope-clear" type="button">show all</button></div>`
+    : ''
+
   if (!groups.length) {
-    list.innerHTML = `<div class="empty-state"><strong>Nothing to report</strong>No failures recorded in the last 24 hours.</div>`
+    list.innerHTML = scopeChip + `<div class="empty-state"><strong>Nothing to report</strong>${
+      notifLaneFilter ? 'No failures on this lane in the last 24 hours.' : 'No failures recorded in the last 24 hours.'
+    }</div>`
     return
   }
 
-  list.innerHTML = groups
+  list.innerHTML = scopeChip + groups
     .map(({ count, latest }) => {
       const d = DIAGNOSIS[latest.kind] || DIAGNOSIS.unattributed
       const lane = state.lanes.find((l) => l.slug === latest.lane)
@@ -1078,12 +1120,24 @@ const DIAGNOSIS = {
     why: () => 'Connection failed or timed out before any response existed.',
     advice: () => 'Check the base URL in Providers if this recurs — for local servers, that the server is running.',
   },
+  // The engine no longer records capability skips as incidents — a member
+  // passed over for a request it can't serve is the lane working as designed,
+  // and badging it trained users to ignore the bell. This entry remains only
+  // so records written by older versions still explain themselves; new ones
+  // are never announced (see SILENT_KINDS).
   skipped_by_catalog: {
     title: 'Skipped without being contacted',
     why: () =>
-      'The cached catalog says this member cannot serve what the request needed, so the engine never sent it — sending anyway risks a silently wrong answer (an ignored image reads as a confident description of nothing).',
+      'The cached catalog said this member could not serve what the request needed, so the engine never sent it — sending anyway risks a silently wrong answer (an ignored image reads as a confident description of nothing).',
     advice: () =>
-      'The receipts show both sides of the mismatch. If the catalog looks wrong, refresh it from Browse — a wrong cached entry is exactly the failure this record exists to expose.',
+      'This is the lane doing its job. If the catalog looks wrong, refresh it from Browse — a wrong cached entry is exactly the failure this record exists to expose.',
+  },
+  stalled: {
+    title: 'The connection went silent before answering',
+    why: () =>
+      'Bytes stopped arriving entirely — not a slow model (a stream carries a pulse even while thinking), but a dead connection wearing an open port. The engine waited out the full patience window, then gave the slot to the next member.',
+    advice: () =>
+      'Transient unless it repeats for the same member — then that provider\u2019s endpoint is unreliable or the model is being retired mid-flight. A member that stalls often belongs further left in the lane, behind something dependable.',
   },
   loop_repeat: {
     title: 'Caught repeating the same call',
@@ -1131,6 +1185,13 @@ $('closeNotif').addEventListener('click', closeNotifications)
 
 $('notifScrim').addEventListener('click', (event) => {
   if (event.target === $('notifScrim')) return closeNotifications()
+
+  const scopeClear = event.target.closest('.notif-scope-clear')
+  if (scopeClear) {
+    notifLaneFilter = null
+    renderNotifCenter()
+    return
+  }
 
   const fix = event.target.closest('.issue-fix')
   if (fix && fix.dataset.fix === 'no-think') {
@@ -1264,12 +1325,60 @@ $('popClear').addEventListener('click', () => {
 
 // ------------------------------------------------------------------ interaction
 
-function toast(message) {
+function toast(message, detail = '', action = null) {
   const el = $('toast')
   el.textContent = message
+  // Detail (e.g. a fallback trail) is secondary: shown as a smaller second
+  // line and on hover, never crowding the headline.
+  el.title = detail
+  const existing = el.querySelector('.toast-detail')
+  if (existing) existing.remove()
+  if (detail) {
+    const sub = document.createElement('span')
+    sub.className = 'toast-detail'
+    sub.textContent = detail
+    el.appendChild(sub)
+  }
+  // A toast can carry one action (Undo). The button must be clickable, so the
+  // toast only goes pointer-transparent when there is nothing to press.
+  const oldBtn = el.querySelector('.toast-action')
+  if (oldBtn) oldBtn.remove()
+  if (action) {
+    const btn = document.createElement('button')
+    btn.className = 'toast-action'
+    btn.type = 'button'
+    btn.textContent = action.label
+    btn.addEventListener('click', () => {
+      action.fn()
+      el.classList.remove('show')
+    })
+    el.appendChild(btn)
+  }
+  el.classList.toggle('has-action', !!action)
   el.classList.add('show')
   clearTimeout(toast._t)
-  toast._t = setTimeout(() => el.classList.remove('show'), 2000)
+  toast._t = setTimeout(() => el.classList.remove('show'), action ? 6000 : detail ? 4000 : 2000)
+}
+
+/** Snapshot the lanes, run the change, and offer to undo it. The three
+ *  destructive edits all funnel here so they behave identically. */
+function mutateLanes(label, mutate) {
+  const before = state.lanes.map((lane) => ({ ...lane, members: lane.members.map((m) => ({ ...m, params: { ...m.params } })) }))
+  mutate()
+  render()
+  saveLanes()
+  armUndo(before, label)
+  toast(label, '', {
+    label: 'Undo',
+    fn: () => {
+      const undo = takeUndo()
+      if (!undo) return
+      state.lanes = undo.lanes
+      render()
+      saveLanes()
+      toast('Restored')
+    },
+  })
 }
 
 document.addEventListener('pointerdown', (event) => {
@@ -1291,11 +1400,11 @@ document.addEventListener('pointerdown', (event) => {
   if (remove) {
     const chip = remove.closest('.chip')
     const lane = state.lanes.find((l) => l.slug === chip.closest('.lane').dataset.lane)
-    lane.members = lane.members.filter(
-      (r) => !(r.id === chip.dataset.model && (r.provider || '') === chip.dataset.provider)
-    )
-    render()
-    saveLanes()
+    mutateLanes(`${chip.dataset.model} removed from ${lane.name}`, () => {
+      lane.members = lane.members.filter(
+        (r) => !(r.id === chip.dataset.model && (r.provider || '') === chip.dataset.provider)
+      )
+    })
     return
   }
 
@@ -1316,10 +1425,9 @@ document.addEventListener('click', async (event) => {
   const remove = event.target.closest('.lane-remove')
   if (remove) {
     const lane = state.lanes.find((l) => l.slug === remove.closest('.lane').dataset.lane)
-    state.lanes = state.lanes.filter((l) => l !== lane)
-    render()
-    saveLanes()
-    toast(`${lane.name} deleted`)
+    mutateLanes(`${lane.name} deleted`, () => {
+      state.lanes = state.lanes.filter((l) => l !== lane)
+    })
     return
   }
 
@@ -1386,7 +1494,15 @@ document.addEventListener('click', async (event) => {
     if (!lane) return
     try {
       const result = await api.laneTest(lane.slug)
-      toast(`${lane.name}: ${result.message}`)
+      // The point of a fallback lane is which model answered and what was
+      // passed over — `lane_test` already returns both; showing only the
+      // message wastes them. The trail is the whole story, so it rides along
+      // on hover where it won't flood the toast.
+      if (result.ok && result.served_by) {
+        toast(`${lane.name}: answered by ${result.served_by}`, result.trail || '')
+      } else {
+        toast(`${lane.name}: ${result.message}`, result.trail || '')
+      }
     } catch (error) {
       toast(`${lane.name}: ${error.message}`)
     }
@@ -1398,6 +1514,16 @@ document.addEventListener('click', async (event) => {
     const slug = setup.closest('.lane').dataset.lane
     await api.copy(laneCurlExample(slug))
     toast('Curl setup copied')
+    return
+  }
+
+  // The activity line opens the lane's own trail: its recent attempts, newest
+  // first, each with the evidence. This is the same records the notification
+  // center shows, scoped to one lane — the difference between "something
+  // failed somewhere" and "this lane's story".
+  const activity = event.target.closest('.lane-activity')
+  if (activity) {
+    openNotifications(activity.closest('.lane').dataset.lane)
     return
   }
 
@@ -1415,7 +1541,7 @@ document.addEventListener('click', async (event) => {
       console.log('[vscode] calling api.vscodeIntegrateLane', { slug, name: lane.name })
       await api.vscodeIntegrateLane(slug, lane.name)
       console.log('[vscode] success')
-      toast(`Added "${lane.name}" to VS Code model picker`)
+      toast(`Added "${lane.name}" to the VS Code model picker`, 'Reload the editor window (Ctrl+R) to see it')
     } catch (error) {
       console.error('[vscode] failed', error)
       toast(`Failed: ${error.message}`)
