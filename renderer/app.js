@@ -439,7 +439,7 @@ function renderTrack(procession, hall) {
 }
 
 function laneEndpoint(slug) {
-  return `http://${engineHost()}/hall/${slug}/v1`
+  return `http://${engineHost()}/lane/${slug}/v1`
 }
 
 function laneCurlExample(slug) {
@@ -543,7 +543,7 @@ function laneEl(hall) {
     <span class="hall-name" contenteditable="plaintext-only" spellcheck="false">${hall.name}</span>
     ${laneLights(hall)}
     <button class="hall-url" title="Copy endpoint URL">
-      ${ICON.copy}<span class="host">${engineHost()}</span><span>/hall/${hall.slug}/v1</span>
+      ${ICON.copy}<span class="host">${engineHost()}</span><span>/lane/${hall.slug}/v1</span>
     </button>
     <span class="hall-spacer"></span>
     <button class="hall-act lane-test" title="Test this hall">Test</button>
