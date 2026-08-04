@@ -6,6 +6,10 @@
 [![Rust 1.77+](https://img.shields.io/badge/rust-1.77%2B-orange.svg)](https://www.rust-lang.org/)
 [![Tauri 2.x](https://img.shields.io/badge/tauri-2.x-blue.svg)](https://tauri.app/)
 
+![VisualLLM — endpoints and the model vault](docs/screenshots/main-endpoints.png)
+
+Routing, made visible. The **vault** on the left holds the models you've kept; the **endpoints** on the right are live OpenAI-compatible servers. The relic at the right edge of each lane answers first — everything to its left is a fallback, tried in order.
+
 ---
 
 ## What is VisualLLM?
@@ -18,6 +22,33 @@ VisualLLM is a **visual fallback router** for AI models. It's a desktop applicat
 - **Expose lanes as local OpenAI-compatible endpoints** that your tools can connect to
 
 When a request comes in, the rightmost model answers first. If it fails, can't serve the request, or returns unusable content, VisualLLM automatically tries the next model in line — and explains exactly what happened at each step.
+
+---
+
+## A Look Inside
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/gallery.png" alt="The Gallery — the full provider catalog, filterable" />
+      <p align="center"><b>The Gallery.</b> Every model your providers offer, with intelligence, coding, and agentic scores, context size, price, and measured speed. Lock the columns you care about and the list sorts by them.</p>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/providers-dropdown.png" alt="Providers — add any OpenAI-compatible service" />
+      <p align="center"><b>Providers.</b> OpenRouter, OpenAI, Anthropic, Groq, Together, DeepSeek, xAI, Mistral, or any OpenAI-compatible endpoint — including local servers like Ollama, LM Studio, and vLLM.</p>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2">
+      <img src="docs/screenshots/provider-form.png" alt="Adding a provider" />
+      <p align="center"><b>Adding a provider.</b> Keys are stored in the OS keychain and never leave the Rust backend. Export your setup to move it between machines — keys stay behind.</p>
+    </td>
+  </tr>
+</table>
+
+The interface is an installation: a living, reaction-diffusion field rendered on the GPU (with an honest CPU fallback), slabs of smoked acrylic floating above it, and a lane's traffic rippling through the chemistry at its own position. Nothing is a static rectangle.
+
+---
 
 ### The Problem It Solves
 
@@ -110,11 +141,15 @@ npm ci
 node tools/smoke.js
 cargo test --manifest-path src-tauri/Cargo.toml
 
-# Build the app
+# Run the app in development mode
+npm run dev
+
+# Build release packages (.deb + AppImage on Linux)
 npm run build
 
-# Run for development (recommended launcher for Linux)
-./run.sh
+# Or run the compiled binary outside a snap-polluted terminal
+# (prefers target/release if it exists, otherwise target/debug)
+tools/launch-system.sh
 ```
 
 The app will open a window and start the engine on `http://127.0.0.1:4100`.
@@ -200,6 +235,20 @@ Every failure is recorded with:
 - Lane settings at the time (no_think, loopwatch enabled)
 
 Click the bell icon in the status bar to view recent incidents.
+
+### Export and Import
+
+Your lanes, pool, and provider configuration can move between machines:
+
+- **Export** — open the **Providers** panel and click **Export…**. This saves a
+  JSON file containing lanes, pool, and provider settings. API keys are
+  **never** included; they stay in your OS keychain.
+- **Import** — click **Import…** and choose a previously exported file.
+  - **Merge** — combines the file with your current state. Existing providers
+    keep their local API keys, and lanes with the same slug are updated rather
+    than duplicated.
+  - **Replace** — wipes your current lanes, pool, and providers and loads the
+  file exactly. You will need to re-enter API keys afterward.
 
 ---
 
@@ -480,6 +529,41 @@ VisualLLM is licensed under the [MIT License](LICENSE).
 ## Roadmap
 
 The public release plan, milestones, and criteria are documented in [ROADMAP.md](ROADMAP.md).
+
+## Release checklist
+
+Before tagging a release:
+
+1. Run the full test suite:
+   ```bash
+   node tools/smoke.js
+   cargo test --manifest-path src-tauri/Cargo.toml
+   cargo fmt --check --manifest-path src-tauri/Cargo.toml
+   ```
+2. Build release packages:
+   ```bash
+   npm run build
+   ```
+3. Verify the built binary starts cleanly and serves lanes on `127.0.0.1:4100`.
+4. Launch a second instance and confirm it detects the first rather than
+   spawning a duplicate engine window.
+5. Run the AppImage on a clean Linux VM with no WebKitGTK development packages
+   installed to confirm it bundles its dependencies.
+6. Update `CHANGELOG.md` with the version, date, and summary of changes.
+7. Tag the release and attach the `.deb`, AppImage, and source archive.
+
+## Version policy
+
+Releases follow [Semantic Versioning](https://semver.org/):
+
+- **MAJOR** — incompatible changes to lane persistence, provider config, or
+  the OpenAI-compatible endpoint contract.
+- **MINOR** — new user-facing features, new provider kinds, or significant UI
+  improvements.
+- **PATCH** — bug fixes, documentation updates, and minor robustness improvements.
+
+The first public release will be `1.0.0` once the release criteria in
+`ROADMAP.md` are met.
 
 ## Credits
 
