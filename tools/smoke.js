@@ -42,7 +42,41 @@ const element = new Proxy({}, {
   set: () => true,
 })
 
-global.window = {}
+const ok = (value) => Promise.resolve(value)
+global.window = {
+  vll: {
+    readGateway: () => ok({
+      connected: false,
+      gateway: 'smoke',
+      error: null,
+      models: [],
+      lanes: [],
+      traffic: { requests: 0, failures: 0 },
+    }),
+    copy: () => ok(),
+    minimize: () => ok(),
+    toggleMaximize: () => ok(),
+    close: () => ok(),
+    startDragging: () => ok(),
+    focus: () => ok(),
+    providersList: () => ok([]),
+    providerSave: (input) => ok({ ...input, id: input.id || 'smoke', key_hint: '', has_key: false }),
+    providerDelete: () => ok(),
+    providerTest: () => ok(0),
+    catalogRead: () => ok({ models: [], errors: [] }),
+    lanesRead: () => ok([]),
+    lanesWrite: () => ok(),
+    incidentsRead: () => ok([]),
+    poolRead: () => ok([]),
+    poolWrite: () => ok(),
+    statsRead: () => ok({ fetched_at: 0, models: {} }),
+    statsRefresh: () => ok(0),
+    laneTest: () => ok({ ok: false, status: 0, served_by: null, trail: null, message: 'smoke' }),
+    portGet: () => ok(4100),
+    portSet: (port) => ok(port),
+    vscodeIntegrateLane: () => ok(),
+  },
+}
 global.document = new Proxy({}, {
   get(_t, key) {
     if (key === 'getElementById' || key === 'createElement' || key === 'querySelector') return () => element

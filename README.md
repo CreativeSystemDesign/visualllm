@@ -32,7 +32,7 @@ For development from a cloned repository:
 ### Recommended: Use the launch script (handles snap/Wayland issues)
 
 ```bash
-cd /home/shane/visualllm
+cd /path/to/visualllm
 ./tools/launch-system.sh
 ```
 
@@ -41,7 +41,7 @@ This starts the app with a clean environment (`env -i`) and `GDK_BACKEND=x11` to
 ### Alternative: Run directly (must use clean terminal)
 
 ```bash
-cd /home/shane/visualllm/src-tauri
+cd /path/to/visualllm/src-tauri
 ~/.cargo/bin/cargo run
 ```
 
@@ -55,13 +55,13 @@ cd /home/shane/visualllm/src-tauri
 > variables first:
 > ```bash
 > unset LD_LIBRARY_PATH GTK_PATH GIO_MODULE_DIR LOCPATH XDG_DATA_DIRS
-> cd /home/shane/visualllm/src-tauri && ~/.cargo/bin/cargo run
+> cd /path/to/visualllm/src-tauri && ~/.cargo/bin/cargo run
 > ```
 
 ### Alternative: Tauri dev mode (also needs clean terminal)
 
 ```bash
-cd /home/shane/visualllm
+cd /path/to/visualllm
 unset LD_LIBRARY_PATH GTK_PATH GIO_MODULE_DIR LOCPATH XDG_DATA_DIRS
 npm run dev
 ```
@@ -166,12 +166,12 @@ files remain readable for migration; saving a provider rewrites them without
 the secret. The renderer receives only a masked key hint and never receives a
 usable credential.
 
-**The two 429s are still treated alike.** OpenRouter returns the same status for
-"this provider is throttling you" — where another model fixes it — and "your
-whole free tier is blocked" — where nothing but waiting does. Walking the rest
-of a lane during the second kind burns quota and deepens the hole. They are
-distinguishable: the account-wide block reports `provider_name: null` in the
-error payload. Reading the body rather than the status is the fix.
+**The two 429s are named from evidence, not just status.** OpenRouter returns the
+same status for "this provider is throttling you" — where another model fixes it
+— and "your whole free tier is blocked" — where nothing but waiting does. The
+router reads the body and labels the `provider_name: null` form as an
+account-wide free-tier limit, so the receipt can explain why a retry chain may
+not help.
 
 **Capability comes from a cached catalog, and a wrong entry fails quietly.** If
 the catalog says a model can't do something it can, `can_serve` skips it and
@@ -275,10 +275,9 @@ beat rumours.
 the judgement, and they are what the tests pin down — `cargo test` from
 `src-tauri/`.
 
-Next, in order: split the two 429 *statuses* by reading the error body (the
-mid-stream kind inside a 200 is already caught); move keys to the system
-keychain; check capabilities per-provider rather than trusting the catalog's
-union.
+Next, in order: make configuration portable with export/import that excludes
+provider secrets; complete packaged startup verification; and check capabilities
+per-provider rather than trusting the catalog's union.
 
 ---
 
@@ -289,8 +288,8 @@ union.
 ```bash
 # Ubuntu / Debian
 sudo apt update && sudo apt install -y \
-  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
-  build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+  build-essential curl wget file libssl-dev libgtk-3-dev \
+  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
 
 # Fedora
 sudo dnf install -y webkit2gtk4.1-devel libxdo-devel libayatana-appindicator-gtk3-devel librsvg2-devel \
