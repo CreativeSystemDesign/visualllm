@@ -7,7 +7,8 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "smoke": "node tools/smoke.js",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "start:system": "sh ./run.sh"
   },
   "keywords": ["llm", "ai", "openai-compatible", "fallback", "routing", "tauri"],
   "author": "Shane Gross",

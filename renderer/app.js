@@ -37,8 +37,28 @@ const api = T
       laneTest: (slug) => T.core.invoke('lane_test', { slug }),
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
+      vscodeIntegrateLane: (slug, name) => T.core.invoke('vscode_integrate_lane', { slug, name }),
     }
   : window.vll
+
+// Wrap every API invocation so the UI does not crash on a rejected promise.
+// Any exception is logged and stored into `state.error` for display.
+Object.keys(api).forEach((k) => {
+  const orig = api[k]
+  api[k] = async function (...args) {
+    try {
+      return await orig.apply(this, args)
+    } catch (err) {
+      console.error('[vll] api.%s failed', k, err)
+      try {
+        state.error = err && err.message ? err.message : String(err)
+      } catch (_) {
+        // best-effort: don't let an error while reporting an error crash the UI
+      }
+      throw err
+    }
+  }
+})
 
 // ----------------------------------------------------------------------- state
 
@@ -421,6 +441,7 @@ function laneEl(lane) {
     </button>
     <button class="lane-action lane-test" title="Test this lane">Test</button>
     <button class="lane-action lane-copy-setup" title="Copy a curl setup example">Setup</button>
+    <button class="lane-action lane-vscode" title="Add this lane to VS Code model picker">VS Code</button>
     ${laneActivity(lane)}
     ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
@@ -1377,6 +1398,28 @@ document.addEventListener('click', async (event) => {
     const slug = setup.closest('.lane').dataset.lane
     await api.copy(laneCurlExample(slug))
     toast('Curl setup copied')
+    return
+  }
+
+  const vscodeBtn = event.target.closest('.lane-vscode')
+  if (vscodeBtn) {
+    const laneEl = vscodeBtn.closest('.lane')
+    const slug = laneEl.dataset.lane
+    const lane = state.lanes.find(l => l.slug === slug)
+    console.log('[vscode] button clicked', { slug, lane: lane?.name })
+    if (!lane) {
+      console.error('[vscode] lane not found', slug)
+      return
+    }
+    try {
+      console.log('[vscode] calling api.vscodeIntegrateLane', { slug, name: lane.name })
+      await api.vscodeIntegrateLane(slug, lane.name)
+      console.log('[vscode] success')
+      toast(`Added "${lane.name}" to VS Code model picker`)
+    } catch (error) {
+      console.error('[vscode] failed', error)
+      toast(`Failed: ${error.message}`)
+    }
     return
   }
 

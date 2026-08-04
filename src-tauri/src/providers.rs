@@ -139,7 +139,13 @@ pub fn store_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn load(dir: &PathBuf) -> Vec<Provider> {
-    let mut providers: Vec<Provider> = read_state(store_path(dir)).unwrap_or_default();
+    let mut providers: Vec<Provider> = match read_state(store_path(dir)) {
+        Some(v) => v,
+        None => {
+            eprintln!("providers: could not read providers.json at {:?}; returning empty list", store_path(dir));
+            Vec::new()
+        }
+    };
     hydrate_keys(&mut providers);
     providers
 }
@@ -176,14 +182,23 @@ pub fn cache_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn cache_write(dir: &PathBuf, models: &[CatalogModel]) {
-    if std::fs::create_dir_all(dir).is_err() {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("providers: failed to create cache directory {:?}: {e}", dir);
         return;
     }
-    let _ = write_state(cache_path(dir), models);
+    if let Err(e) = write_state(cache_path(dir), models) {
+        eprintln!("providers: failed to write cache file: {e}");
+    }
 }
 
 pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
-    read_state(cache_path(dir)).unwrap_or_default()
+    match read_state(cache_path(dir)) {
+        Some(v) => v,
+        None => {
+            eprintln!("providers: could not read catalog cache at {:?}; returning empty list", cache_path(dir));
+            Vec::new()
+        }
+    }
 }
 
 // ------------------------------------------------------------------ catalogs
@@ -407,7 +422,10 @@ pub fn slug(name: &str, taken: &[Provider]) -> String {
     (2..)
         .map(|n| format!("{base}-{n}"))
         .find(|candidate| !used.contains_key(candidate.as_str()))
-        .unwrap()
+        .unwrap_or_else(|| {
+            eprintln!("providers::slug: failed to find unique slug for base '{}', returning base", base);
+            base
+        })
 }
 
 pub fn default_base_url(kind: &str) -> String {

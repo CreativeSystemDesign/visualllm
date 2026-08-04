@@ -8,9 +8,18 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 BIN="$ROOT/src-tauri/target/debug/visualllm"
 
 if [[ ! -x "$BIN" ]]; then
-  printf 'VisualLLM binary not found or not executable:\n  %s\n' "$BIN" >&2
-  printf 'Build it first with: cargo build --manifest-path src-tauri/Cargo.toml\n' >&2
-  exit 1
+  printf 'VisualLLM binary not found or not executable: %s\n' "$BIN" >&2
+  printf 'Attempting to build it now (this may take a minute)...\n'
+  # Build in the repo root so the manifest path is correct and the user's
+  # cargo environment is respected. If build fails, report and exit.
+  if ! (cd "$ROOT" && cargo build --manifest-path src-tauri/Cargo.toml); then
+    printf 'Automatic build failed. Please run: cargo build --manifest-path src-tauri/Cargo.toml\n' >&2
+    exit 1
+  fi
+  if [[ ! -x "$BIN" ]]; then
+    printf 'Build completed but binary still missing: %s\n' "$BIN" >&2
+    exit 1
+  fi
 fi
 
 # Always start the binary. Tauri's single-instance plugin owns duplicate

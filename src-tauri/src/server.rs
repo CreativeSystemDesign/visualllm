@@ -1211,7 +1211,24 @@ async fn chat(
                             let joined = futures_util::StreamExt::chain(replay, rest);
                             let stream =
                                 futures_util::TryStreamExt::map_err(joined, std::io::Error::other);
-                            return out.body(Body::from_stream(stream)).unwrap().into_response();
+                            // Build the response but handle any body-construction error
+                            // instead of unwrapping, so the engine never panics while
+                            // sending a streaming reply.
+                            match out.body(Body::from_stream(stream)) {
+                                Ok(response) => return response.into_response(),
+                                Err(err) => {
+                                    let why = format!("failed to build streaming response: {err}");
+                                    eprintln!("engine: {} respond error: {why}", lane.slug);
+                                    note_incident(&engine.dir, lane, &label, &why, tool_count);
+                                    tried.push(Attempt::failed(&label, &why));
+                                    return error(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        why,
+                                        "engine_error",
+                                        tried,
+                                    );
+                                }
+                            }
                         }
                         Gated::Dead(why) => {
                             eprintln!("engine: {}   {label} died in-stream: {why}", lane.slug);
@@ -1226,7 +1243,17 @@ async fn chat(
                     // The unstreamed twin: read the whole body — the client
                     // asked for it in one piece anyway — and judge it before
                     // passing it on.
-                    let text = resp.text().await.unwrap_or_default();
+                    let text = match resp.text().await {
+                        Ok(t) => t,
+                        Err(err) => {
+                            let why = format!("failed to read upstream body: {err}");
+                            eprintln!("engine: {}   {label} read error: {why}", lane.slug);
+                            note_incident(&engine.dir, lane, &label, &why, tool_count);
+                            tried.push(Attempt::failed(&label, &why));
+                            continue;
+                        }
+                    };
+
                     match usable_body(&text) {
                         Ok(()) => {
                             eprintln!(
@@ -1239,7 +1266,21 @@ async fn chat(
                                 Some(kind) => out.header("content-type", kind),
                                 None => out.header("content-type", "application/json"),
                             };
-                            return out.body(Body::from(text)).unwrap().into_response();
+                            match out.body(Body::from(text)) {
+                                Ok(response) => return response.into_response(),
+                                Err(err) => {
+                                    let why = format!("failed to build blocking response: {err}");
+                                    eprintln!("engine: {} respond error: {why}", lane.slug);
+                                    note_incident(&engine.dir, lane, &label, &why, tool_count);
+                                    tried.push(Attempt::failed(&label, &why));
+                                    return error(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        why,
+                                        "engine_error",
+                                        tried,
+                                    );
+                                }
+                            }
                         }
                         Err(why) => {
                             eprintln!("engine: {}   {label} unusable body: {why}", lane.slug);
@@ -1262,7 +1303,21 @@ async fn chat(
                     resp.bytes_stream(),
                     std::io::Error::other,
                 );
-                return out.body(Body::from_stream(stream)).unwrap().into_response();
+                match out.body(Body::from_stream(stream)) {
+                    Ok(response) => return response.into_response(),
+                    Err(err) => {
+                        let why = format!("failed to build response stream: {err}");
+                        eprintln!("engine: {} respond error: {why}", lane.slug);
+                        note_incident(&engine.dir, lane, &label, &why, tool_count);
+                        tried.push(Attempt::failed(&label, &why));
+                        return error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            why,
+                            "engine_error",
+                            tried,
+                        );
+                    }
+                }
             }
 
             // ---- it replied, but with an error ----

@@ -55,6 +55,156 @@ use tokio::sync::watch;
 
 use providers::{CatalogModel, Provider, ProviderView};
 
+/// VS Code chatLanguageModels.json entry for a custom endpoint model.
+#[derive(Serialize, Deserialize, Clone)]
+struct VscodeModelEntry {
+    id: String,
+    name: String,
+    url: String,
+    #[serde(rename = "toolCalling")]
+    tool_calling: bool,
+    vision: bool,
+    #[serde(rename = "maxInputTokens")]
+    max_input_tokens: u64,
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: u64,
+}
+
+/// A provider entry in chatLanguageModels.json (contains a models array).
+#[derive(Serialize, Deserialize, Clone)]
+struct VscodeProviderEntry {
+    name: String,
+    vendor: String,
+    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
+    #[serde(rename = "apiType", skip_serializing_if = "Option::is_none")]
+    api_type: Option<String>,
+    #[serde(default)]
+    models: Vec<VscodeModelEntry>,
+}
+
+/// The full chatLanguageModels.json structure (array of providers).
+type VscodeChatModels = Vec<VscodeProviderEntry>;
+
+/// Path to VS Code Insiders' chatLanguageModels.json.
+fn vscode_chat_models_path() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
+    Ok(PathBuf::from(home)
+        .join(".config")
+        .join("Code - Insiders")
+        .join("User")
+        .join("chatLanguageModels.json"))
+}
+
+/// Read the existing chatLanguageModels.json.
+#[allow(dead_code)]
+fn vscode_read_models() -> Result<VscodeChatModels, String> {
+    let path = vscode_chat_models_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let models: VscodeChatModels = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    Ok(models)
+}
+
+/// Write the updated chatLanguageModels.json.
+fn vscode_write_models(models: &VscodeChatModels) -> Result<(), String> {
+    let path = vscode_chat_models_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(models).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Add or update a VisualLLM lane entry in VS Code's model picker.
+#[tauri::command]
+fn vscode_integrate_lane(
+    app: tauri::AppHandle,
+    slug: String,
+    name: String,
+) -> Result<(), String> {
+    eprintln!("[vscode_integrate_lane] called with slug={}, name={}", slug, name);
+    
+    // Get store directory
+    let store_path = store_dir(&app).map_err(|e| {
+        let err_msg = format!("Failed to get app data dir: {}", e);
+        eprintln!("[vscode_integrate_lane] {}", err_msg);
+        err_msg
+    })?;
+    eprintln!("[vscode_integrate_lane] store_path: {:?}", store_path);
+    
+    let port = port_load(&store_path);
+    eprintln!("[vscode_integrate_lane] port: {}", port);
+    let base_url = format!("http://127.0.0.1:{port}/lane/{slug}/v1");
+    eprintln!("[vscode_integrate_lane] base_url: {}", base_url);
+
+    // Read the file as text
+    let path = vscode_chat_models_path()?;
+    let text = if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+    } else {
+        "[]".to_string()
+    };
+    eprintln!("[vscode_integrate_lane] Read file, length: {}", text.len());
+
+    // Parse to find existing visualllm provider and other providers
+    let mut config: VscodeChatModels = serde_json::from_str(&text).map_err(|e| {
+        let err_msg = format!("Failed to parse VS Code models: {}", e);
+        eprintln!("[vscode_integrate_lane] {}", err_msg);
+        err_msg
+    })?;
+    eprintln!("[vscode_integrate_lane] Parsed {} existing provider entries", config.len());
+
+    // Build the model entry for this lane
+    let model_entry = VscodeModelEntry {
+        id: slug.clone(),
+        name: format!("visualllm: {name}"),
+        url: base_url,
+        tool_calling: true,
+        vision: false,
+        max_input_tokens: 250144,
+        max_output_tokens: 8000,
+    };
+    eprintln!("[vscode_integrate_lane] Created model entry: id={}, name={}", model_entry.id, model_entry.name);
+
+    // Find or create the "visualllm" provider entry
+    let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
+    eprintln!("[vscode_integrate_lane] Found visualllm provider at index: {:?}", visualllm_idx);
+    
+    if let Some(idx) = visualllm_idx {
+        // Update existing visualllm provider
+        eprintln!("[vscode_integrate_lane] Updating existing visualllm provider at index {}", idx);
+        let provider = &mut config[idx];
+        // Remove any existing model with the same slug
+        provider.models.retain(|m| m.id != slug);
+        // Add the new model at the front
+        provider.models.insert(0, model_entry);
+    } else {
+        // Create new visualllm provider entry
+        eprintln!("[vscode_integrate_lane] Creating new visualllm provider");
+        let provider = VscodeProviderEntry {
+            name: "visualllm".to_string(),
+            vendor: "customendpoint".to_string(),
+            api_key: Some("placeholder".to_string()),
+            api_type: Some("chat-completions".to_string()),
+            models: vec![model_entry],
+        };
+        config.push(provider);
+    }
+
+    eprintln!("[vscode_integrate_lane] Writing {} providers to config", config.len());
+    vscode_write_models(&config).map_err(|e| {
+        let err_msg = format!("Failed to write VS Code models: {}", e);
+        eprintln!("[vscode_integrate_lane] {}", err_msg);
+        err_msg
+    })?;
+    eprintln!("[vscode_integrate_lane] Success!");
+    Ok(())
+}
+
 /// Where the old Python gateway lives.
 ///
 /// SCAFFOLDING. This app read its lanes from that gateway before it had an
@@ -623,10 +773,14 @@ fn main() {
             stats_refresh,
             lane_test,
             port_get,
-            port_set
+            port_set,
+            vscode_integrate_lane
         ])
         .run(tauri::generate_context!())
-        .expect("failed to start VisualLLM");
+        .unwrap_or_else(|err| {
+            eprintln!("failed to start VisualLLM: {err}");
+            std::process::exit(1);
+        });
 }
 
 #[cfg(test)]
