@@ -228,6 +228,8 @@ const ICON = {
   close: '<svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>',
   arrow: '<svg viewBox="0 0 16 16"><path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5"/></svg>',
   gear: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.6v1.9M8 11.5v1.9M2.6 8h1.9M11.5 8h1.9M4.2 4.2l1.3 1.3M10.5 10.5l1.3 1.3M11.8 4.2l-1.3 1.3M5.5 10.5l-1.3 1.3"/></svg>',
+  brain: '<svg viewBox="0 0 16 16"><path d="M8 2.5a2.6 2.6 0 0 0-2.6 2.6c-1.5.3-2.4 1.5-2.4 3 0 1 .5 1.9 1.2 2.4-.1.3-.2.7-.2 1 0 1.6 1.4 2.9 3 2.9.5 0 1-.1 1.4-.4.3.2.6.3 1 .3a2.9 2.9 0 0 0 2.9-2.9c0-.3 0-.7-.2-1 .8-.5 1.3-1.4 1.3-2.4 0-1.5-1-2.7-2.4-3A2.6 2.6 0 0 0 8 2.5z"/></svg>',
+  loop: '<svg viewBox="0 0 16 16"><path d="M3 8a5 5 0 0 1 8.5-3.5M13 8a5 5 0 0 1-8.5 3.5M11.5 2v2.5H9M4.5 14v-2.5H7"/></svg>',
 }
 
 // ------------------------------------------------------------------ rendering
@@ -483,37 +485,51 @@ function shortMember(label) {
   return id.includes('/') ? id.split('/').slice(1).join('/') : id
 }
 
-function laneActivity(lane) {
+/** The lane footer: a slim status line that carries the words the lights only
+ *  hint at. Live activity first, then the skip warnings, then what the lane was
+ *  built for. Clicking it opens the lane's trail. A quiet lane shows one faint
+ *  line, never nothing — an empty footer reads as broken. */
+function laneFoot(lane) {
   const live = laneLive(lane)
-  const recent = state.incidents
-    .filter((incident) => incident.lane === lane.slug)
-    .sort((a, b) => b.at - a.at)
-
-  if (live) {
-    const issues = recent.length ? ` · ${recent.length} issue${recent.length === 1 ? '' : 's'}` : ''
-    return `<span class="lane-activity is-${live.kind}" title="${live.title || ''}"><span class="live-dot"></span>${live.text}${issues}</span>`
-  }
-  if (!recent.length) return '<span class="lane-activity quiet">No recent activity</span>'
-  const latest = recent[0]
-  const kind = latest.kind.replaceAll('_', ' ')
-  return `<span class="lane-activity" title="${attr(latest.evidence)}">${recent.length} issue${recent.length === 1 ? '' : 's'} · ${attr(kind)}</span>`
-}
-
-/** Members the engine will skip at request time, named in the lane head so the
- *  gap between what you see and what runs is never a surprise at 2am. Dead
- *  members (not in any catalog) warn in coral; parked members are noted
- *  neutrally — parking is a choice, dead is a problem. */
-function laneWarnings(lane) {
   const dead = lane.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
   const parked = lane.members.filter((ref) => ref.disabled).length
-  const pills = []
-  if (dead) {
-    pills.push(`<span class="lane-warn is-dead" title="${dead} member${dead === 1 ? '' : 's'} not in any provider's catalog — the lane will skip ${dead === 1 ? 'it' : 'them'} at request time. Remove or replace.">${dead} dead</span>`)
-  }
-  if (parked) {
-    pills.push(`<span class="lane-warn is-parked" title="${parked} member${parked === 1 ? '' : 's'} parked — skipped at request time, keeping ${parked === 1 ? 'its' : 'their'} place and dials.">${parked} parked</span>`)
-  }
-  return pills.join('')
+  const criteria = (lane.criteria || []).map(criterionWords).join(' + ')
+  const issues = state.incidents.filter((i) => i.lane === lane.slug).length
+
+  const parts = []
+  if (live) parts.push(`<span class="foot-live is-${live.kind}">${live.text}</span>`)
+  if (dead) parts.push(`<span class="foot-dead">${dead} member${dead === 1 ? '' : 's'} not in any catalog — skipped at request time</span>`)
+  if (parked) parts.push(`<span class="foot-parked">${parked} parked</span>`)
+  if (issues) parts.push(`<span class="foot-issues">${issues} issue${issues === 1 ? '' : 's'} in the last 24h</span>`)
+  if (criteria) parts.push(`<span class="foot-criteria">${attr(criteria)}</span>`)
+
+  const body = parts.length
+    ? parts.join('<span class="foot-sep">·</span>')
+    : '<span class="foot-quiet">No recent activity — this lane is ready.</span>'
+  return `<span class="lane-activity" title="Open this lane's trail">${body}</span>`
+}
+
+/** The indicator lights in a lane's header. Health is shown, not told: a row
+ *  of small lamps that light up, each with its meaning on hover. Live activity
+ *  pulses coral; answered glows green; a failure is red; dead members warn
+ *  amber; parked members light a steady neutral lamp. A lamp that is off stays
+ *  a faint recess — present, never noisy. */
+function laneLights(lane) {
+  const live = laneLive(lane)
+  const dead = lane.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
+  const parked = lane.members.filter((ref) => ref.disabled).length
+
+  const lamp = (cls, on, title) =>
+    `<span class="lamp ${cls}${on ? ' on' : ''}" title="${attr(title)}"></span>`
+
+  const liveState = live ? live.kind : null
+  return `<span class="lane-lights">
+    ${lamp('lamp-live', liveState === 'trying', liveState === 'trying' ? live.text : 'No request in flight')}
+    ${lamp('lamp-ok', liveState === 'answered', liveState === 'answered' ? live.text : 'Nothing served recently')}
+    ${lamp('lamp-bad', liveState === 'failed', liveState === 'failed' ? live.text : 'No recent failure')}
+    ${lamp('lamp-warn', dead > 0, dead ? `${dead} member${dead === 1 ? '' : 's'} not in any catalog — skipped at request time` : 'Every member is in a catalog')}
+    ${lamp('lamp-park', parked > 0, parked ? `${parked} member${parked === 1 ? '' : 's'} parked — skipped, keeping place and dials` : 'No parked members')}
+  </span>`
 }
 
 function laneEl(lane) {
@@ -525,30 +541,24 @@ function laneEl(lane) {
   head.className = 'lane-head'
   head.innerHTML = `
     <span class="lane-name" contenteditable="plaintext-only" spellcheck="false">${lane.name}</span>
+    ${laneLights(lane)}
     <button class="lane-url" title="Copy endpoint URL">
       ${ICON.copy}<span class="host">${engineHost()}</span><span>/lane/${lane.slug}/v1</span>
     </button>
+    <span class="lane-head-spacer"></span>
     <button class="lane-action lane-test" title="Test this lane">Test</button>
     <button class="lane-action lane-copy-setup" title="Copy a curl setup example">Setup</button>
     <button class="lane-action lane-vscode" title="Add this lane to VS Code model picker">VS Code</button>
-    ${laneActivity(lane)}
-    ${laneWarnings(lane)}
-    ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
-      lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
-    }</span>` : ''}
-    <button class="lane-think${lane.suppress_reasoning ? ' is-on' : ''}" title="${
+    <button class="lane-icon-toggle${lane.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
       lane.suppress_reasoning
-        ? 'Members are asked to answer directly, without spending tokens on hidden reasoning. Click to allow thinking again.'
-        : 'Members may spend tokens thinking before they answer — slower first words, and a thinker can burn the whole budget. Click to ask them not to.'
-    }">${lane.suppress_reasoning ? 'no thinking' : 'thinking ok'}</button>
-    <button class="lane-think lane-unstick${lane.unstick ? ' is-on' : ''}" title="${
+        ? 'No thinking: members are asked to answer directly. Click to allow thinking.'
+        : 'Thinking allowed: members may reason before answering. Click to ask them not to.'
+    }">${ICON.brain}</button>
+    <button class="lane-icon-toggle lane-unstick${lane.unstick ? ' is-on' : ''}" data-toggle="unstick" title="${
       lane.unstick
-        ? 'Loopwatch is on: an agent stuck re-calling the same tool gets its redundant calls collapsed and a note at the tail of the conversation. Announced in a response header, never silent. Click to turn off.'
-        : 'Loopwatch is off. When on, the engine detects an agent stuck in a tool-call loop and repairs the conversation before forwarding it. Click to turn on.'
-    }">${lane.unstick ? 'loopwatch' : 'loopwatch off'}</button>
-    <span class="lane-kind ${lane.computed ? 'computed' : ''}">${
-      lane.computed ? lane.kind : 'ordered'
-    }</span>
+        ? 'Loopwatch on: stuck tool-call loops are collapsed and noted. Click to turn off.'
+        : 'Loopwatch off. Click to watch for stuck tool-call loops.'
+    }">${ICON.loop}</button>
     <button class="lane-remove" title="Delete lane">${ICON.close}</button>
   `
 
@@ -556,7 +566,11 @@ function laneEl(lane) {
   track.className = 'track'
   renderTrack(track, lane)
 
-  el.append(head, track)
+  const foot = document.createElement('div')
+  foot.className = 'lane-foot'
+  foot.innerHTML = laneFoot(lane)
+
+  el.append(head, track, foot)
   return el
 }
 
@@ -1617,15 +1631,12 @@ document.addEventListener('click', async (event) => {
     return
   }
 
-  // Opens a FRESH SEARCH with these criteria. Deliberately not a rebuild of
-  // this lane: with several providers configured its members can come from
-  // catalogs that publish different metrics, so re-running the criteria would
-  // silently drop the ones nothing is published about. The chips are a record
-  // of intent; this is a convenient way to ask the same thing again and see
-  // what turns up today.
-  const crit = event.target.closest('.lane-criteria')
-  if (crit) {
-    const lane = state.lanes.find((l) => l.slug === crit.closest('.lane').dataset.lane)
+  // The criteria text lives in the footer's activity line now. A click on it
+  // opens a FRESH SEARCH with these criteria — deliberately not a rebuild of
+  // the lane, for the reasons above. The rest of the line opens the trail.
+  const activityLine = event.target.closest('.lane-foot .lane-activity')
+  if (activityLine && event.target.closest('.foot-criteria')) {
+    const lane = state.lanes.find((l) => l.slug === activityLine.closest('.lane').dataset.lane)
     if (lane?.criteria?.length) {
       state.browse.sorts = lane.criteria.map(({ field, desc }) => ({ field, desc }))
       openBrowse()
@@ -1634,35 +1645,29 @@ document.addEventListener('click', async (event) => {
     return
   }
 
-  // Loopwatch shares the pill class for its look, so it is checked before
-  // the general thinking-toggle handler that would otherwise swallow it.
-  const unstick = event.target.closest('.lane-unstick')
-  if (unstick) {
-    const lane = state.lanes.find((l) => l.slug === unstick.closest('.lane').dataset.lane)
-    lane.unstick = !lane.unstick
-    render()
-    saveLanes()
-    toast(
-      lane.unstick
-        ? `${lane.name}: stuck agents will be unstuck (collapsed + noted, announced in headers)`
-        : `${lane.name}: conversations pass through untouched`
-    )
-    return
-  }
-
-  // Thinking is a lane property, like member order: part of what the lane
-  // was built to be, toggled where the lane lives.
-  const think = event.target.closest('.lane-think')
-  if (think) {
-    const lane = state.lanes.find((l) => l.slug === think.closest('.lane').dataset.lane)
-    lane.suppress_reasoning = !lane.suppress_reasoning
-    render()
-    saveLanes()
-    toast(
-      lane.suppress_reasoning
-        ? `${lane.name}: members will be asked to answer without thinking`
-        : `${lane.name}: members may think before answering`
-    )
+  // The two header icon-toggles share one class; `data-toggle` says which.
+  const toggle = event.target.closest('.lane-icon-toggle')
+  if (toggle) {
+    const lane = state.lanes.find((l) => l.slug === toggle.closest('.lane').dataset.lane)
+    if (toggle.dataset.toggle === 'unstick') {
+      lane.unstick = !lane.unstick
+      render()
+      saveLanes()
+      toast(
+        lane.unstick
+          ? `${lane.name}: stuck agents will be unstuck (collapsed + noted, announced in headers)`
+          : `${lane.name}: conversations pass through untouched`
+      )
+    } else {
+      lane.suppress_reasoning = !lane.suppress_reasoning
+      render()
+      saveLanes()
+      toast(
+        lane.suppress_reasoning
+          ? `${lane.name}: members will be asked to answer without thinking`
+          : `${lane.name}: members may think before answering`
+      )
+    }
     return
   }
 

@@ -33,36 +33,27 @@ front, then the concrete tasks.
 **Done when:** normal, by-design behavior (capability skips) never produces a
 toast or bell badge, and every alert that fires is something worth acting on.
 
-- [ ] **Don't record `skipped_by_catalog` as an incident.** It is the lane
-  working as designed — the fast primary being passed over for a request it
-  can't serve is the entire point of the app. The skip already appears in the
-  `x-visualllm-trail` header. Remove the `note_incident` call for capability
-  skips in `src-tauri/src/server.rs`, or demote it to a lane-level activity
-  entry that never toasts/badges.
-- [ ] **Keep skips visible on the lane**, not in the notification center: fold
-  skip counts into the per-lane activity line ("2 passed over by capability"),
-  receipts on hover.
+- [x] **Don't record `skipped_by_catalog` as an incident.** Capability skips
+  now log and appear in the trail header only; legacy records render silently
+  (never toast/badge). The missing `stalled` diagnosis was added so dead
+  connections explain themselves.
+- [x] **Keep skips visible on the lane**, not in the notification center: the
+  per-lane activity line carries the live "passed over" story.
 - [ ] Verify no other incident kind fires during normal operation: run a lane
   through realistic mixed traffic (tools, vision, plain chat) and confirm the
-  bell stays silent.
+  bell stays silent. *(manual runtime check)*
 
 ### 2. Show what the engine already knows
 
 **Done when:** testing a lane and looking at a lane both tell you which model
 answered and what was passed over, using data the engine already returns.
 
-- [ ] **Lane test shows served-by + trail.** `lane_test` already returns
-  `served_by` and `trail` (`src-tauri/src/main.rs`); the renderer toasts only
-  `result.message` (`renderer/app.js`). Toast
-  `answered by <model> · passed over N (<reasons>)` on success.
-- [ ] **Lane test exercises the commit gate.** The fixed probe uses
-  `max_tokens: 8`, and `budget < 16` bypasses the gate (`server.rs`) — so Test
-  never validates the most interesting failure path (empty/reasoning-only
-  200s). Raise the probe budget so Test covers what production hits.
-- [ ] **Per-lane trail view.** The lane activity line becomes clickable into a
-  list of the last N attempts for that lane (member, outcome, evidence),
-  grouped by lane instead of by (member, kind). All data is already in
-  `state.incidents`.
+- [x] **Lane test shows served-by + trail.** The toast now reads
+  `answered by <model>` with the trail as detail on success.
+- [x] **Lane test exercises the commit gate.** The probe budget is 64, above
+  the `budget < 16` bypass, so Test measures the gate's verdict.
+- [x] **Per-lane trail view.** The lane activity line opens the notification
+  center scoped to that lane, with a "show all" clear chip.
 
 ### 3. Live request visibility — make fallback visible
 
@@ -70,13 +61,13 @@ answered and what was passed over, using data the engine already returns.
 member is being tried and, on completion, which member answered and how many
 were passed over — without waiting for a failure.
 
-- [ ] Engine appends one line per attempt to `activity.jsonl` in
-  `src-tauri/src/server.rs` (same write pattern as incidents): timestamp,
-  lane, member, phase (trying/committed/failed), outcome.
-- [ ] Renderer polls it on the existing 4s tick (faster while a request is
-  active) and shows on the lane: `trying <model>…` live, then
-  `answered by <model> · N passed over` for ~30s.
-- [ ] Cap and rotate the activity file so it can't grow unbounded.
+- [x] Engine appends one JSON line per request phase to `activity.jsonl`:
+  timestamp, lane, member, phase (trying/answered/failed/exhausted), detail —
+  exposed over `GET /activity` and the `activity_read` command.
+- [x] Renderer tails it incrementally (high-water mark) and shows a live pill
+  on the lane: pulsing dot while trying, `answered by <model> · N passed
+  over`, red on failure. States decay on a one-second clock.
+- [x] The activity file is scrubbed to one line, capped, and trimmed by size.
 
 ### 4. Protect the central interaction
 
