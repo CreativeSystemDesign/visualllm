@@ -1811,6 +1811,21 @@ async function loadCatalog() {
     state.catalog = (result.models || []).map((m) => ({ ...m, source: 'catalog' }))
     state.catalogErrors = result.errors || []
 
+    // A failed provider no longer empties the engine's cache (Rust keeps the
+    // last good one), but the user should hear about it — a red count in the
+    // provider list is too easy to miss, and the failure is exactly when a
+    // lane might start behaving unexpectedly. The signature guard keeps a
+    // re-poll that fails identically from re-firing the same warning.
+    const errorSignature = state.catalogErrors.map((e) => e.provider_id).sort().join(',')
+    if (state.catalogErrors.length && errorSignature !== loadCatalog._notifiedFor) {
+      loadCatalog._notifiedFor = errorSignature
+      state.catalogErrors.forEach((e) => {
+        toast(`${e.provider_name}: catalog failed — using the last good cache`, String(e.error))
+      })
+    } else if (!state.catalogErrors.length) {
+      loadCatalog._notifiedFor = null
+    }
+
     const counts = {}
     state.catalog.forEach((m) => (counts[m.provider_id] = (counts[m.provider_id] || 0) + 1))
     state.catalogErrors.forEach((e) => (counts[e.provider_id] = e.error))

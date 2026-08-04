@@ -526,7 +526,27 @@ async fn catalog_read(app: tauri::AppHandle, id: Option<String>) -> Result<Catal
     }
     // Kept for the engine, which needs capabilities at request time and cannot
     // wait on a provider round trip to get them.
-    providers::cache_write(&dir, &models);
+    //
+    // A partial fetch must not shrink what the engine knows. When some
+    // providers answer and others error, the successful half would overwrite a
+    // complete cache with a smaller one — and every `can_serve` check for the
+    // missing providers' models silently degrades to "unknown". Keep the last
+    // good cache whenever this fetch errored and returned strictly less than
+    // what is already stored. A genuinely empty catalog (a provider that
+    // dropped every model) is rare next to a transient outage; the UI refresh
+    // button is the deliberate way to force a rewrite.
+    let cached = providers::cache_read(&dir);
+    let shrank = !errors.is_empty() && models.len() < cached.len();
+    if shrank {
+        eprintln!(
+            "catalog: partial fetch ({} errors, {} models vs {} cached) — keeping the last good cache",
+            errors.len(),
+            models.len(),
+            cached.len()
+        );
+    } else {
+        providers::cache_write(&dir, &models);
+    }
     Ok(Catalog { models, errors })
 }
 
