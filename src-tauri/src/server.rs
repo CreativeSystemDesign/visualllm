@@ -109,7 +109,11 @@ fn note_activity(dir: &PathBuf, lane: &str, member: &str, phase: &str, detail: &
         return;
     }
     use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
     // Trim to the newest ~64KiB so the file cannot grow unbounded. Reads
@@ -117,7 +121,15 @@ fn note_activity(dir: &PathBuf, lane: &str, member: &str, phase: &str, detail: &
     if let Ok(meta) = std::fs::metadata(&path) {
         if meta.len() > 64 * 1024 {
             if let Ok(text) = std::fs::read_to_string(&path) {
-                let keep: String = text.lines().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+                let keep: String = text
+                    .lines()
+                    .rev()
+                    .take(500)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let _ = std::fs::write(&path, keep + "\n");
             }
         }
@@ -194,7 +206,6 @@ pub struct Engine {
 // READING THE REQUEST
 // ============================================================================
 
-
 /// What an incoming request actually requires, so members that can't supply it
 /// are skipped instead of being tried and failing (or worse, not failing).
 struct Needs {
@@ -254,7 +265,10 @@ fn inspect(body: &Value) -> Needs {
 
     Needs {
         vision,
-        tools: body["tools"].as_array().map(|t| !t.is_empty()).unwrap_or(false),
+        tools: body["tools"]
+            .as_array()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false),
         tokens: (chars / 4) as u64,
     }
 }
@@ -296,7 +310,6 @@ fn can_serve(model: &providers::CatalogModel, needs: &Needs, known: bool) -> boo
 // ============================================================================
 // DECIDING WHETHER TO KEEP GOING
 // ============================================================================
-
 
 /// The judgement at the heart of a fallback chain: this model failed — is the
 /// next one worth trying?
@@ -452,16 +465,27 @@ fn usable_event(event: &Value) -> bool {
         return false;
     };
     choices.iter().any(|choice| {
-        [&choice["delta"], &choice["message"]].into_iter().any(|node| {
-            // Whitespace is not content. Several models open with a bare
-            // "\n" delta before anything real; committing on it forwards a
-            // stream that may never say a visible thing, when the point of
-            // the gate is exactly to catch that and move on.
-            node["content"].as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)
-                || node["content"].as_array().map(|a| !a.is_empty()).unwrap_or(false)
-                || node["tool_calls"].as_array().map(|a| !a.is_empty()).unwrap_or(false)
-                || node["function_call"].is_object()
-        })
+        [&choice["delta"], &choice["message"]]
+            .into_iter()
+            .any(|node| {
+                // Whitespace is not content. Several models open with a bare
+                // "\n" delta before anything real; committing on it forwards a
+                // stream that may never say a visible thing, when the point of
+                // the gate is exactly to catch that and move on.
+                node["content"]
+                    .as_str()
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false)
+                    || node["content"]
+                        .as_array()
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false)
+                    || node["tool_calls"]
+                        .as_array()
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false)
+                    || node["function_call"].is_object()
+            })
     })
 }
 
@@ -505,7 +529,9 @@ fn usable_body(text: &str) -> Result<(), String> {
     };
     // OpenRouter (and others) can put a whole error object inside a 200.
     if let Some(error) = body.get("error") {
-        let message = error["message"].as_str().unwrap_or("unnamed provider error");
+        let message = error["message"]
+            .as_str()
+            .unwrap_or("unnamed provider error");
         return Err(format!("error in a 200 body: {message}"));
     }
     if usable_event(&body) {
@@ -513,7 +539,9 @@ fn usable_body(text: &str) -> Result<(), String> {
     }
     // Nothing usable. Say WHY as precisely as the body allows — this string
     // is what someone reads in the trail when their lane "randomly" fell back.
-    let finish = body["choices"][0]["finish_reason"].as_str().unwrap_or("unknown");
+    let finish = body["choices"][0]["finish_reason"]
+        .as_str()
+        .unwrap_or("unknown");
     let reasoned = body["choices"][0]["message"]["reasoning"]
         .as_str()
         .map(|s| !s.is_empty())
@@ -608,7 +636,9 @@ impl SseScan {
         };
         self.remember(&event);
         if let Some(error) = event.get("error") {
-            let message = error["message"].as_str().unwrap_or("unnamed provider error");
+            let message = error["message"]
+                .as_str()
+                .unwrap_or("unnamed provider error");
             return Scan::Die(format!("error mid-stream: {message}"));
         }
         if usable_event(&event) {
@@ -626,7 +656,11 @@ impl SseScan {
                 if let Some(reason) = choice["finish_reason"].as_str() {
                     self.finish = Some(reason.to_string());
                 }
-                if choice["delta"]["reasoning"].as_str().map(|s| !s.is_empty()).unwrap_or(false) {
+                if choice["delta"]["reasoning"]
+                    .as_str()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+                {
                     self.saw_reasoning = true;
                 }
             }
@@ -767,10 +801,16 @@ struct Attempt {
 
 impl Attempt {
     fn skipped(model: &str, why: &str) -> Self {
-        Attempt { model: model.into(), outcome: format!("skipped: {why}") }
+        Attempt {
+            model: model.into(),
+            outcome: format!("skipped: {why}"),
+        }
     }
     fn failed(model: &str, why: &str) -> Self {
-        Attempt { model: model.into(), outcome: format!("failed: {why}") }
+        Attempt {
+            model: model.into(),
+            outcome: format!("failed: {why}"),
+        }
     }
 }
 
@@ -787,7 +827,11 @@ fn trail_header(tried: &[Attempt]) -> String {
             out.push_str("; ");
         }
         for ch in format!("{}={}", attempt.model, attempt.outcome).chars() {
-            out.push(if ch.is_ascii_graphic() || ch == ' ' { ch } else { '?' });
+            out.push(if ch.is_ascii_graphic() || ch == ' ' {
+                ch
+            } else {
+                '?'
+            });
         }
         if out.len() > 700 {
             out.push_str(" …");
@@ -847,7 +891,9 @@ fn apply_member_params(
     params: &lanes::MemberParams,
     client: &[(String, Option<Value>)],
 ) {
-    let Some(map) = body.as_object_mut() else { return };
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
     for (knob, original) in client {
         match knob_value(params, knob).or_else(|| original.clone()) {
             Some(value) => {
@@ -932,7 +978,6 @@ fn error(status: StatusCode, message: String, kind: &str, tried: Vec<Attempt>) -
 // THE ROUTES
 // ============================================================================
 
-
 /// `GET /v1/models` — what a client asks to discover what it can use.
 ///
 /// This is why VS Code's model picker can show your lanes. Point it at this
@@ -1000,8 +1045,14 @@ async fn health(State(engine): State<Engine>) -> Json<Value> {
 ///
 /// The renderer holds no network access of its own, so it reaches this through
 /// the `activity_read` Tauri command, which shares this reader.
-async fn activity(State(engine): State<Engine>, axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>) -> Json<Value> {
-    let since = params.get("since").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+async fn activity(
+    State(engine): State<Engine>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<Value> {
+    let since = params
+        .get("since")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
     Json(json!({ "activity": activity_read(&engine.dir, since) }))
 }
 
@@ -1126,7 +1177,11 @@ async fn chat(
 
     // Streaming has a pulse to check; blocking earns more patience because
     // its silence is legitimate right up until the answer lands whole.
-    let idle = if streaming { STREAM_PATIENCE } else { BLOCKING_PATIENCE };
+    let idle = if streaming {
+        STREAM_PATIENCE
+    } else {
+        BLOCKING_PATIENCE
+    };
     let client = match http_client(idle) {
         Ok(client) => client,
         Err(err) => {
@@ -1170,8 +1225,12 @@ async fn chat(
                 "engine: {}   skip {label}: cannot serve this request \
                  (needs vision={} tools={} ~{}tok; catalog lists vision={} tools={} context={})",
                 lane.slug,
-                needs.vision, needs.tools, needs.tokens,
-                model.vision, model.tools, model.context
+                needs.vision,
+                needs.tools,
+                needs.tokens,
+                model.vision,
+                model.tools,
+                model.context
             );
             // A capability skip is the lane working as designed — the fast
             // primary being passed over for a request it can't serve is the
@@ -1193,7 +1252,11 @@ async fn chat(
             .iter()
             .find(|p| !member.provider.is_empty() && p.id == member.provider);
         let provider = named
-            .or_else(|| configured.iter().find(|p| known && p.id == model.provider_id))
+            .or_else(|| {
+                configured
+                    .iter()
+                    .find(|p| known && p.id == model.provider_id)
+            })
             .or_else(|| configured.first());
 
         let Some(provider) = provider else {
@@ -1218,7 +1281,11 @@ async fn chat(
         // for an answer at all.
         apply_member_params(&mut body, &member.params, &client_knobs);
         if !member.params.is_empty() {
-            eprintln!("engine: {}   {label} dials: {}", lane.slug, dials_summary(&member.params));
+            eprintln!(
+                "engine: {}   {label} dials: {}",
+                lane.slug,
+                dials_summary(&member.params)
+            );
         }
 
         // The lane's word on thinking. Only OpenRouter gets the knob — it
@@ -1235,10 +1302,8 @@ async fn chat(
         }
 
         let base = provider.base_url.trim_end_matches('/');
-        let request = providers::authorise_public(
-            client.post(format!("{base}/chat/completions")),
-            provider,
-        );
+        let request =
+            providers::authorise_public(client.post(format!("{base}/chat/completions")), provider);
         // The canvas shows "trying X…" from this moment.
         note_activity(&engine.dir, &lane.slug, &label, "trying", "");
         let request = match headers.get("accept") {
@@ -1280,8 +1345,9 @@ async fn chat(
                                 "answered",
                                 &format!("committed on {on}; passed over {}", tried.len()),
                             );
-                            let out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref())
-                                .header("content-type", "text/event-stream");
+                            let out =
+                                success_headers(&lane.slug, &served, &tried, unstuck.as_ref())
+                                    .header("content-type", "text/event-stream");
                             let replay = futures_util::stream::iter(
                                 prelude.into_iter().map(Ok::<Bytes, reqwest::Error>),
                             );
@@ -1346,7 +1412,8 @@ async fn chat(
                                 "answered",
                                 &format!("served a blocking body; passed over {}", tried.len()),
                             );
-                            let mut out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref());
+                            let mut out =
+                                success_headers(&lane.slug, &served, &tried, unstuck.as_ref());
                             out = match upstream_type {
                                 Some(kind) => out.header("content-type", kind),
                                 None => out.header("content-type", "application/json"),
@@ -1392,10 +1459,8 @@ async fn chat(
                 } else if let Some(kind) = upstream_type {
                     out = out.header("content-type", kind);
                 }
-                let stream = futures_util::TryStreamExt::map_err(
-                    resp.bytes_stream(),
-                    std::io::Error::other,
-                );
+                let stream =
+                    futures_util::TryStreamExt::map_err(resp.bytes_stream(), std::io::Error::other);
                 match out.body(Body::from_stream(stream)) {
                     Ok(response) => return response.into_response(),
                     Err(err) => {
@@ -1415,8 +1480,8 @@ async fn chat(
 
             // ---- it replied, but with an error ----
             Ok(resp) => {
-                let status = StatusCode::from_u16(resp.status().as_u16())
-                    .unwrap_or(StatusCode::BAD_GATEWAY);
+                let status =
+                    StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 let text = resp.text().await.unwrap_or_default();
 
                 match classify(status, &text) {
@@ -1434,7 +1499,10 @@ async fn chat(
                             &engine.dir,
                             lane,
                             &label,
-                            &format!("request rejected by the provider ({}): {snippet}", status.as_u16()),
+                            &format!(
+                                "request rejected by the provider ({}): {snippet}",
+                                status.as_u16()
+                            ),
                             tool_count,
                         );
                         tried.push(Attempt::failed(&label, "request rejected"));
@@ -1473,7 +1541,10 @@ async fn chat(
         }
     }
 
-    eprintln!("engine: {} exhausted — every member skipped or failed", lane.slug);
+    eprintln!(
+        "engine: {} exhausted — every member skipped or failed",
+        lane.slug
+    );
     note_activity(
         &engine.dir,
         &lane.slug,
@@ -1495,7 +1566,6 @@ async fn chat(
 // ============================================================================
 // WIRING
 // ============================================================================
-
 
 /// The URL table. `{slug}` is a placeholder captured into the `Path` parameter.
 pub fn router(dir: PathBuf) -> Router {
@@ -1573,7 +1643,9 @@ fn spawn(
 ) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
     tokio::spawn(async move {
         axum::serve(listener, router((*dir).clone()))
-            .with_graceful_shutdown(async { let _ = stop.await; })
+            .with_graceful_shutdown(async {
+                let _ = stop.await;
+            })
             .await
     })
 }
@@ -1609,7 +1681,10 @@ mod tests {
         // Every model would reject this identically. Walking the rest of the
         // lane only burns the user's rate limit to collect the same error.
         assert!(!continues(400, "messages[0].role is a required property"));
-        assert!(!continues(400, "invalid value for 'temperature': must be <= 2"));
+        assert!(!continues(
+            400,
+            "invalid value for 'temperature': must be <= 2"
+        ));
     }
 
     #[test]
@@ -1620,7 +1695,10 @@ mod tests {
         // returned a 400, was classified fatal, and killed the whole lane with
         // working models untouched behind it.
         assert!(continues(400, "This model does not support tools"));
-        assert!(continues(400, "function calling is not supported by this model"));
+        assert!(continues(
+            400,
+            "function calling is not supported by this model"
+        ));
         assert!(continues(400, "Unsupported parameter: 'response_format'"));
         assert!(continues(400, "image input is not supported"));
     }
@@ -1643,7 +1721,10 @@ mod tests {
 
     #[test]
     fn account_wide_rate_limits_are_named_from_the_body() {
-        match verdict(429, r#"{"error":{"provider_name":null,"message":"free tier exhausted"}}"#) {
+        match verdict(
+            429,
+            r#"{"error":{"provider_name":null,"message":"free tier exhausted"}}"#,
+        ) {
             Verdict::TryNext(note) => assert!(note.contains("account-wide free-tier limit")),
             Verdict::Fatal(_, _) => panic!("rate limits should continue"),
         }
@@ -1680,7 +1761,11 @@ mod tests {
         // A generic provider publishes ids and nothing else. Treating silence as
         // "cannot" would make every such provider useless.
         let blank = providers::CatalogModel::default();
-        let needs = Needs { vision: true, tools: true, tokens: 999_999 };
+        let needs = Needs {
+            vision: true,
+            tools: true,
+            tokens: 999_999,
+        };
         assert!(can_serve(&blank, &needs, false));
     }
 
@@ -1692,7 +1777,11 @@ mod tests {
             caps_known: true,
             ..Default::default()
         };
-        let needs = Needs { vision: true, tools: false, tokens: 10 };
+        let needs = Needs {
+            vision: true,
+            tools: false,
+            tokens: 10,
+        };
         assert!(!can_serve(&text_only, &needs, true));
     }
 
@@ -1703,13 +1792,24 @@ mod tests {
         // "cannot" would skip every direct-provider model on every tools
         // request, silently and forever. The entry is in the catalog (known),
         // but its capabilities are not, so the request goes through.
-        let unstated = providers::CatalogModel { context: 8192, ..Default::default() };
-        let needs = Needs { vision: true, tools: true, tokens: 10 };
+        let unstated = providers::CatalogModel {
+            context: 8192,
+            ..Default::default()
+        };
+        let needs = Needs {
+            vision: true,
+            tools: true,
+            tokens: 10,
+        };
         assert!(can_serve(&unstated, &needs, true));
 
         // Context is a separate fact: when published it still applies, whatever
         // the capability fields do or don't say.
-        let too_long = Needs { vision: false, tools: false, tokens: 9_000 };
+        let too_long = Needs {
+            vision: false,
+            tools: false,
+            tokens: 9_000,
+        };
         assert!(!can_serve(&unstated, &too_long, true));
     }
 
@@ -1721,7 +1821,11 @@ mod tests {
             caps_known: true,
             ..Default::default()
         };
-        let needs = Needs { vision: false, tools: true, tokens: 500_000 };
+        let needs = Needs {
+            vision: false,
+            tools: true,
+            tokens: 500_000,
+        };
         assert!(can_serve(&unsized_model, &needs, true));
     }
 
@@ -1875,7 +1979,10 @@ mod tests {
         )
         .is_ok());
         // Content as an array of parts is legal OpenAI, and counts.
-        assert!(usable_body(r#"{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}"#).is_ok());
+        assert!(usable_body(
+            r#"{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}"#
+        )
+        .is_ok());
     }
 
     #[test]
@@ -1900,7 +2007,10 @@ mod tests {
 
         apply_member_params(&mut body, &lanes::MemberParams::default(), &client);
         assert_eq!(body["temperature"], json!(0.9), "client value restored");
-        assert!(body.get("repetition_penalty").is_none(), "lane dial unwound");
+        assert!(
+            body.get("repetition_penalty").is_none(),
+            "lane dial unwound"
+        );
     }
 
     #[test]
@@ -1927,10 +2037,18 @@ mod tests {
             disabled: false,
         };
 
-        assert_eq!(find_model(&catalog, &member("deepseek")).unwrap().provider_id, "deepseek");
+        assert_eq!(
+            find_model(&catalog, &member("deepseek"))
+                .unwrap()
+                .provider_id,
+            "deepseek"
+        );
 
         // A pre-provider member keeps the old behaviour: first id match.
-        assert_eq!(find_model(&catalog, &member("")).unwrap().provider_id, "reseller");
+        assert_eq!(
+            find_model(&catalog, &member("")).unwrap().provider_id,
+            "reseller"
+        );
 
         // A member whose provider vanished matches nothing, rather than
         // quietly borrowing another provider's entry (and key).
@@ -1959,7 +2077,9 @@ mod tests {
     }
 
     async fn fake_provider(
-        axum::extract::State(calls): axum::extract::State<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
+        axum::extract::State(calls): axum::extract::State<
+            std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        >,
         Json(body): Json<Value>,
     ) -> Response {
         let model = body["model"].as_str().unwrap_or_default().to_string();
@@ -2039,8 +2159,13 @@ mod tests {
         let response = call_lane(dir.path(), false).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["x-visualllm-passed-over"], "1");
-        assert!(response.headers()["x-visualllm-trail"].to_str().unwrap().contains("primary"));
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(response.headers()["x-visualllm-trail"]
+            .to_str()
+            .unwrap()
+            .contains("primary"));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(body, r#"{"choices":[{"message":{"content":"fallback"}}]}"#);
         assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
         task.abort();
@@ -2056,8 +2181,13 @@ mod tests {
         let response = call_lane(dir.path(), true).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["x-visualllm-passed-over"], "1");
-        assert!(response.headers()["x-visualllm-trail"].to_str().unwrap().contains("primary"));
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert!(response.headers()["x-visualllm-trail"]
+            .to_str()
+            .unwrap()
+            .contains("primary"));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("fallback"));
         assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);

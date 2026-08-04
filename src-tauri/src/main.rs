@@ -98,15 +98,25 @@ fn vscode_chat_models_path() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
     let config = PathBuf::from(home).join(".config");
     let candidates = [
-        config.join("Code").join("User").join("chatLanguageModels.json"),
-        config.join("Code - Insiders").join("User").join("chatLanguageModels.json"),
+        config
+            .join("Code")
+            .join("User")
+            .join("chatLanguageModels.json"),
+        config
+            .join("Code - Insiders")
+            .join("User")
+            .join("chatLanguageModels.json"),
     ];
     if let Some(existing) = candidates.iter().find(|p| p.exists()) {
         return Ok(existing.clone());
     }
     // Neither file exists yet: prefer the editor whose config directory does.
     let insiders_dir = config.join("Code - Insiders");
-    let chosen = if insiders_dir.is_dir() { &candidates[1] } else { &candidates[0] };
+    let chosen = if insiders_dir.is_dir() {
+        &candidates[1]
+    } else {
+        &candidates[0]
+    };
     Ok(chosen.clone())
 }
 
@@ -137,13 +147,12 @@ fn vscode_write_models(models: &VscodeChatModels) -> Result<(), String> {
 
 /// Add or update a VisualLLM lane entry in VS Code's model picker.
 #[tauri::command]
-fn vscode_integrate_lane(
-    app: tauri::AppHandle,
-    slug: String,
-    name: String,
-) -> Result<(), String> {
-    eprintln!("[vscode_integrate_lane] called with slug={}, name={}", slug, name);
-    
+fn vscode_integrate_lane(app: tauri::AppHandle, slug: String, name: String) -> Result<(), String> {
+    eprintln!(
+        "[vscode_integrate_lane] called with slug={}, name={}",
+        slug, name
+    );
+
     // Get store directory
     let store_path = store_dir(&app).map_err(|e| {
         let err_msg = format!("Failed to get app data dir: {}", e);
@@ -151,7 +160,7 @@ fn vscode_integrate_lane(
         err_msg
     })?;
     eprintln!("[vscode_integrate_lane] store_path: {:?}", store_path);
-    
+
     let port = port_load(&store_path);
     eprintln!("[vscode_integrate_lane] port: {}", port);
     let base_url = format!("http://127.0.0.1:{port}/lane/{slug}/v1");
@@ -172,7 +181,10 @@ fn vscode_integrate_lane(
         eprintln!("[vscode_integrate_lane] {}", err_msg);
         err_msg
     })?;
-    eprintln!("[vscode_integrate_lane] Parsed {} existing provider entries", config.len());
+    eprintln!(
+        "[vscode_integrate_lane] Parsed {} existing provider entries",
+        config.len()
+    );
 
     // Build the model entry for this lane
     let model_entry = VscodeModelEntry {
@@ -184,15 +196,24 @@ fn vscode_integrate_lane(
         max_input_tokens: 250144,
         max_output_tokens: 8000,
     };
-    eprintln!("[vscode_integrate_lane] Created model entry: id={}, name={}", model_entry.id, model_entry.name);
+    eprintln!(
+        "[vscode_integrate_lane] Created model entry: id={}, name={}",
+        model_entry.id, model_entry.name
+    );
 
     // Find or create the "visualllm" provider entry
     let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
-    eprintln!("[vscode_integrate_lane] Found visualllm provider at index: {:?}", visualllm_idx);
-    
+    eprintln!(
+        "[vscode_integrate_lane] Found visualllm provider at index: {:?}",
+        visualllm_idx
+    );
+
     if let Some(idx) = visualllm_idx {
         // Update existing visualllm provider
-        eprintln!("[vscode_integrate_lane] Updating existing visualllm provider at index {}", idx);
+        eprintln!(
+            "[vscode_integrate_lane] Updating existing visualllm provider at index {}",
+            idx
+        );
         let provider = &mut config[idx];
         // Remove any existing model with the same slug
         provider.models.retain(|m| m.id != slug);
@@ -211,7 +232,10 @@ fn vscode_integrate_lane(
         config.push(provider);
     }
 
-    eprintln!("[vscode_integrate_lane] Writing {} providers to config", config.len());
+    eprintln!(
+        "[vscode_integrate_lane] Writing {} providers to config",
+        config.len()
+    );
     vscode_write_models(&config).map_err(|e| {
         let err_msg = format!("Failed to write VS Code models: {}", e);
         eprintln!("[vscode_integrate_lane] {}", err_msg);
@@ -384,7 +408,10 @@ async fn read_gateway(app: tauri::AppHandle) -> State {
             Ok(raw) => parse(&raw, gateway),
             Err(err) => State::offline(gateway, format!("unreadable response: {err}")),
         },
-        Ok(resp) => State::offline(gateway, format!("gateway returned {}", resp.status().as_u16())),
+        Ok(resp) => State::offline(
+            gateway,
+            format!("gateway returned {}", resp.status().as_u16()),
+        ),
         Err(err) if err.is_connect() => State::offline(gateway, "gateway offline".into()),
         Err(err) => State::offline(gateway, err.to_string()),
     }
@@ -431,7 +458,10 @@ struct ProviderInput {
 #[tauri::command]
 fn providers_list(app: tauri::AppHandle) -> Result<Vec<ProviderView>, String> {
     let dir = store_dir(&app)?;
-    Ok(providers::load(&dir).iter().map(ProviderView::from).collect())
+    Ok(providers::load(&dir)
+        .iter()
+        .map(ProviderView::from)
+        .collect())
 }
 
 #[tauri::command]
@@ -553,7 +583,11 @@ async fn catalog_read(app: tauri::AppHandle, id: Option<String>) -> Result<Catal
 /// Check a provider before it is saved, so a bad key is caught at the form
 /// rather than as an empty sidebar ten minutes later.
 #[tauri::command]
-async fn provider_test(kind: String, base_url: Option<String>, key: String) -> Result<usize, String> {
+async fn provider_test(
+    kind: String,
+    base_url: Option<String>,
+    key: String,
+) -> Result<usize, String> {
     let probe = Provider {
         id: "probe".into(),
         name: "probe".into(),
@@ -681,7 +715,13 @@ async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult
             .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
             .unwrap_or_else(|| format!("lane returned HTTP {status}"))
     };
-    Ok(LaneTestResult { ok: status < 300, status, served_by, trail, message })
+    Ok(LaneTestResult {
+        ok: status < 300,
+        status,
+        served_by,
+        trail,
+        message,
+    })
 }
 
 /// The port the engine answers on. Defaults to 4100; persisted in port.json.
@@ -741,7 +781,9 @@ fn port_set(app: tauri::AppHandle, port: u16) -> Result<u16, String> {
         drop(probe);
     }
     if let Some(sender) = ENGINE_PORT_TX.get() {
-        sender.send(port).map_err(|_| "engine is not running".to_string())?;
+        sender
+            .send(port)
+            .map_err(|_| "engine is not running".to_string())?;
     }
     port_save(&dir, port)?;
     Ok(port)

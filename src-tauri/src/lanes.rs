@@ -97,8 +97,23 @@ impl<'de> Deserialize<'de> for Member {
             },
         }
         Ok(match Raw::deserialize(de)? {
-            Raw::Bare(id) => Member { provider: String::new(), id, params: MemberParams::default(), disabled: false },
-            Raw::Full { provider, id, params, disabled } => Member { provider, id, params, disabled },
+            Raw::Bare(id) => Member {
+                provider: String::new(),
+                id,
+                params: MemberParams::default(),
+                disabled: false,
+            },
+            Raw::Full {
+                provider,
+                id,
+                params,
+                disabled,
+            } => Member {
+                provider,
+                id,
+                params,
+                disabled,
+            },
         })
     }
 }
@@ -204,7 +219,10 @@ pub fn load(dir: &PathBuf) -> Vec<Lane> {
     match read_state(store_path(dir)) {
         Some(v) => v,
         None => {
-            eprintln!("lanes: could not read lanes.json at {:?}; returning empty list", store_path(dir));
+            eprintln!(
+                "lanes: could not read lanes.json at {:?}; returning empty list",
+                store_path(dir)
+            );
             Vec::new()
         }
     }
@@ -221,7 +239,6 @@ pub fn save(dir: &PathBuf, lanes: &[Lane]) -> Result<(), String> {
 // THE POOL
 // ============================================================================
 
-
 /// The models the user has chosen to keep, as (provider, id) pairs.
 ///
 /// A provider's catalog runs to hundreds of models. The pool is the handful
@@ -236,7 +253,10 @@ pub fn pool_load(dir: &PathBuf) -> Vec<Member> {
     match read_state(pool_path(dir)) {
         Some(v) => v,
         None => {
-            eprintln!("lanes: could not read pool.json at {:?}; returning empty list", pool_path(dir));
+            eprintln!(
+                "lanes: could not read pool.json at {:?}; returning empty list",
+                pool_path(dir)
+            );
             Vec::new()
         }
     }

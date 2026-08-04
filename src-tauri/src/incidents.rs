@@ -83,7 +83,10 @@ pub fn load(dir: &PathBuf) -> Vec<Incident> {
     match read_state(store_path(dir)) {
         Some(v) => v,
         None => {
-            eprintln!("incidents: could not read incidents.json at {:?}; returning empty list", store_path(dir));
+            eprintln!(
+                "incidents: could not read incidents.json at {:?}; returning empty list",
+                store_path(dir)
+            );
             Vec::new()
         }
     }
@@ -188,7 +191,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vll-inc-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         record(&dir, incident("   "));
-        assert!(load(&dir).is_empty(), "evidence-free incidents are opinions");
+        assert!(
+            load(&dir).is_empty(),
+            "evidence-free incidents are opinions"
+        );
         record(&dir, incident("finish_reason: length"));
         assert_eq!(load(&dir).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
@@ -205,19 +211,38 @@ mod tests {
         }
         let all = load(&dir);
         assert_eq!(all.len(), KEEP);
-        assert_eq!(all.last().unwrap().at, (KEEP + 24) as u64, "newest survives");
+        assert_eq!(
+            all.last().unwrap().at,
+            (KEEP + 24) as u64,
+            "newest survives"
+        );
         assert_eq!(all.first().unwrap().at, 25, "oldest trimmed");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn notes_map_to_kinds_and_unknowns_stay_honest() {
-        assert_eq!(kind_of("spent the whole token budget reasoning, with no room left to answer"), "reasoning_burn");
-        assert_eq!(kind_of("error mid-stream: Rate limit exceeded"), "midstream_error");
-        assert_eq!(kind_of("stream ended with no usable content (finish_reason: stop)"), "empty_response");
+        assert_eq!(
+            kind_of("spent the whole token budget reasoning, with no room left to answer"),
+            "reasoning_burn"
+        );
+        assert_eq!(
+            kind_of("error mid-stream: Rate limit exceeded"),
+            "midstream_error"
+        );
+        assert_eq!(
+            kind_of("stream ended with no usable content (finish_reason: stop)"),
+            "empty_response"
+        );
         assert_eq!(kind_of("rate limited (429)"), "rate_limited");
-        assert_eq!(kind_of("this model does not support tools (400)"), "capability_gap");
-        assert_eq!(kind_of("prompt too long for this model (400)"), "context_overflow");
+        assert_eq!(
+            kind_of("this model does not support tools (400)"),
+            "capability_gap"
+        );
+        assert_eq!(
+            kind_of("prompt too long for this model (400)"),
+            "context_overflow"
+        );
         assert_eq!(kind_of("something entirely new"), "unattributed");
     }
 
@@ -230,9 +255,15 @@ mod tests {
             kind_of("went silent mid-stream before any usable content — connection presumed dead"),
             "stalled"
         );
-        assert_eq!(kind_of("went silent: no bytes for 300s — connection presumed dead"), "stalled");
+        assert_eq!(
+            kind_of("went silent: no bytes for 300s — connection presumed dead"),
+            "stalled"
+        );
         // And a plain broken stream still reads as what it is.
-        assert_eq!(kind_of("stream broke with no usable content: connection reset"), "empty_response");
+        assert_eq!(
+            kind_of("stream broke with no usable content: connection reset"),
+            "empty_response"
+        );
     }
 
     #[test]
@@ -241,7 +272,9 @@ mod tests {
         // Whatever those quoted bytes happen to say, the "loop (…)" prefix
         // decides the kind — quotes are receipts, not verdicts.
         assert_eq!(
-            kind_of(r#"loop (futile): `read_file` — 13 calls, 0 redundant pairs collapsed; every call returned the identical result: "Error: missing required parameter startLine. The model went silent.""#),
+            kind_of(
+                r#"loop (futile): `read_file` — 13 calls, 0 redundant pairs collapsed; every call returned the identical result: "Error: missing required parameter startLine. The model went silent.""#
+            ),
             "loop_futile"
         );
     }
