@@ -43,7 +43,10 @@ const rendererDir = path.resolve(__dirname, '..', 'renderer')
 
 const readJson = (name, fallback) => {
   try {
-    return JSON.parse(fs.readFileSync(path.join(dataDir, name), 'utf8'))
+    const raw = JSON.parse(fs.readFileSync(path.join(dataDir, name), 'utf8'))
+    // State files are version-wrapped: { schema_version, data }. Return the payload.
+    if (raw && typeof raw === 'object' && Array.isArray(raw.data)) return raw.data
+    return raw
   } catch {
     return fallback
   }
@@ -78,9 +81,12 @@ const fixtures = {
 // The real markup, restyled to absolute paths so the output can live
 // anywhere, with the bridge injected ahead of app.js — the seam demands
 // `window.vll` exists before the renderer's first line runs.
-const html = fs
-  .readFileSync(path.join(rendererDir, 'index.html'), 'utf8')
-  .replace('href="style.css"', `href="file://${path.join(rendererDir, 'style.css')}"`)
+const indexHtml = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8')
+const appSource = fs.readFileSync(path.join(rendererDir, 'app.js'), 'utf8')
+const styleSource = fs.readFileSync(path.join(rendererDir, 'style.css'), 'utf8')
+
+const html = indexHtml
+  .replace(/<link[^>]*href="style\.css"[^>]*\/?>/i, `<style>\n${styleSource}</style>`)
   .replace(
     '<script src="app.js"></script>',
     `<script>
@@ -144,7 +150,7 @@ const html = fs
       }, 10000)
     })()
     </script>
-    <script src="file://${path.join(rendererDir, 'app.js')}"></script>`
+    <script>\n${appSource}</script>`
   )
 
 fs.writeFileSync(out, html)

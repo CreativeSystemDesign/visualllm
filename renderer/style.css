@@ -520,6 +520,9 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   flex-direction: column;
   gap: 2px;
 }
+.chip-menu[hidden] {
+  display: none !important;
+}
 .chip-menu-item {
   display: flex;
   align-items: center;
