@@ -89,6 +89,12 @@
 
 html, body { height: 100%; overflow: hidden; }
 
+/* The whole app is dark. Declaring it here makes the browser render native
+   form chrome — the select dropdown popup, scrollbars, checkboxes — in dark
+   colours too, instead of the light-system default that left white popup
+   panels with light text inside the gallery filters. */
+:root { color-scheme: dark; }
+
 body {
   background: var(--obsidian);
   color: var(--ink);
