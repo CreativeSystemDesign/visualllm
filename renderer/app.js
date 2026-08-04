@@ -461,7 +461,7 @@ function laneLive(hall) {
   const settled = entries.find((e) => e.phase === 'answered' || e.phase === 'failed' || e.phase === 'exhausted')
 
   if (trying && trying.at > now - 30 && (!settled || trying.at >= settled.at)) {
-    return { kind: 'trying', text: `trying ${shortMember(trying.member)}…`, title: 'A request is walking this hall now' }
+    return { kind: 'trying', text: `trying ${shortMember(trying.member)}…`, title: 'A request is walking this endpoint now' }
   }
   if (settled && settled.at > now - 45) {
     if (settled.phase === 'answered') {
@@ -505,8 +505,8 @@ function laneFoot(hall) {
 
   const body = parts.length
     ? parts.join('<span class="foot-sep">·</span>')
-    : '<span class="foot-quiet">No recent activity — this hall is ready.</span>'
-  return `<span class="lane-activity" title="Open this hall's trail">${body}</span>`
+    : '<span class="foot-quiet">No recent activity — this endpoint is ready.</span>'
+  return `<span class="lane-activity" title="Open this endpoint's trail">${body}</span>`
 }
 
 /** The indicator lights in a hall's header. Health is shown, not told: a row
@@ -546,9 +546,9 @@ function laneEl(hall) {
       ${ICON.copy}<span class="host">${engineHost()}</span><span>/lane/${hall.slug}/v1</span>
     </button>
     <span class="hall-spacer"></span>
-    <button class="hall-act lane-test" title="Test this hall">Test</button>
+    <button class="hall-act lane-test" title="Test this endpoint">Test</button>
     <button class="hall-act lane-copy-setup" title="Copy a curl setup example">Setup</button>
-    <button class="hall-act lane-vscode" title="Add this hall to VS Code model picker">VS Code</button>
+    <button class="hall-act lane-vscode" title="Add this endpoint to VS Code model picker">VS Code</button>
     <button class="hall-toggle${hall.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
       hall.suppress_reasoning
         ? 'No thinking: members are asked to answer directly. Click to allow thinking.'
@@ -559,7 +559,7 @@ function laneEl(hall) {
         ? 'Loopwatch on: stuck tool-call loops are collapsed and noted. Click to turn off.'
         : 'Loopwatch off. Click to watch for stuck tool-call loops.'
     }">${ICON.loop}</button>
-    <button class="hall-remove" title="Delete hall">${ICON.close}</button>
+    <button class="hall-remove" title="Delete endpoint">${ICON.close}</button>
   `
 
   const procession = document.createElement('div')
@@ -591,7 +591,7 @@ function renderLanes() {
       <strong>Build your first endpoint</strong>
       <span>Add a provider, choose models for your pool, then drag them here.</span>
       <span class="empty-explain">The model on the right answers first. Models to its left are fallbacks.</span>
-      <button class="btn-primary empty-action" type="button" id="emptyNewLane">Create a hall</button>
+      <button class="btn-primary empty-action" type="button" id="emptyNewLane">Create an endpoint</button>
     </div>`
     $('emptyNewLane').addEventListener('click', () => $('newLane').click())
     return
@@ -1040,7 +1040,7 @@ function showNotifToast(incident) {
   card.innerHTML = `
     <span class="notif-toast-body">
       <span class="notif-toast-title">${d.title}</span>
-      <span class="notif-toast-meta">${attr(incident.member)} · hall ${attr(incident.hall)}</span>
+      <span class="notif-toast-meta">${attr(incident.member)} · ${attr(incident.hall)}</span>
     </span>
     <button class="notif-toast-close" title="Dismiss">${ICON.close}</button>
   `
@@ -1117,7 +1117,7 @@ function renderNotifCenter() {
 
   if (!groups.length) {
     list.innerHTML = scopeChip + `<div class="empty-state"><strong>Nothing to report</strong>${
-      notifLaneFilter ? 'No failures on this hall in the last 24 hours.' : 'No failures recorded in the last 24 hours.'
+      notifLaneFilter ? 'No failures on this endpoint in the last 24 hours.' : 'No failures recorded in the last 24 hours.'
     }</div>`
     return
   }
@@ -1132,7 +1132,7 @@ function renderNotifCenter() {
       <article class="issue${muted ? ' is-muted' : ''}">
         <header class="issue-head">
           <span class="issue-title">${d.title}</span>
-          <span class="issue-meta">${attr(latest.member)} · hall ${attr(latest.hall)} · ${fmtAgo(latest.at)}${
+          <span class="issue-meta">${attr(latest.member)} · ${attr(latest.hall)} · ${fmtAgo(latest.at)}${
             count > 1 ? ` · ×${count}` : ''
           }</span>
         </header>
@@ -1140,7 +1140,7 @@ function renderNotifCenter() {
         <p class="issue-why">${d.why(latest, hall)}</p>
         <p class="issue-advice">${d.advice(latest, hall)}</p>
         <div class="issue-actions">
-          ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-hall="${attr(latest.hall)}">Turn on “no thinking” for this hall</button>` : ''}
+          ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-hall="${attr(latest.hall)}">Turn on “no thinking” for this endpoint</button>` : ''}
           <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}">${
             muted ? 'Ignored — click to restore' : 'Ignore this type'
           }</button>
@@ -1807,7 +1807,7 @@ document.addEventListener('keydown', (event) => {
     openSettings()
   } else if (event.key === '?' || (event.shiftKey && event.key === '/')) {
     event.preventDefault()
-    toast('Shortcuts', 'Ctrl+N new hall · Ctrl+B browse · Ctrl+, settings · Esc close · right-click a member for its menu', null)
+    toast('Shortcuts', 'Ctrl+N new endpoint · Ctrl+B browse · Ctrl+, settings · Esc close · right-click a member for its menu', null)
   }
 })
 
@@ -1821,7 +1821,7 @@ $('newLane').addEventListener('click', () => {
   let slug = base
   let n = 2
   while (state.lanes.some((l) => l.slug === slug)) slug = `${base}-${n++}`
-  state.lanes.unshift({ slug, name: 'New hall', members: [] })
+  state.lanes.unshift({ slug, name: 'New endpoint', members: [] })
   render()
   saveLanes()
   const el = document.querySelector(`.hall[data-hall="${slug}"] .hall-name`)
