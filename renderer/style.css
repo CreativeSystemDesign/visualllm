@@ -1,8 +1,8 @@
-/* VisualLLM — neumorphic surface.
+/* VisualLLM  neumorphic surface.
  *
  * One rule underneath all of it: elements are the *same colour as the ground*.
- * Nothing is drawn with a border. Depth is two shadows — white up-left where the
- * light falls, grey down-right where it does not — and the only difference
+ * Nothing is drawn with a border. Depth is two shadows  white up-left where the
+ * light falls, grey down-right where it does not  and the only difference
  * between a raised control and a pressed one is whether those shadows are inset.
  *
  * The compromise this style makes is contrast, and a dense panel of model names
@@ -48,20 +48,26 @@
   --r-lg: 24px;
 
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  
+  /* Spacing system for consistency */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* The window itself is transparent and undecorated; the rounded corners below
    are the real edge of the app, cut to the same radius as the frames inside it. */
-/* The native window is transparent and undecorated; the rounded app surface
-  below is the visible window edge. */
 html, body { height: 100%; overflow: hidden; background: transparent; }
 
 body {
   /* Transparent margin around the app. Without somewhere to fall, an outer
      shadow has nowhere to go and the edge reads as a cut rather than a lift. */
-  /* Leave room for the rounded edge and the small step around the whole UI. */
   padding: 26px 30px 40px;
   color: var(--text);
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -85,8 +91,8 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   border-radius: var(--r-lg);
   overflow: hidden;
   box-shadow:
-    /* The lit edge. Same light source as everything inside — white catching the
-       top-left, grey settling into the bottom-right — so the window frame is
+    /* The lit edge. Same light source as everything inside  white catching the
+       top-left, grey settling into the bottom-right  so the window frame is
        extruded by the same rule as the frames it contains. */
     inset 2px 2px 1px rgba(255, 255, 255, 0.9),
     inset -1.5px -1.5px 1px rgba(178, 185, 198, 0.45),
@@ -102,14 +108,16 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
     0 12px 28px rgba(140, 149, 168, 0.19);
 }
 
-/* ------------------------------------------------------------------ titlebar */
+/* ============================================================================
+   TITLEBAR
+   ============================================================================ */
 
 .titlebar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 54px;
-  padding: 0 14px 0 20px;
+  padding: 0 var(--space-lg) 0 var(--space-xl);
   flex-shrink: 0;
   z-index: 3;
 }
@@ -127,7 +135,7 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 }
 
 .brand-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   letter-spacing: 0.3px;
   color: var(--text);
@@ -141,14 +149,14 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .dot.ok  { background: var(--ok);  box-shadow: 0 0 7px rgba(63, 191, 135, 0.75); }
 .dot.bad { background: var(--bad); box-shadow: 0 0 7px rgba(239, 95, 90, 0.7); }
 
-.window-controls { display: flex; justify-content: flex-end; gap: 8px; }
+.window-controls { display: flex; justify-content: flex-end; gap: var(--space-sm); }
 
 .settings-btn {
   height: 28px;
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 0 12px;
+  padding: 0 var(--space-md);
   border-radius: 100px;
   background: var(--raised);
   box-shadow: var(--e1);
@@ -175,44 +183,74 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .wc:active { box-shadow: var(--in1); }
 .wc-close:hover { color: var(--accent); }
 
-/* ---------------------------------------------------------------------- body */
+/* ============================================================================
+   BODY LAYOUT
+   ============================================================================ */
 
-.body { display: flex; flex: 1; min-height: 0; }
+.body { 
+  display: flex; 
+  flex: 1; 
+  min-height: 0; 
+  gap: var(--space-lg);
+}
 
-/* ------------------------------------------------------------------- sidebar */
+/* ============================================================================
+   SIDEBAR
+   ============================================================================ */
 
 .sidebar {
-  width: 296px;
+  width: 300px;
   flex-shrink: 0;
-  display: flex; flex-direction: column;
-  margin: 0 0 16px 16px;
+  display: flex; 
+  flex-direction: column;
   border-radius: var(--r-lg);
   background: var(--bg);
   box-shadow: var(--e2);
   overflow: hidden;
 }
 
-.sidebar-head { padding: 16px 16px 14px; }
+.sidebar-head { 
+  padding: var(--space-lg); 
+  padding-bottom: var(--space-md);
+}
 
 .search {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-sm);
   height: 40px;
-  padding: 0 15px;
+  padding: 0 var(--space-md);
   border-radius: 100px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
 }
-.search-icon { width: 14px; height: 14px; color: var(--text-faint); flex-shrink: 0; }
-.search input { width: 100%; font-size: 12.5px; user-select: text; color: var(--text); }
+.search-icon { 
+  width: 14px; 
+  height: 14px; 
+  color: var(--text-faint); 
+  flex-shrink: 0; 
+}
+.search input { 
+  width: 100%; 
+  font-size: 12.5px; 
+  user-select: text; 
+  color: var(--text); 
+}
 .search input::placeholder { color: var(--text-faint); }
 
-.head-row { display: flex; align-items: center; gap: 9px; }
+.head-row { 
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-sm);
+}
 .head-row .search { flex: 1; min-width: 0; }
 
 .icon-btn {
-  width: 40px; height: 40px;
+  width: 40px; 
+  height: 40px;
   flex-shrink: 0;
-  display: grid; place-items: center;
+  display: grid; 
+  place-items: center;
   border-radius: 50%;
   background: var(--raised);
   box-shadow: var(--e1);
@@ -223,7 +261,17 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .icon-btn:hover { color: var(--accent); }
 .icon-btn:active { box-shadow: var(--in1); }
 
-.controls { margin-top: 12px; }
+.controls { margin-top: var(--space-md); }
+
+.controls-label {
+  display: block;
+  margin-bottom: var(--space-xs);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
 
 .field-select { position: relative; display: block; }
 .field-select select {
@@ -239,16 +287,26 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   appearance: none;
   cursor: pointer;
 }
-.field-select select:focus { box-shadow: var(--in1); background: var(--pressed-bg); }
+.field-select select:focus { 
+  box-shadow: var(--in1); 
+  background: var(--pressed-bg); 
+}
 .field-select .chev {
-  position: absolute; right: 12px; top: 50%;
+  position: absolute; 
+  right: 12px; 
+  top: 50%;
   transform: translateY(-50%);
-  width: 13px; height: 13px;
+  width: 13px; 
+  height: 13px;
   color: var(--text-faint);
   pointer-events: none;
 }
 
-.filters { display: flex; gap: 7px; margin-top: 10px; }
+.filters { 
+  display: flex; 
+  gap: var(--space-sm); 
+  margin-top: var(--space-sm);
+}
 
 .filter {
   flex: 1;
@@ -268,22 +326,35 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   color: var(--accent);
 }
 
-.model-list { flex: 1; overflow-y: auto; padding: 4px 16px 10px; display: flex; flex-direction: column; gap: 11px; }
+.model-list { 
+  flex: 1; 
+  overflow-y: auto; 
+  padding: var(--space-sm) var(--space-lg) var(--space-md); 
+  display: flex; 
+  flex-direction: column; 
+  gap: var(--space-sm);
+}
 
 .sidebar-foot {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 13px 20px 15px;
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center;
+  padding: var(--space-md) var(--space-xl) var(--space-lg);
   font-size: 11px;
   color: var(--text-faint);
   font-weight: 500;
 }
 .hint { font-style: italic; }
 
-/* --------------------------------------------------------------------- chips */
+/* ============================================================================
+   CHIPS
+   ============================================================================ */
 
 .chip {
   position: relative;
-  display: flex; align-items: center; gap: 11px;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-md);
   padding: 11px 14px;
   border-radius: var(--r);
   background: var(--raised);
@@ -292,11 +363,15 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   touch-action: none;
   transition: box-shadow 0.16s var(--ease), transform 0.16s var(--ease), opacity 0.16s var(--ease);
 }
-.chip:hover { box-shadow: var(--e2); transform: translateY(-1px); }
+.chip:hover { 
+  box-shadow: var(--e2); 
+  transform: translateY(-1px); 
+}
 .chip:active { cursor: grabbing; }
 
 .chip-bar {
-  width: 4px; height: 26px;
+  width: 4px; 
+  height: 26px;
   flex-shrink: 0;
   border-radius: 100px;
   background: var(--text-faint);
@@ -310,22 +385,16 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .chip-body { min-width: 0; flex: 1; }
 
 .chip-name {
-  /* `display: block`, or the ellipsis below is a wish: overflow does not
-     apply to inline elements, so a span quietly lets a long id sail past
-     the card edge. Same spec trap .row-id fell into, same cure. */
   display: block;
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.1px;
   color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; 
+  overflow: hidden; 
+  text-overflow: ellipsis;
 }
 
-/* One clipped line, never a wrap. As a flex row this wrapped WITHIN a bit —
-   "tok/s" stacking under "138" and spilling past the card — the moment the
-   provider tag made the line longer than a track chip's 240px. Inline text
-   with an ellipsis degrades gracefully at any width; a wrapped metric reads
-   as a broken card. */
 .chip-meta {
   display: block;
   margin-top: 2px;
@@ -337,25 +406,43 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chip-meta .sep { color: var(--text-faint); margin: 0 3px; }
+.chip-meta .sep { 
+  color: var(--text-faint); 
+  margin: 0 3px; 
+}
 
 .chip-health {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 7px; 
+  height: 7px; 
+  border-radius: 50%;
   flex-shrink: 0;
   background: var(--text-faint);
 }
-.chip-health.ok   { background: var(--ok);   box-shadow: 0 0 6px rgba(63, 191, 135, 0.6); }
-.chip-health.warn { background: var(--warn); box-shadow: 0 0 6px rgba(234, 165, 60, 0.55); }
-.chip-health.bad  { background: var(--bad);  box-shadow: 0 0 6px rgba(239, 95, 90, 0.55); }
+.chip-health.ok   { 
+  background: var(--ok); 
+  box-shadow: 0 0 6px rgba(63, 191, 135, 0.6); 
+}
+.chip-health.warn { 
+  background: var(--warn); 
+  box-shadow: 0 0 6px rgba(234, 165, 60, 0.55); 
+}
+.chip-health.bad  { 
+  background: var(--bad); 
+  box-shadow: 0 0 6px rgba(239, 95, 90, 0.55); 
+}
 
 .chip.is-source { opacity: 0.4; box-shadow: var(--in1); background: var(--pressed-bg); }
-.chip.in-track { padding-right: 34px; }
+.chip.in-track { padding-right: 58px; }
 
 .chip-remove {
-  position: absolute; right: 8px; top: 50%;
+  position: absolute; 
+  right: 8px; 
+  top: 50%;
   transform: translateY(-50%);
-  width: 20px; height: 20px;
-  display: grid; place-items: center;
+  width: 20px; 
+  height: 20px;
+  display: grid; 
+  place-items: center;
   border-radius: 50%;
   color: var(--text-faint);
   opacity: 0;
@@ -367,8 +454,10 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 
 .rank {
   flex-shrink: 0;
-  width: 22px; height: 22px;
-  display: grid; place-items: center;
+  width: 22px; 
+  height: 22px;
+  display: grid; 
+  place-items: center;
   border-radius: 50%;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
@@ -378,7 +467,6 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   font-variant-numeric: tabular-nums;
 }
 
-/* The one that answers. Filled coral, and the only saturated surface on screen. */
 .chip.is-primary .rank {
   background: linear-gradient(145deg, #f8756f, var(--accent-deep));
   box-shadow: -1px -1px 3px rgba(255, 255, 255, 0.5), 2px 2px 5px rgba(200, 80, 76, 0.45);
@@ -386,14 +474,46 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 }
 .chip.is-primary .chip-name { color: var(--accent-deep); }
 
-/* ---------------------------------------------------------------- the canvas */
+.chip-gear {
+  position: absolute; 
+  right: 30px; 
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px; 
+  height: 20px;
+  display: grid; 
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.14s var(--ease), color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.chip-gear svg { width: 11px; height: 11px; stroke-width: 1.5; }
+.chip:hover .chip-gear { opacity: 1; }
+.chip-gear:hover { color: var(--accent); box-shadow: var(--e1); }
+.chip-gear.tuned { opacity: 0.9; color: var(--accent); }
 
-.canvas { flex: 1; min-width: 0; overflow-y: auto; padding: 0 22px 0 20px; }
+.chip.is-dead { opacity: 0.55; }
+.chip.is-dead .chip-name { text-decoration: line-through; }
+.chip.is-dead .chip-bar { background: var(--text-faint); }
+
+/* ============================================================================
+   CANVAS
+   ============================================================================ */
+
+.canvas { 
+  flex: 1; 
+  min-width: 0; 
+  overflow-y: auto; 
+  padding: 0 var(--space-xl) 0 var(--space-lg);
+}
 
 .canvas-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 20px;
-  padding: 4px 6px 20px;
+  display: flex; 
+  align-items: flex-start; 
+  justify-content: space-between;
+  gap: var(--space-xl);
+  padding: var(--space-xs) var(--space-sm) var(--space-xl);
 }
 
 .canvas-head h1 {
@@ -403,12 +523,19 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   color: var(--text);
 }
 
-.sub { font-size: 12.5px; color: var(--text-dim); margin-top: 5px; max-width: 60ch; }
+.sub { 
+  font-size: 12.5px; 
+  color: var(--text-dim); 
+  margin-top: var(--space-xs); 
+  max-width: 60ch; 
+}
 
 .btn-primary {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-sm);
   height: 40px;
-  padding: 0 20px 0 16px;
+  padding: 0 var(--space-xl) 0 var(--space-lg);
   border-radius: 100px;
   background: linear-gradient(145deg, #f8756f, var(--accent-deep));
   color: #fff;
@@ -419,15 +546,25 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   transition: box-shadow 0.15s var(--ease), transform 0.15s var(--ease);
 }
 .btn-primary svg { width: 14px; height: 14px; stroke-width: 2.2; }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: -3px -3px 8px var(--light), 6px 6px 14px rgba(199, 90, 86, 0.5); }
+.btn-primary:hover { 
+  transform: translateY(-1px); 
+  box-shadow: -3px -3px 8px var(--light), 6px 6px 14px rgba(199, 90, 86, 0.5); 
+}
 .btn-primary:active {
   transform: translateY(0);
   box-shadow: inset 2px 2px 6px rgba(180, 70, 66, 0.5), inset -2px -2px 6px rgba(255, 255, 255, 0.28);
 }
 
-.lanes { padding-bottom: 30px; display: flex; flex-direction: column; gap: 20px; }
+.lanes { 
+  padding-bottom: var(--space-3xl); 
+  display: flex; 
+  flex-direction: column; 
+  gap: var(--space-lg);
+}
 
-/* ---------------------------------------------------------------------- lane */
+/* ============================================================================
+   LANE
+   ============================================================================ */
 
 .lane {
   border-radius: var(--r-lg);
@@ -439,11 +576,10 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .lane.is-target { box-shadow: var(--e3); }
 
 .lane-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px 11px;
-  flex-wrap: nowrap;
-  overflow: hidden;
-  min-height: 32px;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-md);
+  padding: 11px 14px 13px;
 }
 
 .lane-name {
@@ -451,100 +587,288 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   font-weight: 650;
   letter-spacing: -0.15px;
   color: var(--text);
-  padding: 5px 10px;
+  padding: 5px 12px;
   border-radius: var(--r-sm);
-  min-width: 50px;
-  max-width: 140px;
+  min-width: 60px;
+  max-width: 260px;
   user-select: text;
   transition: box-shadow 0.15s var(--ease);
-  flex-shrink: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .lane-name:hover { box-shadow: var(--e1); }
-.lane-name:focus { box-shadow: var(--in1); background: var(--pressed-bg); color: var(--accent-deep); }
+.lane-name:focus { 
+  box-shadow: var(--in1); 
+  background: var(--pressed-bg); 
+  color: var(--accent-deep); 
+}
 
 .lane-url {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 10px;
+  display: flex; 
+  align-items: center; 
+  gap: 7px;
+  padding: 6px 13px;
   border-radius: 100px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: 9.5px;
+  font-size: 10.5px;
   color: var(--text-dim);
   transition: color 0.14s var(--ease);
-  flex-shrink: 0;
-  white-space: nowrap;
-  cursor: pointer;
 }
 .lane-url:hover { color: var(--accent); }
 .lane-url:active { box-shadow: var(--in2); }
-.lane-url svg { width: 10px; height: 10px; }
-.lane-url .host { color: var(--text-faint); font-size: 8px; }
-
-.lane-action {
-  flex-shrink: 0;
-  padding: 5px 12px;
-  border-radius: 100px;
-  background: var(--raised);
-  box-shadow: var(--e1);
-  font-size: 9.5px;
-  font-weight: 600;
-  color: var(--text-faint);
-  cursor: pointer;
-  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
-  white-space: nowrap;
-}
-.lane-action:hover {
-  color: var(--text);
-  box-shadow: var(--e2);
-}
-.lane-action:active {
-  background: var(--pressed-bg);
-  box-shadow: var(--in1);
-}
+.lane-url svg { width: 11px; height: 11px; }
+.lane-url .host { color: var(--text-faint); }
 
 .lane-activity {
-  flex-shrink: 0;
-  font-size: 8.5px;
+  font-size: 10px;
   color: var(--text-faint);
   white-space: nowrap;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-.lane-activity.quiet {
-  opacity: 0.5;
-}
+.lane-activity.quiet { color: var(--text-faint); opacity: 0.7; }
 
 .lane-kind {
   margin-left: auto;
   flex-shrink: 0;
-  padding: 4px 10px;
+  padding: 5px 13px;
   border-radius: 100px;
   background: var(--raised);
   box-shadow: var(--e1);
-  font-size: 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.lane-kind.computed { color: var(--accent); }
+
+.lane-think {
+  margin-left: 0;
+  flex-shrink: 0;
+  padding: 5px 13px;
+  border-radius: 100px;
+  background: var(--raised);
+  box-shadow: var(--e1);
+  font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--text-faint);
   white-space: nowrap;
+  cursor: pointer;
+  transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease);
 }
-.lane-kind.computed { color: var(--accent); }
+.lane-think:hover { color: var(--text-dim); box-shadow: var(--e2); }
+.lane-think.is-on {
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  color: var(--accent);
+}
+.lane-think ~ .lane-kind, .lane-think + .lane-think { margin-left: 0; }
 
-/* ------------------------------------------------------------ notifications */
+.lane-remove {
+  flex-shrink: 0;
+  width: 26px; 
+  height: 26px;
+  display: grid; 
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.14s var(--ease), color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.lane-remove svg { width: 10px; height: 10px; stroke-width: 2; }
+.lane:hover .lane-remove { opacity: 1; }
+.lane-remove:hover { color: var(--accent); box-shadow: var(--e1); }
 
-/* The bell, in the status bar's right corner. Quiet when everything has been
-   seen; lit with a count when news faded away unread. */
+.lane-criteria {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.crit {
+  flex-shrink: 0;
+  padding: 4px 11px;
+  border-radius: 100px;
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition: color 0.14s var(--ease);
+}
+.lane-criteria:hover .crit { color: var(--accent); }
+
+/* ============================================================================
+   TRACK
+   ============================================================================ */
+
+.track {
+  position: relative;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-lg);
+  min-height: 92px;
+  padding: var(--space-lg) var(--space-xl);
+  border-radius: 20px;
+  background: var(--pressed-bg);
+  box-shadow: var(--in2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.track > .chip { flex-shrink: 0; max-width: 240px; }
+
+.flow {
+  position: absolute; 
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 50%, rgba(244, 100, 95, 0.05));
+}
+
+.track-empty {
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-md);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 500;
+}
+.track-empty .box {
+  width: 96px; 
+  height: 46px;
+  border-radius: var(--r);
+  box-shadow: var(--in1);
+}
+
+.answers-first {
+  flex-shrink: 0;
+  display: flex; 
+  align-items: center; 
+  gap: 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.answers-first svg { width: 14px; height: 14px; stroke-width: 2; }
+
+.drop-line {
+  position: absolute;
+  top: 16px; 
+  bottom: 16px;
+  width: 4px;
+  border-radius: 100px;
+  background: linear-gradient(180deg, #f8756f, var(--accent-deep));
+  box-shadow: 0 0 10px var(--accent-soft);
+  pointer-events: none;
+  animation: dropIn 0.16s var(--ease);
+}
+@keyframes dropIn { 
+  from { opacity: 0; transform: scaleY(0.4); } 
+  to { opacity: 1; transform: scaleY(1); } 
+}
+
+/* ============================================================================
+   DRAGGING
+   ============================================================================ */
+
+.ghost {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  transform-origin: 20px 50%;
+  animation: lift 0.15s var(--ease) forwards;
+  box-shadow: -10px -10px 22px var(--light), 12px 14px 30px rgba(150, 158, 172, 0.55) !important;
+}
+@keyframes lift {
+  from { transform: scale(1) rotate(0deg); }
+  to   { transform: scale(1.05) rotate(-1.6deg); }
+}
+
+body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
+
+/* ============================================================================
+   SCROLLBARS
+   ============================================================================ */
+
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #d3d7de;
+  border-radius: 100px;
+  border: 4px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { 
+  background: #c2c7d0; 
+  background-clip: padding-box; 
+}
+
+/* ============================================================================
+   STATUSBAR
+   ============================================================================ */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  height: 38px;
+  padding: 0 var(--space-xl);
+  flex-shrink: 0;
+  background: var(--pressed-bg);
+  box-shadow: inset 0 3px 6px -3px var(--dark), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat {
+  display: flex; 
+  align-items: center; 
+  gap: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat b { font-weight: 650; color: var(--text); }
+.stat .unit { color: var(--text-faint); font-weight: 500; }
+
+.stat-link { 
+  border-radius: 100px; 
+  padding: 3px 10px; 
+  margin-left: -10px; 
+  transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease); 
+}
+.stat-link:hover { color: var(--text); box-shadow: var(--e1); }
+.stat-link:active { box-shadow: var(--in1); }
+
+.stat-right { margin-left: auto; color: var(--text-faint); }
+
+.statusbar .dot { width: 6px; height: 6px; }
+
+/* ============================================================================
+   NOTIFICATIONS
+   ============================================================================ */
+
 .notif-bell {
   position: relative;
   flex-shrink: 0;
-  width: 30px; height: 30px;
-  margin-left: 10px;
-  display: grid; place-items: center;
+  width: 30px; 
+  height: 30px;
+  margin-left: var(--space-md);
+  display: grid; 
+  place-items: center;
   border-radius: 50%;
   background: var(--raised);
   box-shadow: var(--e1);
@@ -559,10 +883,13 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 
 .bell-badge {
   position: absolute;
-  top: -5px; right: -7px;
-  min-width: 15px; height: 15px;
+  top: -5px; 
+  right: -7px;
+  min-width: 15px; 
+  height: 15px;
   padding: 0 4px;
-  display: grid; place-items: center;
+  display: grid; 
+  place-items: center;
   border-radius: 100px;
   background: linear-gradient(145deg, #f8756f, var(--accent-deep));
   color: #fff;
@@ -572,22 +899,25 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   box-shadow: 1px 1px 3px rgba(200, 80, 76, 0.4);
 }
 
-/* Live notifications, bottom right, above the status bar. Fixed and pointer-
-   transparent as a container so only the cards themselves catch the mouse. */
 .notif-stack {
   position: fixed;
-  right: 14px; bottom: 52px;
+  right: var(--space-lg); 
+  bottom: 52px;
   z-index: 650;
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; 
+  flex-direction: column; 
+  gap: var(--space-md);
   align-items: flex-end;
   pointer-events: none;
 }
 
 .notif-toast {
   pointer-events: auto;
-  display: flex; align-items: center; gap: 10px;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-md);
   width: 320px;
-  padding: 12px 14px;
+  padding: var(--space-md) var(--space-lg);
   border-radius: var(--r);
   background: var(--bg);
   box-shadow: -6px -6px 16px rgba(255, 255, 255, 0.65), 10px 12px 26px rgba(146, 154, 172, 0.5);
@@ -607,12 +937,16 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   font-size: 10px;
   color: var(--text-faint);
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; 
+  overflow: hidden; 
+  text-overflow: ellipsis;
 }
 .notif-toast-close {
   flex-shrink: 0;
-  width: 20px; height: 20px;
-  display: grid; place-items: center;
+  width: 20px; 
+  height: 20px;
+  display: grid; 
+  place-items: center;
   border-radius: 50%;
   color: var(--text-faint);
   transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
@@ -620,173 +954,22 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .notif-toast-close svg { width: 9px; height: 9px; stroke-width: 2; }
 .notif-toast-close:hover { color: var(--accent); box-shadow: var(--e1); }
 
-/* A muted type's history is still shown in the center — dimmed, with its
-   restore control — because silenced is not erased. */
 .issue.is-muted { opacity: 0.55; }
-.issue-actions { display: flex; gap: 8px; margin-top: 10px; }
-.issue-mute { height: 30px; padding: 0 14px; font-size: 11px; }
+.issue-actions { display: flex; gap: var(--space-md); margin-top: var(--space-md); }
+.issue-mute { height: 30px; padding: 0 var(--space-lg); font-size: 11px; }
 
-/* Thinking is a lane property. Extruded = members may reason; pressed-in =
-   the lane asks them not to. Same grammar as every other control here. */
-.lane-think {
-  flex-shrink: 0;
-  padding: 4px 10px;
-  border-radius: 100px;
-  background: var(--raised);
-  box-shadow: var(--e1);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease);
-}
-.lane-think:hover { color: var(--text-dim); box-shadow: var(--e2); }
-.lane-think.is-on {
-  background: var(--pressed-bg);
-  box-shadow: var(--in1);
-  color: var(--accent);
-}
-/* Remove margin-left from thinking buttons so they sit right after lane-kind */
-.lane-think { margin-left: 0; }
-.lane-think ~ .lane-kind { margin-left: auto; }
-
-/* --------------------------------------------------------------------- track */
-
-/* A groove, like the slider tracks it borrows from: the chips sit *in* the lane
-   rather than on top of a panel. */
-.track {
-  position: relative;
-  display: flex; align-items: center; gap: 14px;
-  min-height: 92px;
-  padding: 16px 20px;
-  border-radius: 20px;
-  background: var(--pressed-bg);
-  box-shadow: var(--in2);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-}
-
-.track > .chip { flex-shrink: 0; max-width: 240px; }
-
-.flow {
-  position: absolute; inset: 0;
-  pointer-events: none;
-  background: linear-gradient(90deg, transparent 50%, rgba(244, 100, 95, 0.05));
-}
-
-.track-empty {
-  display: flex; align-items: center; gap: 13px;
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 500;
-}
-.track-empty .box {
-  width: 96px; height: 46px;
-  border-radius: var(--r);
-  box-shadow: var(--in1);
-}
-
-.answers-first {
-  flex-shrink: 0;
-  display: flex; align-items: center; gap: 6px;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.7px;
-  text-transform: uppercase;
-  color: var(--accent);
-  white-space: nowrap;
-}
-.answers-first svg { width: 14px; height: 14px; stroke-width: 2; }
-
-.drop-line {
-  position: absolute;
-  top: 16px; bottom: 16px;
-  width: 4px;
-  border-radius: 100px;
-  background: linear-gradient(180deg, #f8756f, var(--accent-deep));
-  box-shadow: 0 0 10px var(--accent-soft);
-  pointer-events: none;
-  animation: dropIn 0.16s var(--ease);
-}
-@keyframes dropIn { from { opacity: 0; transform: scaleY(0.4); } to { opacity: 1; transform: scaleY(1); } }
-
-/* ------------------------------------------------------------------ dragging */
-
-.ghost {
-  position: fixed;
-  z-index: 999;
-  pointer-events: none;
-  transform-origin: 20px 50%;
-  animation: lift 0.15s var(--ease) forwards;
-  box-shadow: -10px -10px 22px var(--light), 12px 14px 30px rgba(150, 158, 172, 0.55) !important;
-}
-@keyframes lift {
-  from { transform: scale(1) rotate(0deg); }
-  to   { transform: scale(1.05) rotate(-1.6deg); }
-}
-
-body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
-
-/* -------------------------------------------------------------------- scroll */
-
-::-webkit-scrollbar { width: 12px; height: 12px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: #d3d7de;
-  border-radius: 100px;
-  border: 4px solid transparent;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover { background: #c2c7d0; background-clip: padding-box; }
-
-/* ----------------------------------------------------------------- statusbar */
-
-/* Pressed into the base of the app, so it reads as part of the chassis rather
-   than another floating panel. */
-.statusbar {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  height: 38px;
-  padding: 0 22px;
-  flex-shrink: 0;
-  background: var(--pressed-bg);
-  box-shadow: inset 0 3px 6px -3px var(--dark), inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.stat {
-  display: flex; align-items: center; gap: 7px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.stat b { font-weight: 650; color: var(--text); }
-.stat .unit { color: var(--text-faint); font-weight: 500; }
-
-.stat-link { border-radius: 100px; padding: 3px 10px; margin-left: -10px; transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease); }
-.stat-link:hover { color: var(--text); box-shadow: var(--e1); }
-.stat-link:active { box-shadow: var(--in1); }
-
-.stat-right { margin-left: auto; color: var(--text-faint); }
-
-.statusbar .dot { width: 6px; height: 6px; }
-
-/* ----------------------------------------------------------- providers panel */
+/* ============================================================================
+   SCRIM & PANELS
+   ============================================================================ */
 
 .scrim {
-  position: fixed; inset: 0;
-  display: grid; place-items: center;
-  padding: 40px;
-  background: rgba(196, 201, 210, 0.42);
-  backdrop-filter: blur(3px);
+  position: fixed; 
+  inset: 0;
+  display: grid; 
+  place-items: center;
+  padding: var(--space-3xl);
+  background: rgba(196, 201, 210, 0.55);
+  backdrop-filter: blur(4px);
   z-index: 500;
   animation: fade 0.16s var(--ease);
 }
@@ -794,32 +977,65 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
 .panel {
-  width: min(680px, 100%);
-  max-height: 100%;
-  display: flex; flex-direction: column;
+  width: min(720px, 95%);
+  max-height: 90vh;
+  display: flex; 
+  flex-direction: column;
   border-radius: var(--r-lg);
   background: var(--bg);
   box-shadow: -10px -10px 24px rgba(255, 255, 255, 0.75), 14px 16px 38px rgba(146, 154, 172, 0.5);
   overflow: hidden;
   animation: rise 0.2s var(--ease);
 }
-@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: none; } }
+@keyframes rise { 
+  from { opacity: 0; transform: translateY(10px) scale(0.99); } 
+  to { opacity: 1; transform: none; } 
+}
+
+.panel-wide { 
+  width: min(1200px, 95%); 
+  height: min(85vh, 800px);
+}
 
 .panel-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 16px;
-  padding: 22px 22px 16px;
+  display: flex; 
+  align-items: flex-start; 
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: var(--space-2xl) var(--space-2xl) var(--space-lg);
 }
-.panel-head h2 { font-size: 17px; font-weight: 650; letter-spacing: -0.25px; }
-.panel-head .sub { margin-top: 4px; font-size: 12px; max-width: 52ch; }
+.panel-head h2 { 
+  font-size: 17px; 
+  font-weight: 650; 
+  letter-spacing: -0.25px; 
+}
+.panel-head .sub { 
+  margin-top: var(--space-xs); 
+  font-size: 12px; 
+  max-width: 52ch; 
+}
 
-.panel-body { overflow-y: auto; padding: 0 22px 22px; }
+.panel-body { 
+  overflow-y: auto; 
+  padding: 0 var(--space-2xl) var(--space-2xl);
+}
 
-.provider-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+/* ============================================================================
+   PROVIDERS PANEL
+   ============================================================================ */
+
+.provider-list { 
+  display: flex; 
+  flex-direction: column; 
+  gap: var(--space-sm); 
+  margin-bottom: var(--space-xl);
+}
 
 .provider {
-  display: flex; align-items: center; gap: 13px;
-  padding: 13px 16px;
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
   border-radius: var(--r);
   background: var(--raised);
   box-shadow: var(--e1);
@@ -827,20 +1043,29 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   transition: box-shadow 0.15s var(--ease);
 }
 .provider:hover { box-shadow: var(--e2); }
-.provider.is-editing { background: var(--pressed-bg); box-shadow: var(--in1); }
+.provider.is-editing { 
+  background: var(--pressed-bg); 
+  box-shadow: var(--in1); 
+}
 
 .provider-body { flex: 1; min-width: 0; }
-.provider-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.provider-name { 
+  font-size: 13px; 
+  font-weight: 600; 
+  color: var(--text); 
+}
 .provider-meta {
   margin-top: 2px;
   font-size: 10.5px;
   color: var(--text-dim);
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; 
+  overflow: hidden; 
+  text-overflow: ellipsis;
 }
 .provider-count {
   flex-shrink: 0;
-  padding: 4px 11px;
+  padding: var(--space-xs) var(--space-md);
   border-radius: 100px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
@@ -851,19 +1076,42 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .provider-count.bad { color: var(--accent); }
 
+.provider-edit {
+  flex-shrink: 0;
+  width: 28px; 
+  height: 28px;
+  display: grid; 
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.provider-edit:hover { color: var(--text); box-shadow: var(--e1); }
+.provider-edit:active { box-shadow: var(--in1); }
+.provider-edit svg { width: 12px; height: 12px; stroke-width: 1.5; }
+
+/* ============================================================================
+   FORMS
+   ============================================================================ */
+
 .provider-form {
-  padding: 20px 20px 18px;
+  padding: var(--space-xl);
   border-radius: var(--r);
   background: var(--pressed-bg);
   box-shadow: var(--in1);
 }
 
-.form-title { font-size: 12.5px; font-weight: 650; color: var(--text); margin-bottom: 14px; }
+.form-title { 
+  font-size: 12.5px; 
+  font-weight: 650; 
+  color: var(--text); 
+  margin-bottom: var(--space-lg);
+}
 
-.field { display: block; margin-bottom: 12px; }
+.field { display: block; margin-bottom: var(--space-lg); }
 .field > span {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: var(--space-xs);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.4px;
@@ -873,7 +1121,7 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .field input {
   width: 100%;
   height: 36px;
-  padding: 0 14px;
+  padding: 0 var(--space-lg);
   border-radius: var(--r-sm);
   background: var(--bg);
   box-shadow: var(--e1);
@@ -885,16 +1133,25 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .field input::placeholder { color: var(--text-faint); }
 .field .field-select select { background: var(--bg); }
 
-.form-note { min-height: 17px; margin: 2px 0 12px; font-size: 11.5px; color: var(--text-dim); }
+.form-note { 
+  min-height: 17px; 
+  margin: var(--space-xs) 0 var(--space-lg); 
+  font-size: 11.5px; 
+  color: var(--text-dim); 
+}
 .form-note.ok  { color: var(--ok); }
 .form-note.bad { color: var(--accent); }
 
-.form-actions { display: flex; align-items: center; gap: 9px; }
+.form-actions { 
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-sm);
+}
 .form-actions .spacer { flex: 1; }
 
 .btn-ghost {
   height: 36px;
-  padding: 0 16px;
+  padding: 0 var(--space-lg);
   border-radius: 100px;
   background: var(--raised);
   box-shadow: var(--e1);
@@ -907,15 +1164,21 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .btn-ghost:active { box-shadow: var(--in1); }
 .btn-danger:hover { color: var(--accent); }
 
-.form-actions .btn-primary { height: 36px; padding: 0 18px; }
+.form-actions .btn-primary { 
+  height: 36px; 
+  padding: 0 var(--space-xl);
+}
 
-/* --------------------------------------------------------------------- toast */
+/* ============================================================================
+   TOAST
+   ============================================================================ */
 
 .toast {
   position: fixed;
-  left: 50%; bottom: 62px;
+  left: 50%; 
+  bottom: 62px;
   transform: translate(-50%, 14px);
-  padding: 12px 22px;
+  padding: var(--space-md) var(--space-2xl);
   border-radius: 100px;
   background: var(--bg);
   box-shadow: var(--e2);
@@ -928,93 +1191,87 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-/* -------------------------------------------------------------------- states */
+/* ============================================================================
+   EMPTY STATES
+   ============================================================================ */
 
 .empty-state {
-  padding: 40px 20px;
+  padding: var(--space-3xl) var(--space-xl);
   text-align: center;
   color: var(--text-faint);
   font-size: 12px;
   border-radius: var(--r);
   box-shadow: var(--in1);
 }
-.empty-state strong { display: block; color: var(--text-dim); font-weight: 600; margin-bottom: 6px; font-size: 12.5px; }
+.empty-state strong { 
+  display: block; 
+  color: var(--text-dim); 
+  font-weight: 600; 
+  margin-bottom: var(--space-sm); 
+  font-size: 12.5px; 
+}
 
 .onboarding-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  min-height: 180px;
-  justify-content: center;
+  gap: var(--space-sm);
 }
-.onboarding-empty strong { font-size: 16px; color: var(--text); margin-bottom: 0; }
+.onboarding-empty strong { 
+  font-size: 16px; 
+  color: var(--text); 
+  margin-bottom: 0; 
+}
 .onboarding-empty span { max-width: 420px; line-height: 1.5; }
 .onboarding-empty .empty-explain { color: var(--text-dim); }
-.empty-action { margin-top: 8px; }
+.empty-action { margin-top: var(--space-md); }
 
 .provider-onboarding {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: var(--space-sm);
   line-height: 1.45;
 }
 .provider-onboarding strong { font-size: 14px; color: var(--text); }
 .provider-onboarding span { color: var(--text-faint); }
 
+/* ============================================================================
+   BROWSE PANEL
+   ============================================================================ */
+
+.browse-controls {
+  padding: 0 var(--space-2xl) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.browse-row { 
+  display: flex; 
+  align-items: center; 
+  gap: var(--space-md);
+}
+.browse-row .grow { flex: 1; min-width: 0; }
+.browse-row .field-select { flex: 1; }
+.browse-row.filters { 
+  flex-wrap: wrap; 
+  gap: var(--space-sm);
+}
+.browse-row.filters .filter { 
+  flex: 0 0 auto; 
+  padding: 0 var(--space-lg);
+}
+
 .browse-count-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-md);
+  padding: 0 var(--space-2xl) var(--space-md);
 }
 .browse-refresh { flex-shrink: 0; }
 
-.lane-remove {
-  flex-shrink: 0;
-  width: 26px; height: 26px;
-  display: grid; place-items: center;
-  border-radius: 50%;
-  color: var(--text-faint);
-  opacity: 0;
-  transition: opacity 0.14s var(--ease), color 0.14s var(--ease), box-shadow 0.14s var(--ease);
-}
-.lane-remove svg { width: 10px; height: 10px; stroke-width: 2; }
-.lane:hover .lane-remove { opacity: 1; }
-.lane-remove:hover { color: var(--accent); box-shadow: var(--e1); }
-
-.controls-label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-/* ------------------------------------------------------- browse models panel */
-
-/* Wider than the providers panel because this is a shopping surface: hundreds
-   of rows, each carrying enough numbers to decide on. */
-.panel-wide { width: min(1500px, 100%); height: min(92vh, 1000px); }
-
-.browse-controls {
-  padding: 0 22px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.browse-row { display: flex; align-items: center; gap: 10px; }
-.browse-row .grow { flex: 1; min-width: 0; }
-.browse-row .field-select { flex: 1; }
-.browse-row .field-select.w-sort { flex: 0 0 210px; }
-.browse-row.filters { flex-wrap: wrap; gap: 8px; }
-.browse-row.filters .filter { flex: 0 0 auto; padding: 0 16px; }
-
 .browse-count {
-  padding: 0 24px 10px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -1025,34 +1282,125 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .browse-list {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 22px 22px;
+  padding: var(--space-xs) var(--space-2xl) var(--space-2xl);
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: var(--space-sm);
 }
+
+.browse-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 0 var(--space-lg) var(--space-md);
+  margin: 0 var(--space-2xl);
+}
+.head-hint { 
+  font-size: 10.5px; 
+  font-style: italic; 
+  color: var(--text-faint); 
+}
+.head-spacer { flex-shrink: 0; width: 78px; }
+
+.col-sort {
+  cursor: pointer;
+  border-radius: 6px;
+  padding: var(--space-xs) var(--space-xs);
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.col-sort .metric-label { transition: color 0.14s var(--ease); }
+.col-sort:hover .metric-label { color: var(--text); }
+.col-sort.is-sorted { box-shadow: var(--in1); }
+.col-sort.is-sorted .metric-label { color: var(--accent); }
+
+.metric-value, .metric-label { display: block; }
+
+.direction {
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 var(--space-lg);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* Alignment corrections */
+.row-body { 
+  flex: 1 1 200px; 
+  min-width: 150px; 
+}
+.row-metrics { gap: 14px; }
+.metric { min-width: 52px; }
+.row-caps { min-width: 88px; }
+
+.col-sort { padding: var(--space-xs) 0; }
+
+.head-hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .row-metrics .metric:last-child,
+  .browse-header .col-sort:last-child { display: none; }
+}
+
+.row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 260px;
+  min-width: 190px;
+}
+
+.row-id {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-title { display: block; }
+.row-name { 
+  display: inline; 
+  min-width: 0; 
+}
+.row-author { margin-left: var(--space-sm); }
+
+/* ============================================================================
+   BROWSE ROWS
+   ============================================================================ */
 
 .row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 13px 16px;
+  gap: var(--space-lg);
+  padding: var(--space-md) var(--space-lg);
   border-radius: var(--r);
   background: var(--raised);
   box-shadow: var(--e1);
   transition: box-shadow 0.15s var(--ease);
 }
 .row:hover { box-shadow: var(--e2); }
-.row.is-pooled { background: var(--pressed-bg); box-shadow: var(--in1); }
+.row.is-pooled { 
+  background: var(--pressed-bg); 
+  box-shadow: var(--in1); 
+}
 
 .row-body { flex: 1; min-width: 0; }
 
-.row-title { display: flex; align-items: baseline; gap: 9px; }
+.row-title { display: flex; align-items: baseline; gap: var(--space-sm); }
 .row-name {
   font-size: 13px;
   font-weight: 650;
   color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
 }
+
 .row-author {
   flex-shrink: 0;
   font-size: 9.5px;
@@ -1067,22 +1415,32 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   font-size: 10px;
   color: var(--text-faint);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* The numbers. Fixed slots so the eye can compare down a column rather than
-   hunting along each row. */
 .row-metrics {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: var(--space-md);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 
-.metric { text-align: right; min-width: 58px; }
-.metric-value { font-size: 12px; font-weight: 650; color: var(--text); }
-.metric-value.dim { color: var(--text-faint); font-weight: 500; }
+.metric { 
+  text-align: right; 
+  min-width: 58px; 
+}
+.metric-value { 
+  font-size: 12px; 
+  font-weight: 650; 
+  color: var(--text); 
+}
+.metric-value.dim { 
+  color: var(--text-faint); 
+  font-weight: 500; 
+}
 .metric-label {
   font-size: 9px;
   font-weight: 600;
@@ -1092,10 +1450,17 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   margin-top: 1px;
 }
 
-.row-caps { display: flex; gap: 5px; flex-shrink: 0; min-width: 92px; }
+.row-caps { 
+  display: flex; 
+  gap: var(--space-xs); 
+  flex-shrink: 0; 
+  min-width: 92px; 
+}
 .cap {
-  width: 22px; height: 22px;
-  display: grid; place-items: center;
+  width: 22px; 
+  height: 22px;
+  display: grid; 
+  place-items: center;
   border-radius: 6px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
@@ -1104,11 +1469,12 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   font-weight: 700;
 }
 .cap.on { color: var(--accent); }
+.cap.unknown { opacity: 0.38; }
 
 .row-add {
   flex-shrink: 0;
   height: 32px;
-  padding: 0 16px;
+  padding: 0 var(--space-lg);
   border-radius: 100px;
   background: var(--raised);
   box-shadow: var(--e1);
@@ -1125,163 +1491,36 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   color: var(--accent);
 }
 
-/* Grouped controls. Four identical dropdowns in a row made the sort look like
-   a fourth filter — labels and separation are what tell them apart. */
 .control-group { display: flex; flex-direction: column; }
-.control-group .browse-row { gap: 10px; }
+.control-group .browse-row { gap: var(--space-sm); }
 .field-select.is-sort select {
   color: var(--accent-deep);
   font-weight: 650;
 }
 
-/* Clickable column headers, aligned to the metrics below by sharing classes. */
-.browse-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 0 16px 8px;
-  margin: 0 22px;
-}
-.head-hint { font-size: 10.5px; font-style: italic; color: var(--text-faint); }
-.head-spacer { flex-shrink: 0; width: 78px; }
-
-.col-sort {
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 3px 5px;
-  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
-}
-.col-sort .metric-label { transition: color 0.14s var(--ease); }
-.col-sort:hover .metric-label { color: var(--text); }
-.col-sort.is-sorted { box-shadow: var(--in1); }
-.col-sort.is-sorted .metric-label { color: var(--accent); }
-
-/* Metric value above label. Without this they run together as "61INTEL" and
-   the widths blow out, squeezing the model name to a single letter. */
-.metric-value, .metric-label { display: block; }
-
-.direction {
-  flex: 0 0 auto;
-  height: 34px;
-  padding: 0 16px;
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-/* --- alignment corrections ------------------------------------------------ */
-
-/* The name column was collapsing to a single letter on narrower windows: seven
-   metric columns plus capabilities plus a button left it nothing to shrink
-   into. Give it a floor, and take the space back from the metrics. */
-.row-body { flex: 1 1 200px; min-width: 150px; }
-.row-metrics { gap: 14px; }
-.metric { min-width: 52px; }
-.row-caps { min-width: 88px; }
-
-/* The header sat five pixels left of the values beneath it, because the button
-   carried horizontal padding the plain metric spans did not. Padding is
-   vertical only, so both columns share the same right edge. */
-.col-sort { padding: 3px 0; }
-
-.head-hint {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
-}
-
-/* At tighter widths, drop the least decisive column rather than crushing the
-   model name — age is interesting, not decisive. */
-@media (max-width: 900px) {
-  .row-metrics .metric:last-child,
-  .browse-header .col-sort:last-child { display: none; }
-}
-
-/* --- the name column, properly ------------------------------------------- */
-
-/* `.row-body` and `.row-id` are spans, and `overflow: hidden` does nothing on
-   an inline element — so the id never clipped, ran under the metrics, and the
-   name box collapsed to a couple of letters. Blockifying both is the fix. */
-.row-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1 1 260px;
-  min-width: 190px;
-}
-
-.row-id {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Show the whole name. Wrapping to a second line is better than an ellipsis:
-   the name is the one field you are actually reading, and two lines cost far
-   less than not knowing which model you are looking at. */
-.row-title { flex-wrap: wrap; row-gap: 2px; }
-.row-name {
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  line-height: 1.25;
-}
-
-/* A flex item will not shrink below its content by default, so a long name
-   pushed the row wider and got clipped instead of wrapping. Letting the title
-   flow as ordinary text — name, then author inline — makes it wrap naturally at
-   any width, which is what "show the whole name" actually requires. */
-.row-title { display: block; }
-.row-name { display: inline; min-width: 0; }
-.row-author { margin-left: 8px; }
-
-/* --- columns as the sort control ------------------------------------------ */
-
-/* Priority number, shown only once a second column joins the sort. */
-.sort-rank {
-  display: inline-grid;
-  place-items: center;
-  width: 13px; height: 13px;
-  margin-left: 3px;
-  border-radius: 4px;
-  background: linear-gradient(145deg, #f8756f, var(--accent-deep));
-  color: #fff;
-  font-size: 8px;
-  font-weight: 700;
-  vertical-align: 1px;
-}
-
-/* The model name is a column too, so every sort is reachable the same way. */
 .col-name {
   align-self: flex-start;
-  padding: 2px 0;
+  padding: var(--space-xs) 0;
   text-align: left;
 }
 .col-name .metric-label { text-align: left; }
 .browse-header .row-body { gap: 1px; }
 
-/* Ten metric columns need the room. The browser is the working surface while
-   it is open, so it takes nearly the whole window. */
-.scrim { padding: 24px; }
-.browse-list { gap: 8px; }
-.row { gap: 14px; }
-.metric { min-width: 50px; }
-
 @media (max-width: 1250px) {
   .row-metrics .metric:nth-last-child(2),
-  .browse-header .col-sort:nth-last-child(2) { display: none; }   /* hosts */
+  .browse-header .col-sort:nth-last-child(2) { display: none; }
 }
 
-/* The padlock on a locked column. Absolutely positioned so it cannot change a
-   column's width — the headers have to stay aligned with the values below. */
 .col-sort { position: relative; }
 
 .col-lock {
   position: absolute;
-  top: -9px; right: -7px;
-  width: 15px; height: 15px;
-  display: grid; place-items: center;
+  top: -9px; 
+  right: -7px;
+  width: 15px; 
+  height: 15px;
+  display: grid; 
+  place-items: center;
   border-radius: 50%;
   background: var(--bg);
   box-shadow: var(--e1);
@@ -1296,11 +1535,6 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 
 .col-name .col-lock { top: -4px; right: -18px; }
 
-/* --- a locked column is simply a pressed one ------------------------------ */
-
-/* The press is the lock. In a surface where every control is either extruded
-   or pushed in, a column that is part of the sort should read as held down —
-   no badge required, and it stays consistent with every other control here. */
 .col-sort {
   padding: 5px 0;
   border-radius: 8px;
@@ -1313,17 +1547,9 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .col-sort.is-sorted .metric-label { color: var(--accent); font-weight: 700; }
 
-/* The padlock is now only an exit. It has no job at rest — the depression
-   already says the column is locked in — so it appears only when the cursor is
-   on that column, looking for a way out. */
 .col-sort.is-sorted .col-lock { opacity: 0; }
 .col-sort.is-sorted:hover .col-lock { opacity: 1; }
 
-/* --- the match score ------------------------------------------------------ */
-
-/* With more than one criterion locked, the composite is what the list is
-   actually ordered by. Showing it is not decoration — without it the order
-   looks arbitrary, because no single visible column explains it. */
 .match {
   flex-shrink: 0;
   width: 46px;
@@ -1349,29 +1575,24 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .match.none { color: var(--text-faint); font-size: 13px; padding-top: 4px; }
 .head-match { padding-bottom: 2px; }
 
-/* --- what a lane was built to be ----------------------------------------- */
-
-/* The criteria the lane's models were found under, in words rather than column
-   labels. A header saying "cheapest · fastest · best at tools" tells you what
-   the lane is for; a list of model ids never does. */
 .lane-criteria {
   display: flex;
   align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  max-width: 120px;
+  gap: var(--space-xs);
+  flex-shrink: 1;
+  min-width: 0;
   overflow: hidden;
   cursor: pointer;
 }
 
 .crit {
   flex-shrink: 0;
-  padding: 3px 8px;
+  padding: var(--space-xs) var(--space-md);
   border-radius: 100px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
-  font-size: 8px;
-  font-weight: 650;
+  font-size: 10px;
+  font-weight: 600;
   letter-spacing: 0.2px;
   color: var(--text-dim);
   white-space: nowrap;
@@ -1379,15 +1600,10 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .lane-criteria:hover .crit { color: var(--accent); }
 
-/* --- more than one provider ------------------------------------------------ */
-
-/* Which of YOUR providers serves a row. The author says who made the model;
-   this says whose key the request would ride on — different facts, and the
-   second only exists once there are two providers to tell apart. */
 .row-provider {
   display: inline-block;
   flex-shrink: 0;
-  margin-left: 8px;
+  margin-left: var(--space-sm);
   padding: 2px 9px;
   border-radius: 100px;
   background: var(--pressed-bg);
@@ -1401,64 +1617,17 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   white-space: nowrap;
 }
 
-/* Name and provider are both text sorts; they sit side by side above the
-   name column. */
-.head-text-sorts { display: flex; align-items: center; gap: 16px; }
+.head-text-sorts { display: flex; align-items: center; gap: var(--space-lg); }
 
-/* A capability nobody published: visibly not a judgement either way. */
-.cap.unknown { opacity: 0.38; }
+/* ============================================================================
+   MEMBER POPOVER
+   ============================================================================ */
 
-/* The provider row is the door to its catalog; the pencil is the only way
-   into settings and key entry. Two workflows, two controls. */
-.provider-edit {
-  flex-shrink: 0;
-  width: 28px; height: 28px;
-  display: grid; place-items: center;
-  border-radius: 50%;
-  color: var(--text-faint);
-  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
-}
-.provider-edit:hover { color: var(--text); box-shadow: var(--e1); }
-.provider-edit:active { box-shadow: var(--in1); }
-.provider-edit svg { width: 12px; height: 12px; stroke-width: 1.5; }
-
-/* A lane member no catalog can explain. Present — the engine will still walk
-   over it — but unmistakably dead, and removable. */
-.chip.is-dead { opacity: 0.55; }
-.chip.is-dead .chip-name { text-decoration: line-through; }
-.chip.is-dead .chip-bar { background: var(--text-faint); }
-
-/* --- member dials ----------------------------------------------------------- */
-
-/* Two hover controls on a track chip now: the gear (settings) inboard of the
-   cross (remove). The extra right padding is their parking space. */
-.chip.in-track { padding-right: 58px; }
-
-.chip-gear {
-  position: absolute; right: 30px; top: 50%;
-  transform: translateY(-50%);
-  width: 20px; height: 20px;
-  display: grid; place-items: center;
-  border-radius: 50%;
-  color: var(--text-faint);
-  opacity: 0;
-  transition: opacity 0.14s var(--ease), color 0.14s var(--ease), box-shadow 0.14s var(--ease);
-}
-.chip-gear svg { width: 11px; height: 11px; stroke-width: 1.5; }
-.chip:hover .chip-gear { opacity: 1; }
-.chip-gear:hover { color: var(--accent); box-shadow: var(--e1); }
-
-/* A tuned member shows its gear even at rest — settings that only reveal
-   themselves on hover are settings someone will forget exist. */
-.chip-gear.tuned { opacity: 0.9; color: var(--accent); }
-
-/* The panel itself: one small raised card, fixed beside the gear that opened
-   it. Above everything else on the canvas, below nothing it needs to defer to. */
 .member-pop {
   position: fixed;
   z-index: 600;
   width: 252px;
-  padding: 14px 16px 12px;
+  padding: var(--space-lg);
   border-radius: var(--r);
   background: var(--bg);
   box-shadow: -8px -8px 20px rgba(255, 255, 255, 0.7), 12px 14px 30px rgba(146, 154, 172, 0.45);
@@ -1466,21 +1635,35 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .member-pop[hidden] { display: none; }
 
-.pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pop-head { 
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  gap: var(--space-sm);
+}
 .pop-title {
   min-width: 0;
   font-size: 11.5px;
   font-weight: 650;
   color: var(--text);
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.pop-sub { margin: 6px 0 10px; font-size: 10.5px; line-height: 1.45; color: var(--text-dim); }
+.pop-sub { 
+  margin: var(--space-sm) 0 var(--space-md); 
+  font-size: 10.5px; 
+  line-height: 1.45; 
+  color: var(--text-dim); 
+}
 
 .pop-field {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 7px;
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
 }
 .pop-field > span {
   font-size: 10px;
@@ -1493,7 +1676,7 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .pop-field input {
   width: 88px;
   height: 28px;
-  padding: 0 10px;
+  padding: 0 var(--space-sm);
   border-radius: var(--r-sm);
   background: var(--pressed-bg);
   box-shadow: var(--in1);
@@ -1505,26 +1688,35 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 }
 .pop-field input::placeholder { color: var(--text-faint); }
 
-.pop-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
-.pop-actions .btn-ghost { height: 28px; padding: 0 12px; font-size: 10.5px; }
+.pop-actions { 
+  display: flex; 
+  justify-content: flex-end; 
+  margin-top: var(--space-md);
+}
+.pop-actions .btn-ghost { 
+  height: 28px; 
+  padding: 0 var(--space-md); 
+  font-size: 10.5px; 
+}
 
-/* --- issue cards ------------------------------------------------------------ */
+/* ============================================================================
+   NOTIFICATIONS CENTER
+   ============================================================================ */
 
-/* One diagnosis per card: title, receipts, mechanism, prescription — in that
-   order, because the evidence has to be read before the conclusion earns
-   belief. */
-#issuesList { display: flex; flex-direction: column; gap: 12px; }
+#notifList { display: flex; flex-direction: column; gap: var(--space-md); }
 
 .issue {
-  padding: 14px 16px;
+  padding: var(--space-lg);
   border-radius: var(--r);
   background: var(--raised);
   box-shadow: var(--e1);
 }
 .issue-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
+  display: flex; 
+  align-items: baseline; 
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
 }
 .issue-title { font-size: 12.5px; font-weight: 650; color: var(--text); }
 .issue-meta {
@@ -1534,11 +1726,9 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
-/* The receipts. Pressed in, monospace, wrapped — provider bytes are read,
-   not admired, and a long error must never widen the panel. */
 .issue-evidence {
-  margin: 0 0 8px;
-  padding: 9px 12px;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--r-sm);
   background: var(--pressed-bg);
   box-shadow: var(--in1);
@@ -1550,6 +1740,154 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   word-break: break-word;
 }
 
-.issue-why { font-size: 11.5px; line-height: 1.55; color: var(--text-dim); margin-bottom: 6px; }
-.issue-advice { font-size: 11.5px; line-height: 1.55; color: var(--text); }
-.issue-fix { margin-top: 10px; height: 30px; padding: 0 14px; font-size: 11px; }
+.issue-why { 
+  font-size: 11.5px; 
+  line-height: 1.55; 
+  color: var(--text-dim); 
+  margin-bottom: var(--space-sm);
+}
+.issue-advice { 
+  font-size: 11.5px; 
+  line-height: 1.55; 
+  color: var(--text); 
+}
+.issue-fix { 
+  margin-top: var(--space-md); 
+  height: 30px; 
+  padding: 0 var(--space-lg); 
+  font-size: 11px; 
+}
+
+/* ============================================================================
+   NEW BROWSE FILTERS STYLES
+   ============================================================================ */
+
+.browse-filters-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.browse-filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.browse-row .field-select { 
+  flex: 1; 
+  min-width: 140px; 
+}
+
+.browse-row.filters .filter { 
+  padding: 0 var(--space-md);
+}
+
+/* ============================================================================
+   SIDEBAR IMPROVEMENTS
+   ============================================================================ */
+
+.sidebar-head {
+  padding-bottom: var(--space-md);
+}
+
+.head-row {
+  margin-bottom: var(--space-md);
+}
+
+.controls {
+  margin-bottom: var(--space-md);
+}
+
+.filters {
+  margin-bottom: var(--space-md);
+}
+
+/* Make sidebar feel more spacious */
+.sidebar {
+  padding: var(--space-lg);
+  padding-bottom: 0;
+}
+
+.sidebar-head {
+  padding: 0;
+  padding-bottom: var(--space-md);
+}
+
+.model-list {
+  padding-top: 0;
+}
+
+/* ============================================================================
+   CANVAS IMPROVEMENTS
+   ============================================================================ */
+
+.canvas-head {
+  padding-bottom: var(--space-lg);
+}
+
+.canvas-head > div {
+  flex: 1;
+}
+
+.canvas-head .sub {
+  max-width: 50ch;
+}
+
+/* Better lane spacing */
+.lane {
+  margin-bottom: var(--space-lg);
+}
+
+.lane-head {
+  padding: var(--space-md) var(--space-lg);
+  padding-bottom: var(--space-md);
+}
+
+/* Track improvements */
+.track {
+  padding: var(--space-lg) var(--space-xl);
+}
+
+/* Lane action buttons */
+.lane-action {
+  height: 28px;
+  padding: 0 var(--space-md);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+  box-shadow: var(--e1);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: box-shadow 0.14s var(--ease), color 0.14s var(--ease);
+}
+.lane-action:hover { color: var(--text); }
+.lane-action:active { box-shadow: var(--in1); }
+.lane-action svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ============================================================================
+   STATUSBAR IMPROVEMENTS
+   ============================================================================ */
+
+.statusbar {
+  padding: 0 var(--space-2xl);
+}
+
+.stat {
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.stat-link {
+  padding: var(--space-xs) var(--space-md);
+}
+
+/* Bell badge improvements */
+.bell-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 9px;
+}
