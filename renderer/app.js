@@ -1,8 +1,8 @@
 /* VisualLLM — canvas logic.
  *
  * Two rules drive everything below:
- *   1. A lane is an ordered list of models. members[0] answers first.
- *   2. The track draws that list right to left, so the primary sits at the
+ *   1. A hall is an ordered list of models. members[0] answers first.
+ *   2. The procession draws that list right to left, so the primary sits at the
  *      right-hand edge where the eye lands last and the arrow points.
  *
  * The reversal lives in exactly two places — `renderTrack` and `domSlotToIndex`
@@ -100,8 +100,8 @@ const state = {
 
 const $ = (id) => document.getElementById(id)
 
-/** One-shot undo for destructive lane edits. A delete or drag-out is a
- *  mis-click away from losing a tuned lane, and re-dragging members back
+/** One-shot undo for destructive hall edits. A delete or drag-out is a
+ *  mis-click away from losing a tuned hall, and re-dragging members back
  *  (with their dials) is real work. The snapshot is taken just before the
  *  change and held for one toast window; acting on it restores and clears. */
 let pendingUndo = null
@@ -129,7 +129,7 @@ const engineHost = () => `127.0.0.1:${enginePort}`
 // A model's identity is (provider, id), not the id alone. Two providers can
 // carry the same id — deepseek-chat direct and through a reseller, llama3 on
 // Ollama and LM Studio — and everything that stores or compares models has to
-// keep them apart. Pool entries and lane members are refs: { provider, id }.
+// keep them apart. Pool entries and hall members are refs: { provider, id }.
 // An EMPTY provider is a ref from before this rule existed and matches the
 // first catalog entry with that id, which is exactly the old behaviour.
 
@@ -176,11 +176,11 @@ function qualifyRefs() {
     if (m) r.provider = m.provider_id
   }
   state.pool.forEach(fill)
-  state.lanes.forEach((lane) => lane.members.forEach(fill))
+  state.lanes.forEach((hall) => hall.members.forEach(fill))
 }
 
 const slugify = (s) =>
-  s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'lane'
+  s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'hall'
 
 function fmtContext(n) {
   if (!n) return '—'
@@ -237,17 +237,17 @@ const ICON = {
 /** More than one provider in play means every model needs to say whose it is. */
 const multiProvider = () => new Set(state.catalog.map((m) => m.provider_id)).size > 1
 
-function chipEl(model, { inTrack = false, rank = null, tuned = false, disabled = false } = {}) {
+function chipEl(model, { inTrack = false, ordinal = null, tuned = false, disabled = false } = {}) {
   const el = document.createElement('div')
-  el.className = 'chip'
+  el.className = 'relic'
   el.dataset.model = model.id
   el.dataset.provider = model.provider_id || ''
   el.dataset.class = model.klass
   if (inTrack) el.classList.add('in-track')
-  if (rank === 1) el.classList.add('is-primary')
+  if (ordinal === 1) el.classList.add('is-primary')
   if (disabled) {
     el.classList.add('is-parked')
-    el.title = 'Parked — keeps its place and dials, but the lane skips it at request time. Right-click to resume.'
+    el.title = 'Parked — keeps its place and dials, but the hall skips it at request time. Right-click to resume.'
   }
 
   // Cost first. It is the one figure that matters on every single decision,
@@ -267,12 +267,12 @@ function chipEl(model, { inTrack = false, rank = null, tuned = false, disabled =
   // Show whatever the list is currently ranked by, so the ordering is legible
   // rather than something you have to take on trust. Only 107 of OpenRouter's
   // 337 models carry benchmark scores, so saying "unrated" is far better than
-  // leaving a chip looking identical to a scored one.
+  // leaving a relic looking identical to a scored one.
   if (SORT_LABEL[state.sort]) {
     const ranked = model[state.sort]
     bits.push(ranked == null ? `${SORT_LABEL[state.sort]} unrated` : `${SORT_LABEL[state.sort]} ${Math.round(ranked)}`)
   }
-  // Which provider serves this chip — but only once there are two to confuse.
+  // Which provider serves this relic — but only once there are two to confuse.
   if (model.provider_name && multiProvider()) bits.push(model.provider_name)
   if (disabled) bits.push('parked')
   if (model.source !== 'catalog' && !model.available && model.reason) bits.push(model.reason)
@@ -281,48 +281,48 @@ function chipEl(model, { inTrack = false, rank = null, tuned = false, disabled =
 
   const dot = health(model)
   el.innerHTML = `
-    <span class="chip-bar"></span>
-    ${rank ? `<span class="rank">${rank}</span>` : ''}
-    <span class="chip-body">
-      <span class="chip-name">${
+    <span class="relic-bar"></span>
+    ${ordinal ? `<span class="ordinal">${ordinal}</span>` : ''}
+    <span class="relic-body">
+      <span class="relic-name">${
         // Track chips are narrow, and the vendor prefix is the least
         // distinguishing part of an id: truncated, "nvidia/nemotron-3-nano"
         // and "nvidia/nemotron-3-super" both read "nvidia/nemotron-…". In a
-        // lane, spend the pixels on the part that tells members apart; the
+        // hall, spend the pixels on the part that tells members apart; the
         // sidebar is wide enough to keep the full id.
         inTrack && model.id.includes('/') ? model.id.split('/').slice(1).join('/') : model.id
       }</span>
-      <span class="chip-meta">${bits
+      <span class="relic-meta">${bits
         .map((b, i) => (i ? `<span class="sep">·</span>${b}` : b))
         .join(' ')}</span>
     </span>
-    ${dot ? `<span class="chip-health ${dot}" title="${dot}"></span>` : ''}
-    ${inTrack ? `<button class="chip-gear${tuned ? ' tuned' : ''}" title="${
+    ${dot ? `<span class="relic-health ${dot}" title="${dot}"></span>` : ''}
+    ${inTrack ? `<button class="relic-gear${tuned ? ' tuned' : ''}" title="${
       tuned ? 'This member has its own settings' : 'Member settings'
     }">${ICON.gear}</button>` : ''}
-    ${inTrack ? `<button class="chip-remove" title="Remove">${ICON.close}</button>` : ''}
+    ${inTrack ? `<button class="relic-remove" title="Remove">${ICON.close}</button>` : ''}
   `
   return el
 }
 
-/** A lane member nothing in any catalog explains — deleted upstream, from a
+/** A hall member nothing in any catalog explains — deleted upstream, from a
  *  removed provider, or (historically) an old-gateway slug that was never a
  *  model. It cannot be dragged, because there is no model to place; it can
  *  only be removed, and it says why it is dead so the fix is obvious. */
-function deadChipEl(ref, rank) {
+function deadChipEl(ref, ordinal) {
   const el = document.createElement('div')
-  el.className = 'chip in-track is-dead'
+  el.className = 'relic in-track is-dead'
   el.dataset.model = ref.id
   el.dataset.provider = ref.provider || ''
   el.title = 'No configured provider offers this id. The engine will skip or fail it.'
   el.innerHTML = `
-    <span class="chip-bar"></span>
-    ${rank ? `<span class="rank">${rank}</span>` : ''}
-    <span class="chip-body">
-      <span class="chip-name">${ref.id}</span>
-      <span class="chip-meta">not in any provider's catalog</span>
+    <span class="relic-bar"></span>
+    ${ordinal ? `<span class="ordinal">${ordinal}</span>` : ''}
+    <span class="relic-body">
+      <span class="relic-name">${ref.id}</span>
+      <span class="relic-meta">not in any provider's catalog</span>
     </span>
-    <button class="chip-remove" title="Remove">${ICON.close}</button>
+    <button class="relic-remove" title="Remove">${ICON.close}</button>
   `
   return el
 }
@@ -392,7 +392,7 @@ function renderSidebar() {
         : 'Browse models and add the ones you want.'
     }</div>`
   } else {
-    // The full OpenRouter catalog is hundreds of rows; building every chip up
+    // The full OpenRouter catalog is hundreds of rows; building every relic up
     // front costs more than anyone can scroll. Cap it and say so.
     const CAP = 300
     models.slice(0, CAP).forEach((m) => list.appendChild(chipEl(m)))
@@ -406,54 +406,54 @@ function renderSidebar() {
   $('modelCount').textContent = `${models.length} model${models.length === 1 ? '' : 's'}`
 }
 
-function renderTrack(track, lane) {
-  track.innerHTML = ''
-  track.appendChild(Object.assign(document.createElement('div'), { className: 'flow' }))
+function renderTrack(procession, hall) {
+  procession.innerHTML = ''
+  procession.appendChild(Object.assign(document.createElement('div'), { className: 'flow' }))
 
-  if (!lane.members.length) {
-    track.insertAdjacentHTML(
+  if (!hall.members.length) {
+    procession.insertAdjacentHTML(
       'beforeend',
-      `<div class="track-empty"><span class="box"></span><span>Drop a model here — it becomes the one that answers.</span></div>`
+      `<div class="procession-empty"><span class="niche"></span><span>Drop a model here — it becomes the one that answers.</span></div>`
     )
     return
   }
 
   // members[0] answers first, so it is drawn last: right-hand edge.
-  ;[...lane.members].reverse().forEach((ref, domIndex) => {
-    const rank = lane.members.length - domIndex
+  ;[...hall.members].reverse().forEach((ref, domIndex) => {
+    const ordinal = hall.members.length - domIndex
     const model = modelByRef(ref.provider, ref.id)
     // A member no catalog can explain still renders — as visibly dead, with
-    // its remove button. Skipping it left a lane trying (and failing on) a
+    // its remove button. Skipping it left a hall trying (and failing on) a
     // model its own canvas refused to show, which is undebuggable from the UI.
-    track.appendChild(
+    procession.appendChild(
       model
-        ? chipEl(model, { inTrack: true, rank, tuned: hasParams(ref), disabled: !!ref.disabled })
-        : deadChipEl(ref, rank)
+        ? chipEl(model, { inTrack: true, ordinal, tuned: hasParams(ref), disabled: !!ref.disabled })
+        : deadChipEl(ref, ordinal)
     )
   })
 
-  track.insertAdjacentHTML(
+  procession.insertAdjacentHTML(
     'beforeend',
     `<span class="answers-first">${ICON.arrow} answers first</span>`
   )
 }
 
 function laneEndpoint(slug) {
-  return `http://${engineHost()}/lane/${slug}/v1`
+  return `http://${engineHost()}/hall/${slug}/v1`
 }
 
 function laneCurlExample(slug) {
   return `curl ${laneEndpoint(slug)}/chat/completions \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
 }
 
-/** The live story for one lane, from the activity feed. `trying` is only
+/** The live story for one hall, from the activity feed. `trying` is only
  *  shown while fresh — a stale "trying" from a crashed poll would read as a
  *  request in flight forever, so it decays. `answered` and `failed` linger
  *  long enough to be noticed after the fact. */
-function laneLive(lane) {
+function laneLive(hall) {
   const now = Date.now() / 1000
   const entries = state.activity
-    .filter((e) => e.lane === lane.slug)
+    .filter((e) => e.hall === hall.slug)
     .sort((a, b) => b.at - a.at)
   if (!entries.length) return null
 
@@ -461,7 +461,7 @@ function laneLive(lane) {
   const settled = entries.find((e) => e.phase === 'answered' || e.phase === 'failed' || e.phase === 'exhausted')
 
   if (trying && trying.at > now - 30 && (!settled || trying.at >= settled.at)) {
-    return { kind: 'trying', text: `trying ${shortMember(trying.member)}…`, title: 'A request is walking this lane now' }
+    return { kind: 'trying', text: `trying ${shortMember(trying.member)}…`, title: 'A request is walking this hall now' }
   }
   if (settled && settled.at > now - 45) {
     if (settled.phase === 'answered') {
@@ -485,16 +485,16 @@ function shortMember(label) {
   return id.includes('/') ? id.split('/').slice(1).join('/') : id
 }
 
-/** The lane footer: a slim status line that carries the words the lights only
- *  hint at. Live activity first, then the skip warnings, then what the lane was
- *  built for. Clicking it opens the lane's trail. A quiet lane shows one faint
+/** The hall footer: a slim status line that carries the words the lights only
+ *  hint at. Live activity first, then the skip warnings, then what the hall was
+ *  built for. Clicking it opens the hall's trail. A quiet hall shows one faint
  *  line, never nothing — an empty footer reads as broken. */
-function laneFoot(lane) {
-  const live = laneLive(lane)
-  const dead = lane.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
-  const parked = lane.members.filter((ref) => ref.disabled).length
-  const criteria = (lane.criteria || []).map(criterionWords).join(' + ')
-  const issues = state.incidents.filter((i) => i.lane === lane.slug).length
+function laneFoot(hall) {
+  const live = laneLive(hall)
+  const dead = hall.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
+  const parked = hall.members.filter((ref) => ref.disabled).length
+  const criteria = (hall.criteria || []).map(criterionWords).join(' + ')
+  const issues = state.incidents.filter((i) => i.hall === hall.slug).length
 
   const parts = []
   if (live) parts.push(`<span class="foot-live is-${live.kind}">${live.text}</span>`)
@@ -505,25 +505,25 @@ function laneFoot(lane) {
 
   const body = parts.length
     ? parts.join('<span class="foot-sep">·</span>')
-    : '<span class="foot-quiet">No recent activity — this lane is ready.</span>'
-  return `<span class="lane-activity" title="Open this lane's trail">${body}</span>`
+    : '<span class="foot-quiet">No recent activity — this hall is ready.</span>'
+  return `<span class="lane-activity" title="Open this hall's trail">${body}</span>`
 }
 
-/** The indicator lights in a lane's header. Health is shown, not told: a row
+/** The indicator lights in a hall's header. Health is shown, not told: a row
  *  of small lamps that light up, each with its meaning on hover. Live activity
  *  pulses coral; answered glows green; a failure is red; dead members warn
  *  amber; parked members light a steady neutral lamp. A lamp that is off stays
  *  a faint recess — present, never noisy. */
-function laneLights(lane) {
-  const live = laneLive(lane)
-  const dead = lane.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
-  const parked = lane.members.filter((ref) => ref.disabled).length
+function laneLights(hall) {
+  const live = laneLive(hall)
+  const dead = hall.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
+  const parked = hall.members.filter((ref) => ref.disabled).length
 
   const lamp = (cls, on, title) =>
     `<span class="lamp ${cls}${on ? ' on' : ''}" title="${attr(title)}"></span>`
 
   const liveState = live ? live.kind : null
-  return `<span class="lane-lights">
+  return `<span class="hall-lamps">
     ${lamp('lamp-live', liveState === 'trying', liveState === 'trying' ? live.text : 'No request in flight')}
     ${lamp('lamp-ok', liveState === 'answered', liveState === 'answered' ? live.text : 'Nothing served recently')}
     ${lamp('lamp-bad', liveState === 'failed', liveState === 'failed' ? live.text : 'No recent failure')}
@@ -532,57 +532,57 @@ function laneLights(lane) {
   </span>`
 }
 
-function laneEl(lane) {
+function laneEl(hall) {
   const el = document.createElement('article')
-  el.className = 'lane'
-  el.dataset.lane = lane.slug
+  el.className = 'hall'
+  el.dataset.hall = hall.slug
 
   const head = document.createElement('div')
-  head.className = 'lane-head'
+  head.className = 'hall-head'
   head.innerHTML = `
-    <span class="lane-name" contenteditable="plaintext-only" spellcheck="false">${lane.name}</span>
-    ${laneLights(lane)}
-    <button class="lane-url" title="Copy endpoint URL">
-      ${ICON.copy}<span class="host">${engineHost()}</span><span>/lane/${lane.slug}/v1</span>
+    <span class="hall-name" contenteditable="plaintext-only" spellcheck="false">${hall.name}</span>
+    ${laneLights(hall)}
+    <button class="hall-url" title="Copy endpoint URL">
+      ${ICON.copy}<span class="host">${engineHost()}</span><span>/hall/${hall.slug}/v1</span>
     </button>
-    <span class="lane-head-spacer"></span>
-    <button class="lane-action lane-test" title="Test this lane">Test</button>
-    <button class="lane-action lane-copy-setup" title="Copy a curl setup example">Setup</button>
-    <button class="lane-action lane-vscode" title="Add this lane to VS Code model picker">VS Code</button>
-    <button class="lane-icon-toggle${lane.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
-      lane.suppress_reasoning
+    <span class="hall-spacer"></span>
+    <button class="hall-act lane-test" title="Test this hall">Test</button>
+    <button class="hall-act lane-copy-setup" title="Copy a curl setup example">Setup</button>
+    <button class="hall-act lane-vscode" title="Add this hall to VS Code model picker">VS Code</button>
+    <button class="hall-toggle${hall.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
+      hall.suppress_reasoning
         ? 'No thinking: members are asked to answer directly. Click to allow thinking.'
         : 'Thinking allowed: members may reason before answering. Click to ask them not to.'
     }">${ICON.brain}</button>
-    <button class="lane-icon-toggle lane-unstick${lane.unstick ? ' is-on' : ''}" data-toggle="unstick" title="${
-      lane.unstick
+    <button class="hall-toggle lane-unstick${hall.unstick ? ' is-on' : ''}" data-toggle="unstick" title="${
+      hall.unstick
         ? 'Loopwatch on: stuck tool-call loops are collapsed and noted. Click to turn off.'
         : 'Loopwatch off. Click to watch for stuck tool-call loops.'
     }">${ICON.loop}</button>
-    <button class="lane-remove" title="Delete lane">${ICON.close}</button>
+    <button class="hall-remove" title="Delete hall">${ICON.close}</button>
   `
 
-  const track = document.createElement('div')
-  track.className = 'track'
-  renderTrack(track, lane)
+  const procession = document.createElement('div')
+  procession.className = 'procession'
+  renderTrack(procession, hall)
 
   const foot = document.createElement('div')
-  foot.className = 'lane-foot'
-  foot.innerHTML = laneFoot(lane)
+  foot.className = 'hall-foot'
+  foot.innerHTML = laneFoot(hall)
 
-  el.append(head, track, foot)
+  el.append(head, procession, foot)
   return el
 }
 
 function renderLanes() {
   const host = $('lanes')
 
-  // A refresh rebuilds the DOM, which would otherwise throw every track back to
+  // A refresh rebuilds the DOM, which would otherwise throw every procession back to
   // the left. Remember where each one was so the view does not jump under you.
   const scrolls = new Map()
-  host.querySelectorAll('.lane').forEach((el) => {
-    const track = el.querySelector('.track')
-    if (track) scrolls.set(el.dataset.lane, track.scrollLeft)
+  host.querySelectorAll('.hall').forEach((el) => {
+    const procession = el.querySelector('.procession')
+    if (procession) scrolls.set(el.dataset.hall, procession.scrollLeft)
   })
 
   host.innerHTML = ''
@@ -591,31 +591,31 @@ function renderLanes() {
       <strong>Build your first endpoint</strong>
       <span>Add a provider, choose models for your pool, then drag them here.</span>
       <span class="empty-explain">The model on the right answers first. Models to its left are fallbacks.</span>
-      <button class="btn-primary empty-action" type="button" id="emptyNewLane">Create a lane</button>
+      <button class="btn-primary empty-action" type="button" id="emptyNewLane">Create a hall</button>
     </div>`
     $('emptyNewLane').addEventListener('click', () => $('newLane').click())
     return
   }
-  state.lanes.forEach((lane) => host.appendChild(laneEl(lane)))
+  state.lanes.forEach((hall) => host.appendChild(laneEl(hall)))
 
-  // A track long enough to scroll starts at its right-hand end: the model that
+  // A procession long enough to scroll starts at its right-hand end: the model that
   // answers first is the one worth seeing, and it lives at that edge.
-  host.querySelectorAll('.lane').forEach((el) => {
-    const track = el.querySelector('.track')
-    if (!track) return
-    const previous = scrolls.get(el.dataset.lane)
-    track.scrollLeft = previous === undefined ? track.scrollWidth : previous
-    updateScrollFade(track)
-    if (!track.dataset.fadeWired) {
-      track.dataset.fadeWired = '1'
-      track.addEventListener('scroll', () => updateScrollFade(track), { passive: true })
+  host.querySelectorAll('.hall').forEach((el) => {
+    const procession = el.querySelector('.procession')
+    if (!procession) return
+    const previous = scrolls.get(el.dataset.hall)
+    procession.scrollLeft = previous === undefined ? procession.scrollWidth : previous
+    updateScrollFade(procession)
+    if (!procession.dataset.fadeWired) {
+      procession.dataset.fadeWired = '1'
+      procession.addEventListener('scroll', () => updateScrollFade(procession), { passive: true })
     }
   })
 }
 
 /** The left-edge fade appears only when members hide off that side. */
-function updateScrollFade(track) {
-  track.classList.toggle('can-scroll-left', track.scrollLeft > 2)
+function updateScrollFade(procession) {
+  procession.classList.toggle('can-scroll-left', procession.scrollLeft > 2)
 }
 
 function renderStatusBar() {
@@ -686,7 +686,7 @@ function render() {
 const drag = {
   active: false,
   model: null,
-  from: null, // lane slug, or null when it came from the sidebar
+  from: null, // hall slug, or null when it came from the sidebar
   ghost: null,
   line: null,
   target: null,
@@ -696,25 +696,25 @@ const drag = {
 }
 
 /** Start a drag: build the ghost and start listening for movement. */
-function beginDrag(event, chip) {
-  const model = modelByRef(chip.dataset.provider, chip.dataset.model)
+function beginDrag(event, relic) {
+  const model = modelByRef(relic.dataset.provider, relic.dataset.model)
   if (!model) return
 
-  // `closest` walks UP the tree looking for a match. If the chip is inside a
-  // lane we are moving it; if not, it came from the sidebar and we are copying,
+  // `closest` walks UP the tree looking for a match. If the relic is inside a
+  // hall we are moving it; if not, it came from the sidebar and we are copying,
   // since a model can appear in many lanes at once.
-  const laneEl = chip.closest('.lane')
+  const laneEl = relic.closest('.hall')
 
   // The element's exact position and size on screen right now, in pixels from
   // the top-left of the window. Needed so the ghost appears precisely over the
-  // real chip instead of jumping to the cursor.
-  const rect = chip.getBoundingClientRect()
+  // real relic instead of jumping to the cursor.
+  const rect = relic.getBoundingClientRect()
 
   drag.active = true
   drag.model = model
-  drag.from = laneEl ? laneEl.dataset.lane : null
-  // Where inside the chip you grabbed it. Without this the ghost snaps its
-  // corner to the cursor, and a chip grabbed by its right edge jumps left the
+  drag.from = laneEl ? laneEl.dataset.hall : null
+  // Where inside the relic you grabbed it. Without this the ghost snaps its
+  // corner to the cursor, and a relic grabbed by its right edge jumps left the
   // instant you move. Small detail; it is most of what makes dragging feel
   // solid rather than cheap.
   drag.offsetX = event.clientX - rect.left
@@ -728,10 +728,10 @@ function beginDrag(event, chip) {
   document.body.appendChild(ghost)
   drag.ghost = ghost
 
-  chip.classList.add('is-source')
+  relic.classList.add('is-source')
   document.body.classList.add('is-dragging')
 
-  // Listening on `window`, not on the chip. A fast drag outpaces the browser's
+  // Listening on `window`, not on the relic. A fast drag outpaces the browser's
   // hit-testing, and events land on whatever is under the cursor instead. Watch
   // the whole window and the drag survives being flung around.
   //
@@ -754,33 +754,33 @@ function onDragMove(event) {
   // `?.` means "only if the thing on the left exists". Over empty space
   // `elementFromPoint` returns nothing, and without this the whole drag would
   // die on an error.
-  const track = under?.closest?.('.track')
+  const procession = under?.closest?.('.procession')
 
-  document.querySelectorAll('.lane.is-target').forEach((l) => l.classList.remove('is-target'))
+  document.querySelectorAll('.hall.is-target').forEach((l) => l.classList.remove('is-target'))
   drag.line?.remove()
   drag.line = null
 
-  if (!track) {
+  if (!procession) {
     drag.target = null
     return
   }
 
-  track.closest('.lane').classList.add('is-target')
-  drag.target = track
+  procession.closest('.hall').classList.add('is-target')
+  drag.target = procession
 
-  // Which gap in this track are we hovering over?
+  // Which gap in this procession are we hovering over?
   //
-  // Compare the cursor against each chip's MIDPOINT, not its edges. Past the
+  // Compare the cursor against each relic's MIDPOINT, not its edges. Past the
   // halfway line means you intend to land after it. Using edges leaves dead
   // zones between chips where nothing highlights, which reads as broken.
   //
-  // The dragged chip itself is excluded (`:not(.is-source)`) — it is about to
+  // The dragged relic itself is excluded (`:not(.is-source)`) — it is about to
   // move, so it should not count as an obstacle to itself.
-  const chips = [...track.querySelectorAll('.chip:not(.is-source)')]
+  const chips = [...procession.querySelectorAll('.relic:not(.is-source)')]
   let slot = chips.length // default: past everything, at the far right
   for (let i = 0; i < chips.length; i++) {
-    const box = chips[i].getBoundingClientRect()
-    if (event.clientX < box.left + box.width / 2) {
+    const niche = chips[i].getBoundingClientRect()
+    if (event.clientX < niche.left + niche.width / 2) {
       slot = i
       break
     }
@@ -789,7 +789,7 @@ function onDragMove(event) {
 
   const line = document.createElement('div')
   line.className = 'drop-line'
-  const trackBox = track.getBoundingClientRect()
+  const trackBox = procession.getBoundingClientRect()
   let x
   if (!chips.length) x = 18
   else if (slot >= chips.length) {
@@ -798,8 +798,8 @@ function onDragMove(event) {
   } else {
     x = chips[slot].getBoundingClientRect().left - trackBox.left - 5
   }
-  line.style.left = `${x + track.scrollLeft}px`
-  track.appendChild(line)
+  line.style.left = `${x + procession.scrollLeft}px`
+  procession.appendChild(line)
   drag.line = line
 }
 
@@ -832,7 +832,7 @@ function domSlotToIndex(slot, count) {
 function endDrag() {
   window.removeEventListener('pointermove', onDragMove)
   document.body.classList.remove('is-dragging')
-  document.querySelectorAll('.lane.is-target').forEach((l) => l.classList.remove('is-target'))
+  document.querySelectorAll('.hall.is-target').forEach((l) => l.classList.remove('is-target'))
   drag.ghost?.remove()
   drag.line?.remove()
 
@@ -840,7 +840,7 @@ function endDrag() {
   drag.active = false
   drag.ghost = drag.line = drag.target = null
 
-  // A gateway chip is a READOUT — one of the old gateway's own lane slugs,
+  // A gateway relic is a READOUT — one of the old gateway's own hall slugs,
   // carried in the sidebar for its live health figures. It is not a provider
   // model, and sent upstream as one it fails as a bad model id. If the catalog
   // has a real model under the same id, the drop means that one; otherwise the
@@ -857,8 +857,8 @@ function endDrag() {
   }
 
   // The ref this drag is about: this model, from this provider. A member
-  // moved out of a lane keeps its dials — the settings belong to the member,
-  // and reordering a lane must not amount to resetting it.
+  // moved out of a hall keeps its dials — the settings belong to the member,
+  // and reordering a hall must not amount to resetting it.
   const prior = from
     ? state.lanes
         .find((l) => l.slug === from)
@@ -867,11 +867,11 @@ function endDrag() {
   const dragged = { provider: placed.provider_id || '', id: placed.id, params: prior?.params || {} }
 
   if (!target) {
-    // Dropped nowhere. Out of a lane means remove; out of the sidebar means nothing.
+    // Dropped nowhere. Out of a hall means remove; out of the sidebar means nothing.
     if (from) {
-      const lane = state.lanes.find((l) => l.slug === from)
-      mutateLanes(`${model.id} removed from ${lane.name}`, () => {
-        lane.members = lane.members.filter((r) => !refMatches(r, model))
+      const hall = state.lanes.find((l) => l.slug === from)
+      mutateLanes(`${model.id} removed from ${hall.name}`, () => {
+        hall.members = hall.members.filter((r) => !refMatches(r, model))
       })
     } else {
       render()
@@ -879,37 +879,37 @@ function endDrag() {
     return
   }
 
-  const lane = state.lanes.find((l) => l.slug === target.closest('.lane').dataset.lane)
+  const hall = state.lanes.find((l) => l.slug === target.closest('.hall').dataset.hall)
   const source = from ? state.lanes.find((l) => l.slug === from) : null
 
   if (source) source.members = source.members.filter((r) => !refMatches(r, model))
-  const without = lane.members.filter((r) => !refMatches(r, model))
+  const without = hall.members.filter((r) => !refMatches(r, model))
   const index = domSlotToIndex(slot, without.length)
   without.splice(index, 0, dragged)
-  lane.members = without
+  hall.members = without
 
-  // A lane takes on the question its first models were found by. Only once —
+  // A hall takes on the question its first models were found by. Only once —
   // a later drag from a different search should not silently rewrite what the
-  // lane says it is for.
-  if (!lane.criteria?.length && state.browse.sorts?.length) {
-    lane.criteria = state.browse.sorts
+  // hall says it is for.
+  if (!hall.criteria?.length && state.browse.sorts?.length) {
+    hall.criteria = state.browse.sorts
       .filter((s) => !NON_CRITERIA.has(s.field))
       .map(({ field, desc }) => ({ field, desc }))
   }
 
-  // The first member is the product moment: the lane just became a live
+  // The first member is the product moment: the hall just became a live
   // endpoint, and the next step is connecting a client. Celebrate once — the
-  // moment is earned exactly one time per lane — with the URL and what to do
+  // moment is earned exactly one time per hall — with the URL and what to do
   // with it. Later drops just confirm the ordering.
-  const firstEverMember = lane.members.length === 1 && !lane._celebrated
+  const firstEverMember = hall.members.length === 1 && !hall._celebrated
   if (firstEverMember) {
-    lane._celebrated = true
+    hall._celebrated = true
     toast(
-      `${lane.name} is live`,
-      `${laneEndpoint(lane.slug)} — point any OpenAI-compatible client here. Setup copies a curl example, VS Code adds it to the model picker.`
+      `${hall.name} is live`,
+      `${laneEndpoint(hall.slug)} — point any OpenAI-compatible client here. Setup copies a curl example, VS Code adds it to the model picker.`
     )
   } else if (index === 0) {
-    toast(`${model.id} answers first in ${lane.name}`)
+    toast(`${model.id} answers first in ${hall.name}`)
   }
   render()
   saveLanes()
@@ -934,7 +934,7 @@ function endDrag() {
 //      thinking model returns an empty answer is an explanation someone can
 //      reason from next time.
 //   3. PRESCRIPTION, NOT SHRUG. Where the fix is a control in this app, name
-//      it — and when it is one of the lane's own toggles, offer the click.
+//      it — and when it is one of the hall's own toggles, offer the click.
 //   4. HONEST ATTRIBUTION. A malformed request is the client's fault and
 //      says so. A failure the evidence cannot attribute renders as
 //      "unexplained", receipts attached, no blame invented.
@@ -997,7 +997,7 @@ function notifPersist() {
 }
 
 /** Kinds that stay recorded and listed but never badge the bell or fire a
- *  toast: by-design behavior, not news. Capability skips are the lane doing
+ *  toast: by-design behavior, not news. Capability skips are the hall doing
  *  its job — announcing them trained users to ignore alerts entirely. */
 const SILENT_KINDS = new Set(['skipped_by_catalog'])
 
@@ -1040,7 +1040,7 @@ function showNotifToast(incident) {
   card.innerHTML = `
     <span class="notif-toast-body">
       <span class="notif-toast-title">${d.title}</span>
-      <span class="notif-toast-meta">${attr(incident.member)} · lane ${attr(incident.lane)}</span>
+      <span class="notif-toast-meta">${attr(incident.member)} · hall ${attr(incident.hall)}</span>
     </span>
     <button class="notif-toast-close" title="Dismiss">${ICON.close}</button>
   `
@@ -1084,7 +1084,7 @@ function closeNotifications() {
   notifLaneFilter = null
 }
 
-/** When opened from a lane's activity line, the center shows just that lane.
+/** When opened from a hall's activity line, the center shows just that hall.
  *  `null` is the whole system. */
 let notifLaneFilter = null
 
@@ -1092,7 +1092,7 @@ function renderNotifCenter() {
   const list = $('notifList')
 
   const visible = notifLaneFilter
-    ? windowedIncidents().filter((i) => i.lane === notifLaneFilter)
+    ? windowedIncidents().filter((i) => i.hall === notifLaneFilter)
     : windowedIncidents()
 
   // Newest first; identical (member, kind) entries fold into one card with a
@@ -1117,7 +1117,7 @@ function renderNotifCenter() {
 
   if (!groups.length) {
     list.innerHTML = scopeChip + `<div class="empty-state"><strong>Nothing to report</strong>${
-      notifLaneFilter ? 'No failures on this lane in the last 24 hours.' : 'No failures recorded in the last 24 hours.'
+      notifLaneFilter ? 'No failures on this hall in the last 24 hours.' : 'No failures recorded in the last 24 hours.'
     }</div>`
     return
   }
@@ -1125,22 +1125,22 @@ function renderNotifCenter() {
   list.innerHTML = scopeChip + groups
     .map(({ count, latest }) => {
       const d = DIAGNOSIS[latest.kind] || DIAGNOSIS.unattributed
-      const lane = state.lanes.find((l) => l.slug === latest.lane)
+      const hall = state.lanes.find((l) => l.slug === latest.hall)
       const muted = notif.muted.has(latest.kind)
-      const fix = !muted && lane && d.fix && d.fix(latest, lane)
+      const fix = !muted && hall && d.fix && d.fix(latest, hall)
       return `
       <article class="issue${muted ? ' is-muted' : ''}">
         <header class="issue-head">
           <span class="issue-title">${d.title}</span>
-          <span class="issue-meta">${attr(latest.member)} · lane ${attr(latest.lane)} · ${fmtAgo(latest.at)}${
+          <span class="issue-meta">${attr(latest.member)} · hall ${attr(latest.hall)} · ${fmtAgo(latest.at)}${
             count > 1 ? ` · ×${count}` : ''
           }</span>
         </header>
         <pre class="issue-evidence">${attr(latest.evidence)}</pre>
-        <p class="issue-why">${d.why(latest, lane)}</p>
-        <p class="issue-advice">${d.advice(latest, lane)}</p>
+        <p class="issue-why">${d.why(latest, hall)}</p>
+        <p class="issue-advice">${d.advice(latest, hall)}</p>
         <div class="issue-actions">
-          ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-lane="${attr(latest.lane)}">Turn on “no thinking” for this lane</button>` : ''}
+          ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-hall="${attr(latest.hall)}">Turn on “no thinking” for this hall</button>` : ''}
           <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}">${
             muted ? 'Ignored — click to restore' : 'Ignore this type'
           }</button>
@@ -1151,7 +1151,7 @@ function renderNotifCenter() {
 }
 
 /** What each kind means and what to do about it. `why` and `advice` receive
- *  the incident (with the lane-toggle state AT THE TIME) plus the lane as it
+ *  the incident (with the lane-toggle state AT THE TIME) plus the hall as it
  *  is NOW — the difference decides the advice: "turn thinking off" is only
  *  advice when it wasn't already off when the failure happened. */
 const DIAGNOSIS = {
@@ -1160,11 +1160,11 @@ const DIAGNOSIS = {
     why: () =>
       'This model reasons before it answers, and reasoning spends the same token budget as the answer. ' +
       'When the budget dies mid-thought, the visible reply never starts — a chat client renders that as an empty response.',
-    advice: (i, lane) =>
+    advice: (i, hall) =>
       i.no_think
         ? 'This happened with “no thinking” already on — the provider ignored the knob. Published capability rosters are optimistic: a setting can be listed and still dropped upstream. The commit gate kept this from reaching the client; if it keeps happening, this member is a poor fit for lanes that need prompt answers.'
-        : 'Turn on “no thinking” for this lane. It asks the provider to skip reasoning entirely — verified to stop exactly this on models that honour the knob.',
-    fix: (i, lane) => (!i.no_think && !lane.suppress_reasoning ? 'no-think' : null),
+        : 'Turn on “no thinking” for this hall. It asks the provider to skip reasoning entirely — verified to stop exactly this on models that honour the knob.',
+    fix: (i, hall) => (!i.no_think && !hall.suppress_reasoning ? 'no-think' : null),
   },
   empty_response: {
     title: 'Answered with nothing a client could show',
@@ -1173,7 +1173,7 @@ const DIAGNOSIS = {
         i.tools ? ` — under a ${i.tools}-tool request, which is a heavy ask for small models` : ''
       }. The commit gate caught it and moved to the next member instead of forwarding a blank reply.`,
     advice: () =>
-      'Keep at least one member behind this one — the gate turned this failure into a fallback. If it recurs mainly on tool-heavy requests, this member handles large tool sets poorly and belongs further left in the lane.',
+      'Keep at least one member behind this one — the gate turned this failure into a fallback. If it recurs mainly on tool-heavy requests, this member handles large tool sets poorly and belongs further left in the hall.',
   },
   midstream_error: {
     title: 'The provider sent an error inside a success',
@@ -1187,14 +1187,14 @@ const DIAGNOSIS = {
   rate_limited: {
     title: 'Rate limited',
     why: () =>
-      'The provider refused with 429. There are two species: this provider throttling you (another member fixes it — exactly what a lane is for) and an account-wide block (only waiting fixes it). They arrive with the same status code.',
+      'The provider refused with 429. There are two species: this provider throttling you (another member fixes it — exactly what a hall is for) and an account-wide block (only waiting fixes it). They arrive with the same status code.',
     advice: () =>
       'Members spread across different providers dodge per-provider throttles. VisualLLM reads the error body when it can; if the receipt names an account-wide free-tier limit, waiting for reset is usually the only fix.',
   },
   out_of_credit: {
     title: 'Out of credit',
     why: () => 'The provider refused for billing reasons — the case fallback lanes were invented for.',
-    advice: () => 'The lane walked on if members remained. Check the provider account if this member should be working.',
+    advice: () => 'The hall walked on if members remained. Check the provider account if this member should be working.',
   },
   key_rejected: {
     title: 'API key rejected',
@@ -1204,19 +1204,19 @@ const DIAGNOSIS = {
   model_missing: {
     title: 'Model not found at the provider',
     why: () => 'The provider no longer serves this id — retired, renamed, or never carried on this endpoint.',
-    advice: () => 'Browse the provider’s catalog and replace this chip with the current id.',
+    advice: () => 'Browse the provider’s catalog and replace this relic with the current id.',
   },
   capability_gap: {
     title: 'The catalog promised what the endpoint refused',
     why: () =>
       'Published capability lists are a union across every provider serving a model — optimistic by construction. The endpoint actually reached said no. The engine treats this as the model’s limitation and walks on.',
     advice: () =>
-      'If the capability matters to this lane, put a member that natively supports it ahead of this one. The refusal is per-endpoint, so the same model via another provider may genuinely differ.',
+      'If the capability matters to this hall, put a member that natively supports it ahead of this one. The refusal is per-endpoint, so the same model via another provider may genuinely differ.',
   },
   context_overflow: {
     title: 'Request larger than this member’s window',
     why: () => 'The prompt did not fit. That is a ceiling, not an error — a later member with a bigger window can still serve it.',
-    advice: () => 'Order the lane so a large-window member sits behind the fast ones. The engine already skips members whose published window is clearly too small.',
+    advice: () => 'Order the hall so a large-window member sits behind the fast ones. The engine already skips members whose published window is clearly too small.',
   },
   provider_trouble: {
     title: 'Provider-side trouble',
@@ -1229,7 +1229,7 @@ const DIAGNOSIS = {
     advice: () => 'Check the base URL in Providers if this recurs — for local servers, that the server is running.',
   },
   // The engine no longer records capability skips as incidents — a member
-  // passed over for a request it can't serve is the lane working as designed,
+  // passed over for a request it can't serve is the hall working as designed,
   // and badging it trained users to ignore the bell. This entry remains only
   // so records written by older versions still explain themselves; new ones
   // are never announced (see SILENT_KINDS).
@@ -1238,14 +1238,14 @@ const DIAGNOSIS = {
     why: () =>
       'The cached catalog said this member could not serve what the request needed, so the engine never sent it — sending anyway risks a silently wrong answer (an ignored image reads as a confident description of nothing).',
     advice: () =>
-      'This is the lane doing its job. If the catalog looks wrong, refresh it from Browse — a wrong cached entry is exactly the failure this record exists to expose.',
+      'This is the hall doing its job. If the catalog looks wrong, refresh it from Browse — a wrong cached entry is exactly the failure this record exists to expose.',
   },
   stalled: {
     title: 'The connection went silent before answering',
     why: () =>
       'Bytes stopped arriving entirely — not a slow model (a stream carries a pulse even while thinking), but a dead connection wearing an open port. The engine waited out the full patience window, then gave the slot to the next member.',
     advice: () =>
-      'Transient unless it repeats for the same member — then that provider\u2019s endpoint is unreliable or the model is being retired mid-flight. A member that stalls often belongs further left in the lane, behind something dependable.',
+      'Transient unless it repeats for the same member — then that provider\u2019s endpoint is unreliable or the model is being retired mid-flight. A member that stalls often belongs further left in the hall, behind something dependable.',
   },
   loop_repeat: {
     title: 'Caught repeating the same call',
@@ -1270,8 +1270,8 @@ const DIAGNOSIS = {
   request_rejected: {
     title: 'Not this model’s fault',
     why: () =>
-      'The provider rejected the request as malformed — a complaint about the request itself, which every model would reject identically. Walking the lane would only have collected the same error N times.',
-    advice: () => 'The quoted rejection names what the client sent wrong. Fix the caller, not the lane.',
+      'The provider rejected the request as malformed — a complaint about the request itself, which every model would reject identically. Walking the hall would only have collected the same error N times.',
+    advice: () => 'The quoted rejection names what the client sent wrong. Fix the caller, not the hall.',
   },
   unattributed: {
     title: 'Unexplained — receipts attached',
@@ -1303,13 +1303,13 @@ $('notifScrim').addEventListener('click', (event) => {
 
   const fix = event.target.closest('.issue-fix')
   if (fix && fix.dataset.fix === 'no-think') {
-    const lane = state.lanes.find((l) => l.slug === fix.dataset.lane)
-    if (!lane) return
-    lane.suppress_reasoning = true
+    const hall = state.lanes.find((l) => l.slug === fix.dataset.hall)
+    if (!hall) return
+    hall.suppress_reasoning = true
     saveLanes()
     renderLanes()
     renderNotifCenter()
-    toast(`${lane.name}: members will be asked to answer without thinking`)
+    toast(`${hall.name}: members will be asked to answer without thinking`)
     return
   }
 
@@ -1332,10 +1332,10 @@ document.addEventListener('keydown', (event) => {
 
 // -------------------------------------------------------------- member dials
 //
-// The gear on a chip in a lane opens a small panel of request settings the
-// lane fixes for that one member: temperature, penalties, a token ceiling.
+// The gear on a relic in a hall opens a small panel of request settings the
+// hall fixes for that one member: temperature, penalties, a token ceiling.
 // The engine injects them per attempt and unwinds them before the next
-// member, so tuning one chip can never bleed into its neighbours.
+// member, so tuning one relic can never bleed into its neighbours.
 //
 // Writes go straight onto the member ref and save on every change — there is
 // no OK button, because there is nothing to confirm: blank a field and the
@@ -1345,25 +1345,25 @@ document.addEventListener('keydown', (event) => {
 
 /** Which member the open popover is editing, by identity — never by element,
  *  because a re-render replaces every element under the popover. */
-const popTarget = { lane: null, provider: '', id: '' }
+const popTarget = { hall: null, provider: '', id: '' }
 
 /** The member ref the popover is aimed at, freshly looked up in state. */
 function popMember() {
-  const lane = state.lanes.find((l) => l.slug === popTarget.lane)
-  if (!lane) return null
+  const hall = state.lanes.find((l) => l.slug === popTarget.hall)
+  if (!hall) return null
   return (
-    lane.members.find(
+    hall.members.find(
       (r) => r.id === popTarget.id && (r.provider || '') === popTarget.provider
-    ) || lane.members.find((r) => r.id === popTarget.id)
+    ) || hall.members.find((r) => r.id === popTarget.id)
   )
 }
 
 function openMemberPop(gear) {
-  const chip = gear.closest('.chip')
-  const laneEl = chip.closest('.lane')
-  popTarget.lane = laneEl.dataset.lane
-  popTarget.provider = chip.dataset.provider || ''
-  popTarget.id = chip.dataset.model
+  const relic = gear.closest('.relic')
+  const laneEl = relic.closest('.hall')
+  popTarget.hall = laneEl.dataset.hall
+  popTarget.provider = relic.dataset.provider || ''
+  popTarget.id = relic.dataset.model
 
   const member = popMember()
   if (!member) return
@@ -1380,10 +1380,10 @@ function openMemberPop(gear) {
   // Beside the gear, clamped to the window. Measured after unhiding, because
   // a hidden element has no size to measure.
   const at = gear.getBoundingClientRect()
-  const box = pop.getBoundingClientRect()
-  const left = Math.max(8, Math.min(at.left - box.width / 2, window.innerWidth - box.width - 8))
+  const niche = pop.getBoundingClientRect()
+  const left = Math.max(8, Math.min(at.left - niche.width / 2, window.innerWidth - niche.width - 8))
   const below = at.bottom + 10
-  const top = below + box.height > window.innerHeight - 8 ? at.top - box.height - 10 : below
+  const top = below + niche.height > window.innerHeight - 8 ? at.top - niche.height - 10 : below
   pop.style.left = `${left}px`
   pop.style.top = `${Math.max(8, top)}px`
 }
@@ -1394,7 +1394,7 @@ function closeMemberPop({ rerender = true } = {}) {
   const pop = $('memberPop')
   if (pop.hidden) return
   pop.hidden = true
-  popTarget.lane = null
+  popTarget.hall = null
   // The gear's "tuned" dot may have changed while the popover was open.
   if (rerender) renderLanes()
 }
@@ -1421,53 +1421,53 @@ $('memberPop').addEventListener('change', (event) => {
   saveLanes()
 })
 
-// ------------------------------------------------------------- chip menu
+// ------------------------------------------------------------- relic menu
 //
-// Right-click on a lane member. The gear and the drag-out-to-remove gesture
+// Right-click on a hall member. The gear and the drag-out-to-remove gesture
 // are invisible until you already know them; a menu is how they are found.
 // "Park" is the third action — a member that keeps its place and its dials
-// but is skipped at request time, so a lane can be tuned by subtraction
+// but is skipped at request time, so a hall can be tuned by subtraction
 // without losing the work of arranging it.
 
 /** Which member the open menu is aimed at, by identity. */
-const menuTarget = { lane: null, provider: '', id: '' }
+const menuTarget = { hall: null, provider: '', id: '' }
 
 function menuMember() {
-  const lane = state.lanes.find((l) => l.slug === menuTarget.lane)
-  if (!lane) return null
+  const hall = state.lanes.find((l) => l.slug === menuTarget.hall)
+  if (!hall) return null
   return (
-    lane.members.find(
+    hall.members.find(
       (r) => r.id === menuTarget.id && (r.provider || '') === menuTarget.provider
-    ) || lane.members.find((r) => r.id === menuTarget.id)
+    ) || hall.members.find((r) => r.id === menuTarget.id)
   )
 }
 
-function openChipMenu(chip, x, y) {
-  const laneEl = chip.closest('.lane')
+function openChipMenu(relic, x, y) {
+  const laneEl = relic.closest('.hall')
   if (!laneEl) return
-  menuTarget.lane = laneEl.dataset.lane
-  menuTarget.provider = chip.dataset.provider || ''
-  menuTarget.id = chip.dataset.model
+  menuTarget.hall = laneEl.dataset.hall
+  menuTarget.provider = relic.dataset.provider || ''
+  menuTarget.id = relic.dataset.model
   const member = menuMember()
   if (!member) return
   $('chipMenuParkLabel').textContent = member.disabled ? 'Resume this member' : 'Park this member'
   const menu = $('chipMenu')
   menu.hidden = false
-  const box = menu.getBoundingClientRect()
-  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - box.width - 8))}px`
-  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - box.height - 8))}px`
+  const niche = menu.getBoundingClientRect()
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - niche.width - 8))}px`
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - niche.height - 8))}px`
 }
 
 function closeChipMenu() {
   $('chipMenu').hidden = true
-  menuTarget.lane = null
+  menuTarget.hall = null
 }
 
 document.addEventListener('contextmenu', (event) => {
-  const chip = event.target.closest('.track .chip')
-  if (!chip) return
+  const relic = event.target.closest('.procession .relic')
+  if (!relic) return
   event.preventDefault()
-  openChipMenu(chip, event.clientX, event.clientY)
+  openChipMenu(relic, event.clientX, event.clientY)
 })
 
 $('chipMenu').addEventListener('click', (event) => {
@@ -1475,14 +1475,14 @@ $('chipMenu').addEventListener('click', (event) => {
   if (!item) return
   const member = menuMember()
   if (!member) return closeChipMenu()
-  const lane = state.lanes.find((l) => l.slug === menuTarget.lane)
+  const hall = state.lanes.find((l) => l.slug === menuTarget.hall)
 
   if (item.dataset.menu === 'settings') {
-    const chip = document.querySelector(
-      `.lane[data-lane="${menuTarget.lane}"] .chip[data-model="${CSS.escape(menuTarget.id)}"] .chip-gear`
+    const relic = document.querySelector(
+      `.hall[data-hall="${menuTarget.hall}"] .relic[data-model="${CSS.escape(menuTarget.id)}"] .relic-gear`
     )
     closeChipMenu()
-    if (chip) openMemberPop(chip)
+    if (relic) openMemberPop(relic)
     return
   }
 
@@ -1492,15 +1492,15 @@ $('chipMenu').addEventListener('click', (event) => {
     renderLanes()
     saveLanes()
     toast(member.disabled
-      ? `${member.id} parked — the lane will skip it`
+      ? `${member.id} parked — the hall will skip it`
       : `${member.id} resumed`)
     return
   }
 
   if (item.dataset.menu === 'remove') {
     closeChipMenu()
-    mutateLanes(`${member.id} removed from ${lane.name}`, () => {
-      lane.members = lane.members.filter((r) => r !== member)
+    mutateLanes(`${member.id} removed from ${hall.name}`, () => {
+      hall.members = hall.members.filter((r) => r !== member)
     })
   }
 })
@@ -1563,7 +1563,7 @@ function toast(message, detail = '', action = null) {
 /** Snapshot the lanes, run the change, and offer to undo it. The three
  *  destructive edits all funnel here so they behave identically. */
 function mutateLanes(label, mutate) {
-  const before = state.lanes.map((lane) => ({ ...lane, members: lane.members.map((m) => ({ ...m, params: { ...m.params } })) }))
+  const before = state.lanes.map((hall) => ({ ...hall, members: hall.members.map((m) => ({ ...m, params: { ...m.params } })) }))
   mutate()
   render()
   saveLanes()
@@ -1587,93 +1587,93 @@ document.addEventListener('pointerdown', (event) => {
 
   // A press anywhere outside the open popover closes it. Without a rerender:
   // if this press is also the start of a drag, rebuilding the DOM here would
-  // orphan the chip the drag is about to grab.
+  // orphan the relic the drag is about to grab.
   if (!$('memberPop').hidden && !event.target.closest('#memberPop')) {
     closeMemberPop({ rerender: false })
   }
 
   // The gear opens settings; it must not begin a drag. The click handler
-  // below does the opening — this guard only keeps the chip from grabbing.
-  if (event.target.closest('.chip-gear')) return
+  // below does the opening — this guard only keeps the relic from grabbing.
+  if (event.target.closest('.relic-gear')) return
 
-  const remove = event.target.closest('.chip-remove')
+  const remove = event.target.closest('.relic-remove')
   if (remove) {
-    const chip = remove.closest('.chip')
-    const lane = state.lanes.find((l) => l.slug === chip.closest('.lane').dataset.lane)
-    mutateLanes(`${chip.dataset.model} removed from ${lane.name}`, () => {
-      lane.members = lane.members.filter(
-        (r) => !(r.id === chip.dataset.model && (r.provider || '') === chip.dataset.provider)
+    const relic = remove.closest('.relic')
+    const hall = state.lanes.find((l) => l.slug === relic.closest('.hall').dataset.hall)
+    mutateLanes(`${relic.dataset.model} removed from ${hall.name}`, () => {
+      hall.members = hall.members.filter(
+        (r) => !(r.id === relic.dataset.model && (r.provider || '') === relic.dataset.provider)
       )
     })
     return
   }
 
-  const chip = event.target.closest('.chip')
-  if (chip) {
+  const relic = event.target.closest('.relic')
+  if (relic) {
     event.preventDefault()
-    beginDrag(event, chip)
+    beginDrag(event, relic)
   }
 })
 
 document.addEventListener('click', async (event) => {
-  const gear = event.target.closest('.chip-gear')
+  const gear = event.target.closest('.relic-gear')
   if (gear) {
     openMemberPop(gear)
     return
   }
 
-  const remove = event.target.closest('.lane-remove')
+  const remove = event.target.closest('.hall-remove')
   if (remove) {
-    const lane = state.lanes.find((l) => l.slug === remove.closest('.lane').dataset.lane)
-    mutateLanes(`${lane.name} deleted`, () => {
-      state.lanes = state.lanes.filter((l) => l !== lane)
+    const hall = state.lanes.find((l) => l.slug === remove.closest('.hall').dataset.hall)
+    mutateLanes(`${hall.name} deleted`, () => {
+      state.lanes = state.lanes.filter((l) => l !== hall)
     })
     return
   }
 
   // The criteria text lives in the footer's activity line now. A click on it
   // opens a FRESH SEARCH with these criteria — deliberately not a rebuild of
-  // the lane, for the reasons above. The rest of the line opens the trail.
-  const activityLine = event.target.closest('.lane-foot .lane-activity')
+  // the hall, for the reasons above. The rest of the line opens the trail.
+  const activityLine = event.target.closest('.hall-foot .lane-activity')
   if (activityLine && event.target.closest('.foot-criteria')) {
-    const lane = state.lanes.find((l) => l.slug === activityLine.closest('.lane').dataset.lane)
-    if (lane?.criteria?.length) {
-      state.browse.sorts = lane.criteria.map(({ field, desc }) => ({ field, desc }))
+    const hall = state.lanes.find((l) => l.slug === activityLine.closest('.hall').dataset.hall)
+    if (hall?.criteria?.length) {
+      state.browse.sorts = hall.criteria.map(({ field, desc }) => ({ field, desc }))
       openBrowse()
-      toast(`Searching: ${lane.criteria.map(criterionWords).join(' + ')}`)
+      toast(`Searching: ${hall.criteria.map(criterionWords).join(' + ')}`)
     }
     return
   }
 
   // The two header icon-toggles share one class; `data-toggle` says which.
-  const toggle = event.target.closest('.lane-icon-toggle')
+  const toggle = event.target.closest('.hall-toggle')
   if (toggle) {
-    const lane = state.lanes.find((l) => l.slug === toggle.closest('.lane').dataset.lane)
+    const hall = state.lanes.find((l) => l.slug === toggle.closest('.hall').dataset.hall)
     if (toggle.dataset.toggle === 'unstick') {
-      lane.unstick = !lane.unstick
+      hall.unstick = !hall.unstick
       render()
       saveLanes()
       toast(
-        lane.unstick
-          ? `${lane.name}: stuck agents will be unstuck (collapsed + noted, announced in headers)`
-          : `${lane.name}: conversations pass through untouched`
+        hall.unstick
+          ? `${hall.name}: stuck agents will be unstuck (collapsed + noted, announced in headers)`
+          : `${hall.name}: conversations pass through untouched`
       )
     } else {
-      lane.suppress_reasoning = !lane.suppress_reasoning
+      hall.suppress_reasoning = !hall.suppress_reasoning
       render()
       saveLanes()
       toast(
-        lane.suppress_reasoning
-          ? `${lane.name}: members will be asked to answer without thinking`
-          : `${lane.name}: members may think before answering`
+        hall.suppress_reasoning
+          ? `${hall.name}: members will be asked to answer without thinking`
+          : `${hall.name}: members may think before answering`
       )
     }
     return
   }
 
-  const url = event.target.closest('.lane-url')
+  const url = event.target.closest('.hall-url')
   if (url) {
-    const slug = url.closest('.lane').dataset.lane
+    const slug = url.closest('.hall').dataset.hall
     await api.copy(`${laneEndpoint(slug)}/chat/completions`)
     toast('Endpoint URL copied')
     return
@@ -1681,58 +1681,58 @@ document.addEventListener('click', async (event) => {
 
   const test = event.target.closest('.lane-test')
   if (test) {
-    const lane = state.lanes.find((l) => l.slug === test.closest('.lane').dataset.lane)
-    if (!lane) return
+    const hall = state.lanes.find((l) => l.slug === test.closest('.hall').dataset.hall)
+    if (!hall) return
     try {
-      const result = await api.laneTest(lane.slug)
-      // The point of a fallback lane is which model answered and what was
+      const result = await api.laneTest(hall.slug)
+      // The point of a fallback hall is which model answered and what was
       // passed over — `lane_test` already returns both; showing only the
       // message wastes them. The trail is the whole story, so it rides along
       // on hover where it won't flood the toast.
       if (result.ok && result.served_by) {
-        toast(`${lane.name}: answered by ${result.served_by}`, result.trail || '')
+        toast(`${hall.name}: answered by ${result.served_by}`, result.trail || '')
       } else {
-        toast(`${lane.name}: ${result.message}`, result.trail || '')
+        toast(`${hall.name}: ${result.message}`, result.trail || '')
       }
     } catch (error) {
-      toast(`${lane.name}: ${error.message}`)
+      toast(`${hall.name}: ${error.message}`)
     }
     return
   }
 
   const setup = event.target.closest('.lane-copy-setup')
   if (setup) {
-    const slug = setup.closest('.lane').dataset.lane
+    const slug = setup.closest('.hall').dataset.hall
     await api.copy(laneCurlExample(slug))
     toast('Curl setup copied')
     return
   }
 
-  // The activity line opens the lane's own trail: its recent attempts, newest
+  // The activity line opens the hall's own trail: its recent attempts, newest
   // first, each with the evidence. This is the same records the notification
-  // center shows, scoped to one lane — the difference between "something
-  // failed somewhere" and "this lane's story".
+  // center shows, scoped to one hall — the difference between "something
+  // failed somewhere" and "this hall's story".
   const activity = event.target.closest('.lane-activity')
   if (activity) {
-    openNotifications(activity.closest('.lane').dataset.lane)
+    openNotifications(activity.closest('.hall').dataset.hall)
     return
   }
 
   const vscodeBtn = event.target.closest('.lane-vscode')
   if (vscodeBtn) {
-    const laneEl = vscodeBtn.closest('.lane')
-    const slug = laneEl.dataset.lane
-    const lane = state.lanes.find(l => l.slug === slug)
-    console.log('[vscode] button clicked', { slug, lane: lane?.name })
-    if (!lane) {
-      console.error('[vscode] lane not found', slug)
+    const laneEl = vscodeBtn.closest('.hall')
+    const slug = laneEl.dataset.hall
+    const hall = state.lanes.find(l => l.slug === slug)
+    console.log('[vscode] button clicked', { slug, hall: hall?.name })
+    if (!hall) {
+      console.error('[vscode] hall not found', slug)
       return
     }
     try {
-      console.log('[vscode] calling api.vscodeIntegrateLane', { slug, name: lane.name })
-      await api.vscodeIntegrateLane(slug, lane.name)
+      console.log('[vscode] calling api.vscodeIntegrateLane', { slug, name: hall.name })
+      await api.vscodeIntegrateLane(slug, hall.name)
       console.log('[vscode] success')
-      toast(`Added "${lane.name}" to the VS Code model picker`, 'Reload the editor window (Ctrl+R) to see it')
+      toast(`Added "${hall.name}" to the VS Code model picker`, 'Reload the editor window (Ctrl+R) to see it')
     } catch (error) {
       console.error('[vscode] failed', error)
       toast(`Failed: ${error.message}`)
@@ -1750,33 +1750,37 @@ document.addEventListener('click', async (event) => {
   //
   // Any delegated handler on `document` needs a container in its selector for
   // exactly this reason.
-  const filter = event.target.closest('#filters .filter')
+  const filter = event.target.closest('#filters .seal')
   if (filter) {
     const key = filter.dataset.filter
     state.filters[key] = !state.filters[key]
-    filter.classList.toggle('is-active', state.filters[key])
+    filter.classList.toggle('is-sealed', state.filters[key])
+    renderSidebar()
+  }
+
+  // The order strip: one engraved choice, lit.
+  const sortBtn = event.target.closest('#sortStrip button')
+  if (sortBtn) {
+    state.sort = sortBtn.dataset.sort
+    document.querySelectorAll('#sortStrip button').forEach((b) =>
+      b.classList.toggle('is-chosen', b === sortBtn))
     renderSidebar()
   }
 })
 
-$('sort').addEventListener('change', (e) => {
-  state.sort = e.target.value
-  renderSidebar()
-})
-
 document.addEventListener('focusout', (event) => {
-  const name = event.target.closest?.('.lane-name')
+  const name = event.target.closest?.('.hall-name')
   if (!name) return
-  const lane = state.lanes.find((l) => l.slug === name.closest('.lane').dataset.lane)
+  const hall = state.lanes.find((l) => l.slug === name.closest('.hall').dataset.hall)
   const next = name.textContent.trim()
   // The slug is fixed at creation: renaming must never move a live endpoint.
-  lane.name = next || lane.name
-  name.textContent = lane.name
+  hall.name = next || hall.name
+  name.textContent = hall.name
   saveLanes()
 })
 
 document.addEventListener('keydown', (event) => {
-  const name = event.target.closest?.('.lane-name')
+  const name = event.target.closest?.('.hall-name')
   if (name && event.key === 'Enter') {
     event.preventDefault()
     name.blur()
@@ -1784,9 +1788,9 @@ document.addEventListener('keydown', (event) => {
 })
 
 // Shortcuts. The app is a power tool used alongside editors, so it should be
-// drivable without the mouse: the three panels, a new lane, and a help overlay
+// drivable without the mouse: the three panels, a new hall, and a help overlay
 // on `?`. Guarded against typing — a shortcut must never fire mid-word in the
-// search box or an input.
+// search niche or an input.
 document.addEventListener('keydown', (event) => {
   const typing = event.target.closest('input, textarea, select, [contenteditable]')
   if (typing) return
@@ -1803,7 +1807,7 @@ document.addEventListener('keydown', (event) => {
     openSettings()
   } else if (event.key === '?' || (event.shiftKey && event.key === '/')) {
     event.preventDefault()
-    toast('Shortcuts', 'Ctrl+N new lane · Ctrl+B browse · Ctrl+, settings · Esc close · right-click a member for its menu', null)
+    toast('Shortcuts', 'Ctrl+N new hall · Ctrl+B browse · Ctrl+, settings · Esc close · right-click a member for its menu', null)
   }
 })
 
@@ -1817,10 +1821,10 @@ $('newLane').addEventListener('click', () => {
   let slug = base
   let n = 2
   while (state.lanes.some((l) => l.slug === slug)) slug = `${base}-${n++}`
-  state.lanes.unshift({ slug, name: 'New lane', members: [] })
+  state.lanes.unshift({ slug, name: 'New hall', members: [] })
   render()
   saveLanes()
-  const el = document.querySelector(`.lane[data-lane="${slug}"] .lane-name`)
+  const el = document.querySelector(`.hall[data-hall="${slug}"] .hall-name`)
   el?.focus()
   document.getSelection()?.selectAllChildren(el)
 })
@@ -1828,8 +1832,11 @@ $('newLane').addEventListener('click', () => {
 $('wcMin').addEventListener('click', () => api.minimize())
 $('wcMax').addEventListener('click', () => api.toggleMaximize())
 $('wcClose').addEventListener('click', () => api.close())
-$('titlebar').addEventListener('mousedown', (event) => {
-  if (event.button !== 0 || event.target.closest('.window-controls, button, input, select')) return
+// The frame is the building: drag the window by any bare stretch of stage —
+// never by a control, an input, or a relic in the hand.
+$('stage').addEventListener('mousedown', (event) => {
+  if (event.button !== 0) return
+  if (event.target.closest('button, input, select, .relic, .hall-name, a, [contenteditable]')) return
   api.startDragging()
 })
 
@@ -2029,7 +2036,7 @@ async function loadCatalog() {
     // A failed provider no longer empties the engine's cache (Rust keeps the
     // last good one), but the user should hear about it — a red count in the
     // provider list is too easy to miss, and the failure is exactly when a
-    // lane might start behaving unexpectedly. The signature guard keeps a
+    // hall might start behaving unexpectedly. The signature guard keeps a
     // re-poll that fails identically from re-firing the same warning.
     const errorSignature = state.catalogErrors.map((e) => e.provider_id).sort().join(',')
     if (state.catalogErrors.length && errorSignature !== loadCatalog._notifiedFor) {
@@ -2239,8 +2246,8 @@ $('pDelete').addEventListener('click', async () => {
 /**
  * What a locked column means in words, per direction.
  *
- * The header says "out/M ↑" because it labels a column of numbers. A lane
- * header has to say "cheapest", because it is describing what the lane is for
+ * The header says "out/M ↑" because it labels a column of numbers. A hall
+ * header has to say "cheapest", because it is describing what the hall is for
  * and will be read months later by someone who was not there.
  */
 const CRITERION_WORDS = {
@@ -2524,7 +2531,7 @@ function criterionValue(model, field) {
 }
 
 /**
- * Percentile rank per criterion: 1 is best, 0 is worst, computed only across
+ * Percentile ordinal per criterion: 1 is best, 0 is worst, computed only across
  * the models that actually carry a figure.
  */
 function criterionRanks(models, criteria) {
@@ -2547,7 +2554,7 @@ function criterionRanks(models, criteria) {
  * Average the percentiles into one score.
  *
  * A model with no figure for a locked criterion scores `null`, not zero. Zero
- * would rank it worst at something we cannot measure at all — a different and
+ * would ordinal it worst at something we cannot measure at all — a different and
  * much more misleading claim. Those sort below everything that could be judged.
  */
 function scoreModels(models, criteria) {
@@ -2630,12 +2637,12 @@ function visibleColumns(models) {
  * construction rather than by two sets of numbers that drift apart. */
 function renderBrowseHeader(cols) {
   const sorts = state.browse.sorts
-  const rank = (field) => sorts.findIndex((s) => s.field === field)
+  const ordinal = (field) => sorts.findIndex((s) => s.field === field)
 
   const LOCK = '<svg viewBox="0 0 12 12"><rect x="2.5" y="5.5" width="7" height="5" rx="1.2"/><path d="M4.2 5.5V4a1.8 1.8 0 0 1 3.6 0v1.5"/></svg>'
 
   const label = (field, text) => {
-    const at = rank(field)
+    const at = ordinal(field)
     if (at < 0) return text
     const arrow = sorts[at].desc ? '↓' : '↑'
     // No priority number any more: every locked column weighs the same, so
@@ -2649,11 +2656,11 @@ function renderBrowseHeader(cols) {
     ${criteriaCount > 1 ? '<span class="match head-match"><span class="match-label">match</span></span>' : ''}
     <span class="row-body">
       <span class="head-text-sorts">
-        <button class="col-sort col-name${rank('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
+        <button class="col-sort col-name${ordinal('name') >= 0 ? ' is-sorted' : ''}" data-sort="name">
           <span class="metric-label">${label('name', 'model')}</span>
         </button>
         ${multiProvider() ? `
-        <button class="col-sort col-name${rank('provider') >= 0 ? ' is-sorted' : ''}" data-sort="provider">
+        <button class="col-sort col-name${ordinal('provider') >= 0 ? ' is-sorted' : ''}" data-sort="provider">
           <span class="metric-label">${label('provider', 'provider')}</span>
         </button>` : ''}
       </span>
@@ -2665,7 +2672,7 @@ function renderBrowseHeader(cols) {
     </span>
     <span class="row-metrics">
       ${cols.map(([key, text]) => `
-        <button class="metric col-sort${rank(key) >= 0 ? ' is-sorted' : ''}" data-sort="${key}">
+        <button class="metric col-sort${ordinal(key) >= 0 ? ' is-sorted' : ''}" data-sort="${key}">
           <span class="metric-label">${label(key, text)}</span>
         </button>`).join('')}
     </span>
@@ -2823,7 +2830,7 @@ document.addEventListener('keydown', (event) => {
 
 // ------------------------------------------------------------------ persistence
 
-/** Written on every change. Only the three fields that define a lane go to
+/** Written on every change. Only the three fields that define a hall go to
  *  disk — anything derived from the models is looked up fresh on load, so a
  *  stale price or a renamed model can never be baked into the file. */
 async function saveLanes() {
@@ -2856,7 +2863,7 @@ async function loadLanes() {
   }
   // The backend already normalises old files, but normalise here too so this
   // code never has to wonder which shape it is holding.
-  state.lanes.forEach((lane) => (lane.members = (lane.members || []).map(asRef)))
+  state.lanes.forEach((hall) => (hall.members = (hall.members || []).map(asRef)))
   renderLanes()
 }
 
@@ -2880,15 +2887,15 @@ async function refresh() {
   state.gateway = data.gateway || ''
   state.updatedAt = Date.now()
 
-  // The live lane feed. Polled incrementally (only what is newer than the
-  // high-water mark), and a change here forces a repaint below — a lane that
+  // The live hall feed. Polled incrementally (only what is newer than the
+  // high-water mark), and a change here forces a repaint below — a hall that
   // starts or finishes serving must redraw even when nothing else moved.
   let activityChanged = false
   try {
     const fresh = (await api.activityRead(state.activitySeenAt)) || []
     if (fresh.length) {
       state.activitySeenAt = Math.max(...fresh.map((e) => e.at || 0))
-      // Keep the feed small: the canvas reads the newest handful per lane.
+      // Keep the feed small: the canvas reads the newest handful per hall.
       state.activity = state.activity.concat(fresh).slice(-400)
       activityChanged = true
     }
@@ -2908,8 +2915,28 @@ async function refresh() {
   // that swaps the tree mid-click silently kills it. A button that fails
   // one time in fifty and never under scrutiny is this bug, and it was
   // caught by an automated click losing the race that a finger usually wins.
-  const signature = JSON.stringify([data, state.incidents])
-  if (activityChanged || signature !== refresh.last) {
+  //
+  // The signature must not carry volatile fields. `updatedAt` is stamped
+  // fresh on every poll, and `traffic` ticks with every request — including
+  // the poll's own — so signing the raw `data` renders on every tick even
+  // when the engine has nothing to say. Only the parts that change WHAT is
+  // drawn belong in the comparison.
+  const signature = JSON.stringify([
+    data.connected,
+    data.error || null,
+    data.gateway || '',
+    (data.models || []).map((m) => [m.id, m.healthy, m.available, m.tps]),
+    state.incidents.length,
+  ])
+
+  // A render that destroys the element being edited is a bug even when the
+  // data changed. If the user is mid-rename, hold the repaint until they
+  // finish — the focusout handler saves and re-renders on its own beat.
+  const editing = document.activeElement &&
+    document.activeElement.closest &&
+    document.activeElement.closest('.hall-name[contenteditable]')
+
+  if ((activityChanged || signature !== refresh.last) && !editing) {
     refresh.last = signature
     render()
     // Keep an open notification center current — evidence a few seconds old
@@ -2947,13 +2974,155 @@ async function bootstrap() {
   setInterval(refresh, 4000)
 }
 
+// ---------------------------------------------------------------- the field
+//
+// Esoteric Generative Luxury's contract: the interface's motion is the
+// software's own state, rendered. Three sources feed the field:
+//
+//   1. THE PIET FEED. The program below is painted in the six hues of the
+//      field's palette (see egl.js). It is executed here, once, and its
+//      terminal stack top sets the reaction–diffusion feed rate — the
+//      building's metabolism is the output of a program painted in its own
+//      colours.
+//   2. TRAFFIC. Live lane activity disturbs the chemistry at the hall's own
+//      position in the field; the ripple is the request.
+//   3. THE HAND. The cursor leans the stage and glows the field.
+
+const thePiet = (() => {
+  const HUES = 'RYGCBM'
+  // A 6×3 painting. Each letter is a codel of that hue; a prime is the dark
+  // row. Executed by the interpreter beneath it.
+  const PAINTING = [
+    ['R', 'Y', 'G', 'C', 'B', 'M'],
+    ['R′', 'R′', 'G′', 'C′', 'B′', 'M′'],
+    ['R', 'Y', 'G', 'G′', 'B', 'M'],
+  ].map((row) => row.map((c) => ({ hue: HUES.indexOf(c[0]), light: c.endsWith('′') ? 1 : 0 })))
+
+  function run(grid, maxSteps = 120) {
+    const H = grid.length, W = grid[0].length
+    let x = 0, y = 0, dp = 0, cc = 0
+    const stack = []
+    const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]
+    for (let step = 0; step < maxSteps; step++) {
+      const here = grid[y][x]
+      const block = []
+      const seen = new Set([`${x},${y}`])
+      const q = [[x, y]]
+      while (q.length) {
+        const [cx, cy] = q.pop()
+        block.push([cx, cy])
+        for (const [dx, dy] of DIRS) {
+          const nx = cx + dx, ny = cy + dy, k = `${nx},${ny}`
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen.has(k)) continue
+          if (grid[ny][nx].hue === here.hue && grid[ny][nx].light === here.light) {
+            seen.add(k); q.push([nx, ny])
+          }
+        }
+      }
+      let edge = block
+      if (dp === 0) { const m = Math.max(...block.map((c) => c[0])); edge = block.filter((c) => c[0] === m) }
+      if (dp === 2) { const m = Math.min(...block.map((c) => c[0])); edge = block.filter((c) => c[0] === m) }
+      if (dp === 1) { const m = Math.max(...block.map((c) => c[1])); edge = block.filter((c) => c[1] === m) }
+      if (dp === 3) { const m = Math.min(...block.map((c) => c[1])); edge = block.filter((c) => c[1] === m) }
+      edge.sort(([ax, ay], [bx, by]) => {
+        const ka = dp === 0 || dp === 2 ? ay : ax
+        const kb = dp === 0 || dp === 2 ? by : bx
+        const forward = dp === 0 || dp === 1
+        const sign = forward ? (cc ? 1 : -1) : (cc ? -1 : 1)
+        return (ka - kb) * sign
+      })
+      const [cx, cy] = edge[0]
+      const nx = cx + DIRS[dp][0], ny = cy + DIRS[dp][1]
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) {
+        if (cc === 0) cc = 1; else { cc = 0; dp = (dp + 1) % 4 }
+        continue
+      }
+      const there = grid[ny][nx]
+      const dh = (there.hue - here.hue + 6) % 6
+      const dl = (there.light - here.light + 3) % 3
+      const cmds = [
+        [null, 'push', 'pop'],
+        ['add', 'sub', 'mul'],
+        ['div', 'mod', 'not'],
+        ['gt', 'ptr', 'sw'],
+        ['dup', 'roll', 'inn'],
+        ['inc', 'outc', 'outn'],
+      ]
+      const cmd = cmds[dh][dl]
+      const pop1 = () => (stack.length ? stack.pop() : 0)
+      switch (cmd) {
+        case 'push': stack.push(block.length); break
+        case 'pop': pop1(); break
+        case 'add': stack.push(pop1() + pop1()); break
+        case 'sub': { const a = pop1(); stack.push(pop1() - a); break }
+        case 'mul': stack.push(pop1() * pop1()); break
+        case 'div': { const a = pop1() || 1; stack.push(Math.trunc(pop1() / a)); break }
+        case 'mod': { const a = pop1() || 1; const b = pop1(); stack.push(((b % a) + a) % a); break }
+        case 'not': stack.push(pop1() === 0 ? 1 : 0); break
+        case 'gt': { const a = pop1(); stack.push(pop1() > a ? 1 : 0); break }
+        case 'ptr': dp = (((dp + pop1()) % 4) + 4) % 4; break
+        case 'sw': cc = (cc + Math.abs(pop1())) % 2; break
+        case 'dup': stack.push(stack.length ? stack[stack.length - 1] : 0); break
+        default: break
+      }
+      x = nx; y = ny
+    }
+    return stack
+  }
+  return run(PAINTING)
+})()
+
+const field = (() => {
+  if (!window.EGL || !EGL.ok) return { disturb: () => {}, tick: () => {} }
+  EGL.mount(document.body)
+  // The executed program's terminal stack top, wrapped into 0..1, is the
+  // feed. A different painting would metabolise the building differently.
+  EGL.setFeed(((thePiet[thePiet.length - 1] || 0) % 7) / 7)
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)')
+
+  // The hand leans the stage: a fraction of a degree, heavy, behind a
+  // long-tail ease. Reduced-motion keeps the building still.
+  const stage = $('stage')
+  let tx = 0.5, ty = 0.5
+  addEventListener('pointermove', (e) => {
+    if (reduced.matches) return
+    tx = e.clientX / innerWidth
+    ty = e.clientY / innerHeight
+    EGL.setCursor(tx, ty)
+    stage.style.setProperty('--tilt-y', `${((tx - 0.5) * 1.6).toFixed(3)}deg`)
+    stage.style.setProperty('--tilt-x', `${((0.5 - ty) * 1.1).toFixed(3)}deg`)
+  }, { passive: true })
+
+  return {
+    disturb: (x, y, amt) => EGL.disturb(x, y, amt),
+  }
+})()
+
+// Traffic disturbs the chemistry. The freshest "trying" in the activity feed
+// seeds the field at its hall's position — the ripple *is* the request.
+let lastRippleAt = 0
+function rippleFromActivity() {
+  const trying = state.activity.find((e) => e.phase === 'trying')
+  if (!trying) return
+  const now = Date.now()
+  if (now - lastRippleAt < 900) return
+  lastRippleAt = now
+  const hallEl = document.querySelector(`.hall[data-hall="${trying.hall}"]`)
+  if (!hallEl) return
+  const r = hallEl.getBoundingClientRect()
+  field.disturb((r.left + r.width / 2) / innerWidth, (r.top + r.height / 2) / innerHeight, 0.85)
+  EGL && EGL.ok && EGL.setHashRate(Math.min(1, state.activity.length / 12))
+}
+
 bootstrap()
 // The "updated Ns ago" clock ticks on its own; a repaint every second just to
 // age a label would throw away scroll positions for nothing.
 setInterval(renderUpdated, 1000)
-// Live lane states decay: a "trying…" older than its freshness window, or an
+// Live hall states decay: a "trying…" older than its freshness window, or an
 // "answered" past its linger, disappears on this beat even when no poll has
 // anything new to say. Cheap enough to ride the same one-second clock.
 setInterval(() => {
   if (state.activity.some((e) => e.at > Date.now() / 1000 - 50)) renderLanes()
 }, 1000)
+// The field's chemistry follows the work, on the same clock.
+setInterval(rippleFromActivity, 700)
