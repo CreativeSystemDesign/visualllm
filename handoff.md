@@ -14,7 +14,7 @@ prior conversational context; this file contains the current state.
 
 VisualLLM is a Linux-first Tauri desktop app that lets users:
 
-1. Add AI providers.
+1. Add providers.
 2. Browse their model catalogs.
 3. Select models into a pool.
 4. Drag models into ordered fallback lanes.

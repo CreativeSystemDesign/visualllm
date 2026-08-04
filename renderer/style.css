@@ -439,8 +439,11 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 .lane.is-target { box-shadow: var(--e3); }
 
 .lane-head {
-  display: flex; align-items: center; gap: 12px;
-  padding: 11px 14px 13px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px 11px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  min-height: 32px;
 }
 
 .lane-name {
@@ -448,44 +451,87 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   font-weight: 650;
   letter-spacing: -0.15px;
   color: var(--text);
-  padding: 5px 12px;
+  padding: 5px 10px;
   border-radius: var(--r-sm);
-  min-width: 60px;
-  max-width: 260px;
+  min-width: 50px;
+  max-width: 140px;
   user-select: text;
   transition: box-shadow 0.15s var(--ease);
+  flex-shrink: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .lane-name:hover { box-shadow: var(--e1); }
 .lane-name:focus { box-shadow: var(--in1); background: var(--pressed-bg); color: var(--accent-deep); }
 
 .lane-url {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 13px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
   border-radius: 100px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: 10.5px;
+  font-size: 9.5px;
   color: var(--text-dim);
   transition: color 0.14s var(--ease);
+  flex-shrink: 0;
+  white-space: nowrap;
+  cursor: pointer;
 }
 .lane-url:hover { color: var(--accent); }
 .lane-url:active { box-shadow: var(--in2); }
-.lane-url svg { width: 11px; height: 11px; }
-.lane-url .host { color: var(--text-faint); }
+.lane-url svg { width: 10px; height: 10px; }
+.lane-url .host { color: var(--text-faint); font-size: 8px; }
 
-.lane-kind {
-  margin-left: auto;
+.lane-action {
   flex-shrink: 0;
-  padding: 5px 13px;
+  padding: 5px 12px;
   border-radius: 100px;
   background: var(--raised);
   box-shadow: var(--e1);
   font-size: 9.5px;
+  font-weight: 600;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+  white-space: nowrap;
+}
+.lane-action:hover {
+  color: var(--text);
+  box-shadow: var(--e2);
+}
+.lane-action:active {
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+}
+
+.lane-activity {
+  flex-shrink: 0;
+  font-size: 8.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lane-activity.quiet {
+  opacity: 0.5;
+}
+
+.lane-kind {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background: var(--raised);
+  box-shadow: var(--e1);
+  font-size: 8px;
   font-weight: 700;
-  letter-spacing: 0.7px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--text-faint);
+  white-space: nowrap;
 }
 .lane-kind.computed { color: var(--accent); }
 
@@ -583,13 +629,12 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 /* Thinking is a lane property. Extruded = members may reason; pressed-in =
    the lane asks them not to. Same grammar as every other control here. */
 .lane-think {
-  margin-left: auto;
   flex-shrink: 0;
-  padding: 5px 13px;
+  padding: 4px 10px;
   border-radius: 100px;
   background: var(--raised);
   box-shadow: var(--e1);
-  font-size: 9.5px;
+  font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.5px;
   text-transform: uppercase;
@@ -604,8 +649,9 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
   box-shadow: var(--in1);
   color: var(--accent);
 }
-/* The first pill takes over the push-right job so the group sits together. */
-.lane-think ~ .lane-kind, .lane-think + .lane-think { margin-left: 0; }
+/* Remove margin-left from thinking buttons so they sit right after lane-kind */
+.lane-think { margin-left: 0; }
+.lane-think ~ .lane-kind { margin-left: auto; }
 
 /* --------------------------------------------------------------------- track */
 
@@ -1311,20 +1357,20 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
 .lane-criteria {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-shrink: 1;
-  min-width: 0;
+  gap: 5px;
+  flex-shrink: 0;
+  max-width: 120px;
   overflow: hidden;
   cursor: pointer;
 }
 
 .crit {
   flex-shrink: 0;
-  padding: 4px 11px;
+  padding: 3px 8px;
   border-radius: 100px;
   background: var(--pressed-bg);
   box-shadow: var(--in1);
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 650;
   letter-spacing: 0.2px;
   color: var(--text-dim);

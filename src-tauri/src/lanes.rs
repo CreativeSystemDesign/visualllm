@@ -194,7 +194,13 @@ pub fn store_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn load(dir: &PathBuf) -> Vec<Lane> {
-    read_state(store_path(dir)).unwrap_or_default()
+    match read_state(store_path(dir)) {
+        Some(v) => v,
+        None => {
+            eprintln!("lanes: could not read lanes.json at {:?}; returning empty list", store_path(dir));
+            Vec::new()
+        }
+    }
 }
 
 /// The whole set is rewritten on every change. At the scale a person can drag
@@ -220,7 +226,13 @@ pub fn pool_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn pool_load(dir: &PathBuf) -> Vec<Member> {
-    read_state(pool_path(dir)).unwrap_or_default()
+    match read_state(pool_path(dir)) {
+        Some(v) => v,
+        None => {
+            eprintln!("lanes: could not read pool.json at {:?}; returning empty list", pool_path(dir));
+            Vec::new()
+        }
+    }
 }
 
 pub fn pool_save(dir: &PathBuf, members: &[Member]) -> Result<(), String> {

@@ -1,6 +1,6 @@
 # VisualLLM Roadmap
 
-VisualLLM is a visual fallback router for AI models.
+VisualLLM is a visual fallback router for models.
 
 It lets people add providers, browse the models they offer, arrange models into
 ordered lanes, and expose each lane as a local OpenAI-compatible endpoint. The

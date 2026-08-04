@@ -80,7 +80,13 @@ pub fn store_path(dir: &PathBuf) -> PathBuf {
 }
 
 pub fn load(dir: &PathBuf) -> Vec<Incident> {
-    read_state(store_path(dir)).unwrap_or_default()
+    match read_state(store_path(dir)) {
+        Some(v) => v,
+        None => {
+            eprintln!("incidents: could not read incidents.json at {:?}; returning empty list", store_path(dir));
+            Vec::new()
+        }
+    }
 }
 
 /// Append one incident, trimming to the newest `KEEP`. Best-effort by

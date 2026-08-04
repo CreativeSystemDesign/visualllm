@@ -1,8 +1,8 @@
 # VisualLLM
 
-> Build reliable OpenAI-compatible endpoints by arranging AI models visually.
+> Build reliable OpenAI-compatible endpoints by arranging models visually.
 
-VisualLLM is a visual fallback router for AI models. Add the providers you use,
+VisualLLM is a visual fallback router for model endpoints. Add the providers you use,
 browse their models, drag the ones worth keeping into a lane, and connect tools
 such as VS Code to the resulting local endpoint.
 
@@ -29,10 +29,41 @@ release is planned; see [`ROADMAP.md`](ROADMAP.md).
 
 For development from a cloned repository:
 
+### Recommended: Use the launch script (handles snap/Wayland issues)
+
 ```bash
 cd /home/shane/visualllm
-node tools/smoke.js
 ./tools/launch-system.sh
+```
+
+This starts the app with a clean environment (`env -i`) and `GDK_BACKEND=x11` to avoid a Wayland/Mutter bug where transparent frameless windows lose stacking position on click.
+
+### Alternative: Run directly (must use clean terminal)
+
+```bash
+cd /home/shane/visualllm/src-tauri
+~/.cargo/bin/cargo run
+```
+
+> **⚠️ Important: Run from a clean terminal outside VS Code.**
+> VS Code (when installed as a snap) pollutes the terminal environment with
+> snap library paths (`LD_LIBRARY_PATH`, `GTK_PATH`, etc.) that cause a
+> `GLIBC_PRIVATE` symbol lookup error at runtime. Open a fresh terminal
+> (`Ctrl+Alt+T` on GNOME) and run the command there.
+>
+> If you must run from within VS Code's terminal, unset the contaminated
+> variables first:
+> ```bash
+> unset LD_LIBRARY_PATH GTK_PATH GIO_MODULE_DIR LOCPATH XDG_DATA_DIRS
+> cd /home/shane/visualllm/src-tauri && ~/.cargo/bin/cargo run
+> ```
+
+### Alternative: Tauri dev mode (also needs clean terminal)
+
+```bash
+cd /home/shane/visualllm
+unset LD_LIBRARY_PATH GTK_PATH GIO_MODULE_DIR LOCPATH XDG_DATA_DIRS
+npm run dev
 ```
 
 Then add a provider, browse its catalog, create a lane, and use the lane's

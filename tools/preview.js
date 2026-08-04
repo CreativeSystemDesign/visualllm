@@ -117,6 +117,10 @@ const html = fs
         statsRead: () => ok(data.stats),
         statsRefresh: () => ok(0),
         incidentsRead: () => ok(data.incidents),
+        vscodeIntegrateLane: (slug, name) => {
+          console.log('[preview] vscodeIntegrateLane', { slug, name })
+          return ok()
+        },
         portGet: () => ok(4100),
         portSet: (port) => ok(port),
       }
