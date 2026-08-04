@@ -50,6 +50,20 @@ The interface is an installation: a living, reaction-diffusion field rendered on
 
 ---
 
+## How It Works: A GUI for an LLM Proxy
+
+VisualLLM is a **desktop GUI that configures and runs a local LLM proxy**. Under the hood:
+
+1. **The Rust backend** runs a lightweight HTTP server on `127.0.0.1:4100` — this is the proxy.
+2. **Each lane you create** becomes a distinct OpenAI-compatible endpoint at `/lane/<slug>/v1`.
+3. **The GUI** lets you add providers, browse their catalogs, and drag models into lanes — no YAML, no code.
+4. **At request time**, the proxy walks the lane right-to-left, trying each model until one succeeds (capability check → request → commit gate → forward).
+5. **Every hop is recorded** — you get headers (`x-visualllm-served-by`, `x-visualllm-passed-over`, `x-visualllm-trail`) and a full incident log.
+
+Think of it as: **a visual control plane for a multi-provider LLM proxy**. You configure the routing visually; the proxy executes it faithfully.
+
+---
+
 ### The Problem It Solves
 
 Most AI gateway solutions make routing a configuration problem — editing YAML files, managing complex rules, or writing code. VisualLLM makes it **visible and intuitive**: you see your models, you arrange them in order, and the system does exactly what you expect.
