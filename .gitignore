@@ -22,3 +22,9 @@ tools/preview.local.html
 
 # Generated architecture graph — rebuild locally with graphify when needed
 graphify-out/
+# Kimi project memory
+.kimi-memory/
+
+# Never commit provider keys
+sk-*
+*.key

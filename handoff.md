@@ -1,14 +1,257 @@
-# VisualLLM Handoff
+# VisualLLM — Handoff to Kimi K2.7 Code
 
-## Session context
+**Date:** 2026-08-04  
+**Branch:** `ux/action-plan` (8 commits ahead of `main`)  
+**Workspace:** `/home/shane/visualllm`  
+**Remote:** `https://github.com/CreativeSystemDesign/visualllm.git`
 
-You are continuing work on the **VisualLLM** project at:
+---
 
-`/home/shane/visualllm`
+## What this project is
 
-The user is switching from the legacy gateway to direct OpenRouter access to
-test whether the gateway’s Loopwatch messages are necessary. Do not assume
-prior conversational context; this file contains the current state.
+VisualLLM is a Linux-first Tauri 2.x desktop app for designing LLM fallback lanes by hand. A user adds providers, browses catalogs, selects models into a pool, then drags models into ordered lanes. Each lane becomes a local OpenAI-compatible endpoint.
+
+The model on the **right answers first**; everything to its left is a fallback. In data terms, `members[0]` is always the primary. The display order is the inverse of storage order — this reversal is intentionally isolated to `renderTrack` and `domSlotToIndex` in `renderer/app.js`.
+
+---
+
+## How to build and run
+
+```bash
+# Development (external terminal recommended; see Snap note below)
+cd /home/shane/visualllm/src-tauri && ~/.cargo/bin/cargo run
+
+# Release build
+~/.cargo/bin/cargo build --release
+
+# Tests / checks
+node tools/smoke.js            # renderer smoke test
+cd src-tauri && cargo test     # 49 tests
+cargo clippy
+cargo fmt --check
+```
+
+The recommended launcher for the user's normal session is:
+
+```bash
+tools/launch-system.sh
+```
+
+It runs the compiled binary with a clean environment, detects an existing engine on port `4100`, and avoids duplicate windows.
+
+### Important environment note
+
+The agent's integrated terminal is a **Snap-packaged VS Code Insiders** shell. Running the Tauri binary there fails with:
+
+```
+symbol lookup error: /snap/core20/current/lib/x86_64-linux-gnu/libpthread.so.0:
+undefined symbol: __libc_pthread_init, version GLIBC_PRIVATE
+```
+
+This is **not** an app bug — it is a Snap library-path mismatch. The user's external terminal works fine. Always preview the app the way the user does:
+
+```bash
+cd /home/shane/visualllm/src-tauri && ~/.cargo/bin/cargo run
+```
+
+---
+
+## Architecture at a glance
+
+| Path | Responsibility |
+|---|---|
+| `renderer/index.html` | UI structure |
+| `renderer/style.css` | Neumorphic design system |
+| `renderer/app.js` | All renderer logic: state, rendering, drag-drop, bridge calls |
+| `src-tauri/src/main.rs` | Tauri shell and every command the UI may invoke |
+| `src-tauri/src/server.rs` | Axum engine, fallback routing, `/activity` feed |
+| `src-tauri/src/lanes.rs` | Lane/member/pool persistence |
+| `src-tauri/src/providers.rs` | Providers, key storage, catalog fetching |
+| `src-tauri/src/incidents.rs` | Failure records |
+| `src-tauri/src/loopwatch.rs` | Tool-loop detection |
+| `tools/preview.js` | Builds a browser-openable preview from real app data |
+| `tools/smoke.js` | Headless renderer smoke test |
+
+### Security model
+
+The webview has **no network and no filesystem access**. All state mutates through the `api` object in `renderer/app.js`, which maps to `#[tauri::command]` functions in `main.rs`. Secrets flow one way: `provider_save` accepts a key; no command ever returns one. The UI sees `ProviderView` with a masked hint only.
+
+---
+
+## Design system
+
+The visual language is neumorphic / soft-UI:
+
+```css
+--bg: #eceef1;
+--light: #ffffff;
+--dark: #c4c9d2;
+--accent: #f4645f;
+--accent-deep: #d94f4a;
+```
+
+Shadows:
+
+```css
+--e1: 3px 3px 6px var(--dark), -3px -3px 6px var(--light);
+--e2: 6px 6px 12px var(--dark), -6px -6px 12px var(--light);
+--e3: 9px 9px 18px var(--dark), -9px -9px 18px var(--light);
+--in1: inset 2px 2px 4px var(--dark), inset -2px -2px 4px var(--light);
+--in2: inset 4px 4px 8px var(--dark), inset -4px -4px 8px var(--light);
+```
+
+Current emphasis: compact, premium, one-line lane headers with indicator lights (`lane-lights` + `.lamp`), a status footer (`lane-foot`), and tight chip spacing.
+
+---
+
+## Recent commits on this branch
+
+```
+aae7502  renderer: hide chip menu with [hidden] rule; preview: inline css/js
+7ca01e5  lanes: compact one-line header with indicator lights + status footer
+93faf51  style: rustfmt across the crate (no behavior change)
+1d9d6d2  WS9: UX polish — scroll affordance, lane warnings, shortcuts, first-lane moment
+b1bbb19  WS4b: chip context menu + per-member park
+6742a8b  WS3: live request visibility + neumorphic pass on new elements
+5650fd9  WS5: catalog cache never shrinks silently
+ab192b1  UX: silence capability-skip alerts, surface trail/served-by, undo, z-order and editor fixes
+```
+
+---
+
+## What got implemented
+
+### WS1 — Stop crying wolf
+
+- `skipped_by_catalog` is no longer recorded as an incident.
+- Legacy skipped records render silently (no toast, no bell badge).
+- `stalled` diagnosis added for dead connections.
+- Per-lane activity line carries the "passed over" story.
+
+### WS2 — Show what the engine knows
+
+- Lane test toast now says `answered by <model>` with trail detail.
+- Lane test uses `max_tokens: 64` to exercise the commit gate.
+- Per-lane activity line opens the notification center scoped to that lane.
+
+### WS3 — Live request visibility
+
+- Engine writes `activity.jsonl` with phases: `trying`, `answered`, `failed`, `exhausted`.
+- `GET /activity` and `activity_read` command exposed.
+- Renderer tails incrementally and shows a live pill on each lane.
+- File is capped and trimmed by size.
+
+### WS4 — Protect the central interaction
+
+- Undo toast for lane delete, chip removal, drag-out-of-lane (~5s window).
+- Right-click context menu on track chips: Member settings / Park / Remove.
+- Per-member `disabled` flag in `lanes.rs`; engine skips parked members.
+
+### WS5 — Cache robustness
+
+- `catalog_read` keeps the previous good catalog when a partial fetch would shrink it.
+- Logs when stale data is retained.
+
+### WS6 — Window / z-order
+
+- `input_shape_combine_region` re-applied on `size-allocate`.
+- Stable VS Code path detection added.
+- `tools/launch-system.sh` is the supported launcher.
+
+### WS8 — Editor integration
+
+- Detects both `Code` and `Code - Insiders` chatLanguageModels.json.
+- Toast prompts user to reload VS Code after integration.
+
+### WS9 — UX polish
+
+- Track scroll affordance (scrollbar + left fade).
+- Member popover shows effective placeholder values.
+- Shortcuts: `Ctrl+N` new lane, `Ctrl+B` browse, `Ctrl+,` settings, `?` help.
+- First-lane completion state with endpoint URL and VS Code inline setup.
+- Dead members shown in lane footer.
+- Lane headers compacted to one line with indicator lights and status footer.
+
+---
+
+## Known issues / next work
+
+These are the remaining items from `ROADMAP.md`:
+
+1. **WS5 — Catalog error notification.** Surface "provider catalog failed — using last good cache" as a toast, not just a red count in the provider list. Also add one-line engine log when serving from stale cache.
+
+2. **WS6 — Verify z-order on user's hardware.** Run the app normally, stack over VS Code, confirm clicks land on VisualLLM. If it still falls through, flip `"transparent": false` in `src-tauri/tauri.conf.json` and restyle.
+
+3. **WS7 — Single-binary / AppImage verification.** Confirm the AppImage bundles WebKitGTK and runs on a clean VM. Decide if AppImage is the canonical download. Add a release checklist entry.
+
+4. **WS10 — Portability / export-import (not yet in ROADMAP but requested).** Add lane export/import, provider config portability, and state migration helpers.
+
+5. **WS9 follow-ups:**
+   - Notification center: filter by lane; per-(lane, kind) mute.
+   - Sidebar / browse caps: "show all" or render-on-scroll instead of hard caps.
+
+---
+
+## Key files to touch for common tasks
+
+| Task | Files |
+|---|---|
+| Change how lanes render | `renderer/app.js` (`laneEl`, `renderTrack`, `laneLights`, `laneFoot`) |
+| Change lane styling | `renderer/style.css` (`.lane`, `.lane-head`, `.lane-lights`, `.lane-foot`, `.chip`) |
+| Change engine routing | `src-tauri/src/server.rs` |
+| Change lane persistence schema | `src-tauri/src/lanes.rs` |
+| Change provider/catalog behavior | `src-tauri/src/providers.rs` |
+| Add a new command | `src-tauri/src/main.rs` + `renderer/app.js` `api` object |
+| Change window/compositor behavior | `src-tauri/src/main.rs` (GTK realize/size-allocate hooks) |
+| Preview before/after UI | `node tools/preview.js /tmp/vll-preview.html` |
+
+---
+
+## State files
+
+Stored in `~/.local/share/app.visualllm/`:
+
+- `lanes.json` — version-wrapped lane data (`{ schema_version, data: [...] }`)
+- `providers.json` — provider configs (keys in plaintext here only)
+- `pool.json` — selected model ids
+- `catalog.json` — cached provider catalogs
+- `incidents.json` — failure records
+- `endpoint-stats.json` — per-model health stats
+- `activity.jsonl` — live request activity feed
+
+---
+
+## Testing checklist before PR
+
+```bash
+node tools/smoke.js
+cd src-tauri && cargo test
+cargo clippy
+cargo fmt
+cargo build --release
+```
+
+Then manually verify:
+
+- App launches in external terminal.
+- Add provider → catalog populates.
+- Create lane → drag models → order is correct.
+- Lane test returns "answered by ..." toast.
+- Right-click a chip → menu opens → park/resume/settings/remove work.
+- Delete lane → undo toast restores it.
+- Stack app over VS Code → clicks land on VisualLLM.
+- VS Code integration button writes `chatLanguageModels.json` and prompts reload.
+
+---
+
+## Notes for a cheaper model
+
+- Do **not** run the Tauri binary from the agent's Snap terminal.
+- The preview harness is in `tools/preview.js`; it now inlines CSS/JS and unwraps versioned state files.
+- The chip context menu fix was a single CSS rule: `.chip-menu[hidden] { display: none !important; }`.
+- Lane header compacting lives in `laneEl()` and the CSS classes `.lane-head`, `.lane-lights`, `.lane-foot`.
+- When in doubt, grep for `members[0]` — primary-on-right is the central invariant.
+
 
 ## Product
 

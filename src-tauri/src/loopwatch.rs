@@ -73,7 +73,10 @@ pub struct Broke {
 // ---------------------------------------------------------------- inspection
 
 fn tool_calls_of(message: &Value) -> &[Value] {
-    message["tool_calls"].as_array().map(Vec::as_slice).unwrap_or(&[])
+    message["tool_calls"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
 }
 
 /// A call's identity: tool name plus its arguments, verbatim. Reading the
@@ -147,7 +150,12 @@ pub fn find_repeats(messages: &[Value], threshold: usize) -> Vec<Repeat> {
     let mut repeats: Vec<Repeat> = counts
         .into_iter()
         .filter(|(_, (times, _))| *times >= threshold)
-        .map(|((tool, args), (times, answered))| Repeat { tool, args, times, answered })
+        .map(|((tool, args), (times, answered))| Repeat {
+            tool,
+            args,
+            times,
+            answered,
+        })
         .collect();
     repeats.sort_by(|a, b| b.times.cmp(&a.times));
     repeats
@@ -260,7 +268,10 @@ pub fn collapse_repeats(messages: &[Value], threshold: usize) -> (Vec<Value>, us
                 continue; // never answered: a retry, not a redundancy
             };
             let (tool, args) = signature(call);
-            identities.entry((tool, args, result.clone())).or_default().push(id);
+            identities
+                .entry((tool, args, result.clone()))
+                .or_default()
+                .push(id);
         }
     }
 
@@ -292,9 +303,7 @@ pub fn collapse_repeats(messages: &[Value], threshold: usize) -> (Vec<Value>, us
     let mut pairs = 0;
     for message in messages {
         match message["role"].as_str() {
-            Some("tool")
-                if removable.contains(message["tool_call_id"].as_str().unwrap_or("")) =>
-            {
+            Some("tool") if removable.contains(message["tool_call_id"].as_str().unwrap_or("")) => {
                 continue;
             }
             Some("assistant") => {
@@ -386,7 +395,13 @@ pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, B
         let out = with_tail_note(collapsed_messages, repeat_note(&worst.tool, worst.times));
         return Some((
             out,
-            Broke { kind: "repeat", tool: worst.tool.clone(), times: worst.times, collapsed, excerpt: None },
+            Broke {
+                kind: "repeat",
+                tool: worst.tool.clone(),
+                times: worst.times,
+                collapsed,
+                excerpt: None,
+            },
         ));
     }
 
@@ -422,7 +437,13 @@ pub fn break_loop(messages: &[Value], threshold: usize) -> Option<(Vec<Value>, B
     }
     Some((
         out,
-        Broke { kind: "sweep", tool: worst.tool.clone(), times: worst.times, collapsed, excerpt: None },
+        Broke {
+            kind: "sweep",
+            tool: worst.tool.clone(),
+            times: worst.times,
+            collapsed,
+            excerpt: None,
+        },
     ))
 }
 
@@ -450,9 +471,12 @@ mod tests {
         // that never got answers are a client retrying correctly, and the
         // intervention would be telling it a lie.
         let answered = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "text"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "text"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "text"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "text"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "text"),
         ];
         let found = find_repeats(&answered, 3);
         assert_eq!(found.len(), 1);
@@ -470,9 +494,12 @@ mod tests {
     fn futile_needs_varying_arguments_and_a_live_run() {
         // Different ranges, identical empty answer: the end-of-file walk.
         let walk = vec![
-            call("1", "read_file", r#"{"lines":"130-170"}"#), result("1", ""),
-            call("2", "read_file", r#"{"lines":"130-160"}"#), result("2", ""),
-            call("3", "read_file", r#"{"lines":"155-170"}"#), result("3", ""),
+            call("1", "read_file", r#"{"lines":"130-170"}"#),
+            result("1", ""),
+            call("2", "read_file", r#"{"lines":"130-160"}"#),
+            result("2", ""),
+            call("3", "read_file", r#"{"lines":"155-170"}"#),
+            result("3", ""),
         ];
         let futile = find_futile(&walk, 3).expect("a live futile run");
         assert_eq!(futile.variants, 3);
@@ -487,9 +514,12 @@ mod tests {
 
         // One argument set repeated is the verbatim species' job, not this one.
         let verbatim = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "same"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "same"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "same"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "same"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "same"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "same"),
         ];
         assert!(find_futile(&verbatim, 3).is_none());
     }
@@ -499,9 +529,12 @@ mod tests {
         // The first live catch was six reads all missing a parameter, not an
         // end-of-file walk — the note must quote, never theorise.
         let rejected = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "must have required property 'startLine'"),
-            call("2", "read_file", r#"{"path":"b"}"#), result("2", "must have required property 'startLine'"),
-            call("3", "read_file", r#"{"path":"c"}"#), result("3", "must have required property 'startLine'"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "must have required property 'startLine'"),
+            call("2", "read_file", r#"{"path":"b"}"#),
+            result("2", "must have required property 'startLine'"),
+            call("3", "read_file", r#"{"path":"c"}"#),
+            result("3", "must have required property 'startLine'"),
         ];
         let futile = find_futile(&rejected, 3).expect("a live futile run");
         assert!(futile.excerpt.contains("startLine"));
@@ -510,9 +543,12 @@ mod tests {
     #[test]
     fn collapse_keeps_the_last_copy_and_the_words() {
         let mut messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "text"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "text"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "text"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "text"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "text"),
         ];
         // The second turn also said something; the words must survive.
         messages[2]["content"] = json!("Let me check that file again.");
@@ -522,10 +558,17 @@ mod tests {
         // The survivor is the LAST call — recency is what the model attends to.
         let ids: Vec<&str> = kept
             .iter()
-            .flat_map(|m| tool_calls_of(m).iter().map(|c| c["id"].as_str().unwrap()).collect::<Vec<_>>())
+            .flat_map(|m| {
+                tool_calls_of(m)
+                    .iter()
+                    .map(|c| c["id"].as_str().unwrap())
+                    .collect::<Vec<_>>()
+            })
             .collect();
         assert_eq!(ids, vec!["3"]);
-        assert!(kept.iter().any(|m| m["content"] == json!("Let me check that file again.")));
+        assert!(kept
+            .iter()
+            .any(|m| m["content"] == json!("Let me check that file again.")));
     }
 
     #[test]
@@ -533,9 +576,12 @@ mod tests {
         // THE invariant. Same call, different bytes back — the agent edited
         // the file in between, and hiding either read would hide the edit.
         let messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "before edit"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "after edit"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "after edit"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "before edit"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "after edit"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "after edit"),
         ];
         let (kept, pairs) = collapse_repeats(&messages, 3);
         assert_eq!(pairs, 0);
@@ -550,26 +596,40 @@ mod tests {
             { "id": "3", "function": { "name": "read_file", "arguments": r#"{"path":"a"}"# } },
             { "id": "4", "function": { "name": "grep", "arguments": r#"{"q":"x"}"# } } ] });
         let messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "text"),
-            mixed, result("3", "text"), result("4", "matches"),
-            call("5", "read_file", r#"{"path":"a"}"#), result("5", "text"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "text"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "text"),
+            mixed,
+            result("3", "text"),
+            result("4", "matches"),
+            call("5", "read_file", r#"{"path":"a"}"#),
+            result("5", "text"),
         ];
         let (kept, _) = collapse_repeats(&messages, 3);
-        assert!(kept.iter().any(|m| tool_calls_of(m).len() == 2), "mixed turn survives whole");
+        assert!(
+            kept.iter().any(|m| tool_calls_of(m).len() == 2),
+            "mixed turn survives whole"
+        );
     }
 
     #[test]
     fn break_loop_repairs_and_then_names_the_pattern() {
         let messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "text"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "text"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "text"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "text"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "text"),
         ];
         let (out, broke) = break_loop(&messages, 3).expect("a stuck agent");
         assert_eq!(broke.kind, "repeat");
         assert_eq!(broke.collapsed, 2);
-        assert!(broke.excerpt.is_none(), "the verbatim species has no quote to carry");
+        assert!(
+            broke.excerpt.is_none(),
+            "the verbatim species has no quote to carry"
+        );
         // The note is the LAST message and speaks as the user — placement is
         // the entire finding: the same text in the system prompt did nothing.
         let tail = out.last().unwrap();
@@ -585,23 +645,35 @@ mod tests {
         // while the residue is only collapsed. This exact confusion ran for
         // ~50 turns on 2026-08-02 before the rule existed.
         let messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "old text"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "old text"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "old text"),
-            call("4", "read_file", r#"{"lines":"130-170"}"#), result("4", "same tail"),
-            call("5", "read_file", r#"{"lines":"130-160"}"#), result("5", "same tail"),
-            call("6", "read_file", r#"{"lines":"155-170"}"#), result("6", "same tail"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "old text"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "old text"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "old text"),
+            call("4", "read_file", r#"{"lines":"130-170"}"#),
+            result("4", "same tail"),
+            call("5", "read_file", r#"{"lines":"130-160"}"#),
+            result("5", "same tail"),
+            call("6", "read_file", r#"{"lines":"155-170"}"#),
+            result("6", "same tail"),
         ];
         let (out, broke) = break_loop(&messages, 3).expect("a live futile run");
         assert_eq!(broke.kind, "futile");
         assert_eq!(broke.collapsed, 2, "stale residue swept in the same pass");
         let note = out.last().unwrap()["content"].as_str().unwrap();
         assert!(note.contains("same tail"), "the live result is quoted");
-        assert!(!note.contains("these exact arguments"), "not the stale diagnosis");
+        assert!(
+            !note.contains("these exact arguments"),
+            "not the stale diagnosis"
+        );
         // The same quote rides out on the record, so the diagnosis card can
         // show the user exactly what the model kept ignoring.
         assert!(
-            broke.excerpt.as_deref().is_some_and(|e| e.contains("same tail")),
+            broke
+                .excerpt
+                .as_deref()
+                .is_some_and(|e| e.contains("same tail")),
             "the incident carries the quoted result"
         );
     }
@@ -611,22 +683,32 @@ mod tests {
         // The loop is over — the most recent call is something new. The dead
         // weight still goes, but there is nothing to tell the model.
         let messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
-            call("2", "read_file", r#"{"path":"a"}"#), result("2", "text"),
-            call("3", "read_file", r#"{"path":"a"}"#), result("3", "text"),
-            call("4", "grep", r#"{"q":"port"}"#), result("4", "4100"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "text"),
+            call("2", "read_file", r#"{"path":"a"}"#),
+            result("2", "text"),
+            call("3", "read_file", r#"{"path":"a"}"#),
+            result("3", "text"),
+            call("4", "grep", r#"{"q":"port"}"#),
+            result("4", "4100"),
         ];
         let (out, broke) = break_loop(&messages, 3).expect("residue to sweep");
         assert_eq!(broke.kind, "sweep");
         assert_eq!(broke.collapsed, 2);
-        assert_eq!(out.last().unwrap()["role"], json!("tool"), "no note appended");
+        assert_eq!(
+            out.last().unwrap()["role"],
+            json!("tool"),
+            "no note appended"
+        );
     }
 
     #[test]
     fn a_healthy_conversation_is_left_alone() {
         let messages = vec![
-            call("1", "read_file", r#"{"path":"a"}"#), result("1", "text"),
-            call("2", "read_file", r#"{"path":"b"}"#), result("2", "other"),
+            call("1", "read_file", r#"{"path":"a"}"#),
+            result("1", "text"),
+            call("2", "read_file", r#"{"path":"b"}"#),
+            result("2", "other"),
         ];
         assert!(break_loop(&messages, 3).is_none());
     }

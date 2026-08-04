@@ -142,7 +142,10 @@ pub fn load(dir: &PathBuf) -> Vec<Provider> {
     let mut providers: Vec<Provider> = match read_state(store_path(dir)) {
         Some(v) => v,
         None => {
-            eprintln!("providers: could not read providers.json at {:?}; returning empty list", store_path(dir));
+            eprintln!(
+                "providers: could not read providers.json at {:?}; returning empty list",
+                store_path(dir)
+            );
             Vec::new()
         }
     };
@@ -195,7 +198,10 @@ pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
     match read_state(cache_path(dir)) {
         Some(v) => v,
         None => {
-            eprintln!("providers: could not read catalog cache at {:?}; returning empty list", cache_path(dir));
+            eprintln!(
+                "providers: could not read catalog cache at {:?}; returning empty list",
+                cache_path(dir)
+            );
             Vec::new()
         }
     }
@@ -267,8 +273,15 @@ fn openrouter_model(raw: &Value, provider: &Provider) -> CatalogModel {
         created: raw["created"].as_u64().unwrap_or(0),
         reasoning: has("reasoning") || raw["reasoning"]["default_enabled"].is_boolean(),
         structured: has("structured_outputs") || has("response_format"),
-        moderated: raw["top_provider"]["is_moderated"].as_bool().unwrap_or(false),
-        description: raw["description"].as_str().unwrap_or_default().chars().take(400).collect(),
+        moderated: raw["top_provider"]["is_moderated"]
+            .as_bool()
+            .unwrap_or(false),
+        description: raw["description"]
+            .as_str()
+            .unwrap_or_default()
+            .chars()
+            .take(400)
+            .collect(),
     }
 }
 
@@ -413,7 +426,11 @@ pub fn slug(name: &str, taken: &[Provider]) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     let base = base.trim_matches('-').replace("--", "-");
-    let base = if base.is_empty() { "provider".into() } else { base };
+    let base = if base.is_empty() {
+        "provider".into()
+    } else {
+        base
+    };
 
     let used: BTreeMap<&str, ()> = taken.iter().map(|p| (p.id.as_str(), ())).collect();
     if !used.contains_key(base.as_str()) {
@@ -423,7 +440,10 @@ pub fn slug(name: &str, taken: &[Provider]) -> String {
         .map(|n| format!("{base}-{n}"))
         .find(|candidate| !used.contains_key(candidate.as_str()))
         .unwrap_or_else(|| {
-            eprintln!("providers::slug: failed to find unique slug for base '{}', returning base", base);
+            eprintln!(
+                "providers::slug: failed to find unique slug for base '{}', returning base",
+                base
+            );
             base
         })
 }
@@ -507,14 +527,22 @@ fn best_stats(body: &Value) -> EndpointStats {
     let throughput = endpoints
         .iter()
         .filter_map(|e| e["throughput_last_30m"]["p50"].as_f64())
-        .fold(None, |best: Option<f64>, v| Some(best.map_or(v, |b| b.max(v))));
+        .fold(None, |best: Option<f64>, v| {
+            Some(best.map_or(v, |b| b.max(v)))
+        });
 
     let latency = endpoints
         .iter()
         .filter_map(|e| e["latency_last_30m"]["p50"].as_f64())
-        .fold(None, |best: Option<f64>, v| Some(best.map_or(v, |b| b.min(v))));
+        .fold(None, |best: Option<f64>, v| {
+            Some(best.map_or(v, |b| b.min(v)))
+        });
 
-    EndpointStats { throughput, latency, providers: endpoints.len() }
+    EndpointStats {
+        throughput,
+        latency,
+        providers: endpoints.len(),
+    }
 }
 
 /// Fetch stats for every model of every provider that can supply them.
@@ -564,8 +592,10 @@ pub async fn hydrate_stats(dir: &PathBuf, models: &[CatalogModel], all: &[Provid
             let client = client.clone();
             async move {
                 let base = provider.base_url.trim_end_matches('/').to_string();
-                let request =
-                    authorise(client.get(format!("{base}/models/{id}/endpoints")), &provider);
+                let request = authorise(
+                    client.get(format!("{base}/models/{id}/endpoints")),
+                    &provider,
+                );
                 let stats = match request.send().await {
                     Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
                         Ok(body) => best_stats(&body),
