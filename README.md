@@ -1,344 +1,373 @@
 # VisualLLM
 
-> Build reliable OpenAI-compatible endpoints by arranging models visually.
+**Build reliable OpenAI-compatible endpoints by arranging AI models visually.**
 
-VisualLLM is a visual fallback router for model endpoints. Add the providers you use,
-browse their models, drag the ones worth keeping into a lane, and connect tools
-such as VS Code to the resulting local endpoint.
-
-The model on the right answers first. Models to its left are fallbacks. When a
-provider is out of credit, rate-limited, unavailable, too small for the request,
-or returns an unusable answer, VisualLLM explains what happened and tries the
-next suitable member.
-
-## Why VisualLLM
-
-Most model gateways make routing a configuration problem. VisualLLM makes it a
-visible arrangement you can understand at a glance:
-
-- **Providers** supply catalogs; credentials stay on the Rust side of the app.
-- **The pool** is your shortlist of models worth considering.
-- **Lanes** are local OpenAI-compatible endpoints with an explicit fallback
-  order.
-- **Receipts** show which model served, which models were passed over, and why.
-
-The current product is Linux-first and available from source. A packaged public
-release is planned; see [`ROADMAP.md`](ROADMAP.md).
-
-## Quick start
-
-For development from a cloned repository:
-
-### Recommended: Use the launch script (handles snap/Wayland issues)
-
-```bash
-cd /path/to/visualllm
-./tools/launch-system.sh
-```
-
-This starts the app with a clean environment (`env -i`) and `GDK_BACKEND=x11` to avoid a Wayland/Mutter bug where transparent frameless windows lose stacking position on click.
-
-### Alternative: Run directly (must use clean terminal)
-
-```bash
-cd /path/to/visualllm/src-tauri
-~/.cargo/bin/cargo run
-```
-
-> **⚠️ Important: Run from a clean terminal outside VS Code.**
-> VS Code (when installed as a snap) pollutes the terminal environment with
-> snap library paths (`LD_LIBRARY_PATH`, `GTK_PATH`, etc.) that cause a
-> `GLIBC_PRIVATE` symbol lookup error at runtime. Open a fresh terminal
-> (`Ctrl+Alt+T` on GNOME) and run the command there.
->
-> If you must run from within VS Code's terminal, unset the contaminated
-> variables first:
-> ```bash
-> unset LD_LIBRARY_PATH GTK_PATH GIO_MODULE_DIR LOCPATH XDG_DATA_DIRS
-> cd /path/to/visualllm/src-tauri && ~/.cargo/bin/cargo run
-> ```
-
-### Alternative: Tauri dev mode (also needs clean terminal)
-
-```bash
-cd /path/to/visualllm
-unset LD_LIBRARY_PATH GTK_PATH GIO_MODULE_DIR LOCPATH XDG_DATA_DIRS
-npm run dev
-```
-
-Then add a provider, browse its catalog, create a lane, and use the lane's
-**Setup** button to copy a ready-to-run example. The default engine listens on
-`http://127.0.0.1:4100`.
-
-### Connect an OpenAI-compatible client
-
-Use the lane URL as the client's **base URL**. The lane slug is the model name
-that appears in `GET /v1/models`; the local client does not need an API key.
-VisualLLM keeps provider credentials inside the desktop app and forwards the
-request using the configured provider credentials.
-
-A direct request looks like this:
-
-```bash
-curl http://127.0.0.1:4100/lane/<lane-slug>/v1/chat/completions \\
-  -H 'Content-Type: application/json' \\
-  -d '{"model":"<lane-slug>","messages":[{"role":"user","content":"Hello"}]}'
-```
-
-For VS Code or another OpenAI-compatible tool, configure:
-
-- **Base URL:** `http://127.0.0.1:4100/lane/<lane-slug>/v1`
-- **Model:** `<lane-slug>`
-- **API key:** leave blank, or enter any placeholder if the client requires a value
-
-The lane response includes `x-visuallm-served-by`,
-`x-visuallm-passed-over`, and `x-visuallm-trail` headers so fallback behavior
-can be inspected without guessing which model answered.
-
-## Documentation
-
-- [`ROADMAP.md`](ROADMAP.md) — public-release milestones and criteria.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — development and pull-request guidance.
-- [`SECURITY.md`](SECURITY.md) — threat model and vulnerability reporting.
-- [`LICENSE`](LICENSE) — project license.
-
-## Development prerequisites
-
-Source development requires Node.js, the Rust toolchain, and on Linux the
-WebKit development packages:
-
-`libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev`
-
-The renderer has no build step. For desktop development, use the system
-launcher documented above rather than starting Tauri from a VS Code Snap
-terminal. `npm run dev` remains available when the environment is known to be
-compatible.
-
-```bash
-npm ci
-node tools/smoke.js
-cargo test --manifest-path src-tauri/Cargo.toml
-npm run build
-```
-
-## How it is put together
-
-| path | what |
-|---|---|
-| `src-tauri/src/main.rs` | the shell, and every command the UI is allowed to call |
-| `src-tauri/src/providers.rs` | providers, key storage, and catalog fetching |
-| `renderer/` | the surface: `index.html`, `style.css`, `app.js`. No build step, no framework |
-| `src-tauri/capabilities/default.json` | exactly what the webview may ask for |
-
-All network access lives in Rust. The webview has no HTTP and no filesystem —
-it asks for state and gets state, which keeps the reachable surface to the
-handful of commands in `main.rs`.
-
-## Two rules the canvas is built around
-
-1. **`members[0]` answers first.** That is the only ordering the data has.
-2. **The track draws that list right to left**, so the primary sits at the
-   right-hand edge under the arrow.
-
-The reversal lives in exactly two functions — `renderTrack` and
-`domSlotToIndex`. If the direction ever changes, those are the only two places
-to touch, and there is no third.
-
-## What the catalog is trusted for
-
-OpenRouter publishes more than most providers, and three details are worth
-knowing because getting them wrong is silent:
-
-- **Context comes from `top_provider.context_length`**, never the model-level
-  `context_length`. The latter overstates — one model advertises 262K on an
-  endpoint that caps at 131K.
-- **`supported_parameters` is a union across every provider serving a model**,
-  so a capability listed there is optimistic rather than promised. Real support
-  is per-provider, on the endpoints resource.
-- **A missing benchmark score is missing, not zero.** Unscored models sort to
-  the bottom rather than ranking as the worst measured.
-
-## Known, and deliberate
-
-**API keys are stored in the OS keychain**. `providers.json` contains blank key
-fields and is retained only for provider metadata. Legacy plaintext provider
-files remain readable for migration; saving a provider rewrites them without
-the secret. The renderer receives only a masked key hint and never receives a
-usable credential.
-
-**The two 429s are named from evidence, not just status.** OpenRouter returns the
-same status for "this provider is throttling you" — where another model fixes it
-— and "your whole free tier is blocked" — where nothing but waiting does. The
-router reads the body and labels the `provider_name: null` form as an
-account-wide free-tier limit, so the receipt can explain why a retry chain may
-not help.
-
-**Capability comes from a cached catalog, and a wrong entry fails quietly.** If
-the catalog says a model can't do something it can, `can_serve` skips it and
-nothing errors. Every response now carries `x-visualllm-passed-over` and
-`x-visualllm-trail` so this is visible rather than silent, but the underlying
-data is only as good as the last fetch. A capability is only ever *disqualifying*
-when the provider actually published it (`caps_known`) — a generic `/models`
-that says nothing about vision has not said "no vision".
-
-## What it is
-
-One program: the UI, the gateway, and the engine that runs on it. A lane
-designed on the canvas is served by the same binary that drew it — an HTTP
-listener on `127.0.0.1:4100` answering `/lane/{slug}/v1/chat/completions`,
-walking that lane's models in order and streaming back whichever one answers.
-`GET /v1/models` lists your lanes, so a client like VS Code can discover them.
-Nothing is configured anywhere else. There is no config file to learn.
-
-Every response says how it was served:
-
-    x-visualllm-served-by:  which model actually answered
-    x-visualllm-passed-over: how many were skipped or failed first
-    x-visualllm-trail:       each one, and why
-
-A model's identity everywhere — the pool, a lane, these headers — is the pair
-of provider and id, written `model@provider` where it has to fit on one line.
-The id alone stopped being an identity the moment two providers could carry
-the same one: `deepseek-chat` direct and through a reseller are different
-endpoints, different keys, different bills. Files from before this rule hold
-bare ids and still load; they mean "whichever provider first matches", which
-is what they always meant.
-
-The hard part is not the proxying, it is **deciding when a model has failed
-hard enough to move to the next one**. That judgement is the whole value of a
-fallback chain, and it is wrong in both directions: too eager and the user's
-chosen primary gets skipped over a blip, too strict and the lane stalls on a
-model that was never going to answer. Some of it is unobvious — a 429 meaning
-"this provider is throttling, try another model" and a 429 meaning "your whole
-free tier is blocked, only waiting helps" look alike and need opposite
-responses.
-
-That judgement no longer stops at the status line. **A 200 is provisional
-until it carries something a client can render** — a content token or a tool
-call. Providers return 200 and then stream an error event, or nothing, or
-spend the whole token budget on hidden reasoning and end with zero visible
-content; a chat client shows all of these as an empty reply. The engine holds
-every response at the door until its first usable delta, and one that dies
-before that point fails over to the next member with the reason in the trail
-("spent the whole token budget reasoning, with no room left to answer").
-Three consequences, all deliberate:
-
-- Nothing reaches the client until the commit point, so a thinking model's
-  reasoning is not shown live — it arrives in one piece with the answer.
-  Forwarded bytes cannot be unsent, and forwarding early would spend the
-  lane's one chance to fall back.
-- A member that fails *after* its first content token is a failed request,
-  not a fallback. Splicing two models' answers mid-stream would be worse.
-- Requests with tiny token budgets (under 16) skip the gate: a one-token
-  health probe is not a request for an answer, and judging it would fail
-  every monitoring script ever written.
-
-Lanes can also ask members not to think at all — the "no thinking" toggle on
-a lane injects the reasoning-off knob for providers that expose one (today:
-OpenRouter, which normalises it across models). It is a preference, not a
-guarantee; the commit gate catches the models that think anyway.
-
-**Loopwatch** (per-lane, opt-in) watches for an agent stuck re-calling the
-same tool. Agentic clients resend the whole conversation every turn, so a
-loop is visible inside a single request — no cross-request state needed.
-Two species, one definition of stuck: *receiving no new information*. The
-treatment is the one that measured 0/4 repeats against captured loops
-(control: 4/4): collapse the redundant call/result pairs — only ever a pair
-whose call *and* result are byte-identical to a later one, so an edit can
-never be hidden — and append a note naming the loop as the **last** message.
-Placement is the finding: the same note in the system prompt did nothing,
-because at 150K tokens the system prompt is 150K tokens in the past. The
-note only ever describes a **live** loop — one the conversation's most
-recent call belongs to. Clients resend their transcripts forever,
-duplicates included, and stale residue is merely swept, or the model would
-be told about yesterday's loop while today's goes unnamed. This is the
-engine's only modification of a conversation; it is logged, and announced
-on the response in `x-visualllm-unstuck`.
-
-**Every failure is explained, never just badged.** The engine records each
-one with its receipts — the provider's own bytes, the loop counts, which
-lane toggles were on at the time — and they arrive as notifications: a card
-at the bottom right that waits to be clicked, and a bell in the status bar
-that lights up with a count when cards fade away unviewed. Click a card (or
-the bell) and the full diagnosis opens: what happened (evidence quoted
-verbatim), why it happens (the mechanism), and what to try (a specific
-control here, one click away when it is one of the lane's own toggles). Any
-type can be ignored — the engine keeps recording it; only the announcement
-goes silent, reversibly. The standard is strict in both directions: a
-malformed request is recorded as the client's fault, and a failure the
-evidence cannot attribute renders as "unexplained, receipts attached"
-rather than being rounded up to a verdict. This app is built for people who
-choose free models; free models earn reputations by rumour, and receipts
-beat rumours.
-
-`classify` (refusals) and the commit gate (acceptances) in `server.rs` are
-the judgement, and they are what the tests pin down — `cargo test` from
-`src-tauri/`.
-
-Next, in order: make configuration portable with export/import that excludes
-provider secrets; complete packaged startup verification; and check capabilities
-per-provider rather than trusting the catalog's union.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust 1.77+](https://img.shields.io/badge/rust-1.77%2B-orange.svg)](https://www.rust-lang.org/)
+[![Tauri 2.x](https://img.shields.io/badge/tauri-2.x-blue.svg)](https://tauri.app/)
 
 ---
 
-## Step-by-step launch (Linux)
+## What is VisualLLM?
 
-### 1. Install system dependencies
+VisualLLM is a **visual fallback router** for AI models. It's a desktop application that lets you:
 
+- **Add your AI providers** (OpenRouter, OpenAI, Anthropic, or any OpenAI-compatible endpoint)
+- **Browse their model catalogs** with rich filtering and sorting
+- **Drag models into ordered "lanes"** to create fallback chains
+- **Expose lanes as local OpenAI-compatible endpoints** that your tools can connect to
+
+When a request comes in, the rightmost model answers first. If it fails, can't serve the request, or returns unusable content, VisualLLM automatically tries the next model in line — and explains exactly what happened at each step.
+
+### The Problem It Solves
+
+Most AI gateway solutions make routing a configuration problem — editing YAML files, managing complex rules, or writing code. VisualLLM makes it **visible and intuitive**: you see your models, you arrange them in order, and the system does exactly what you expect.
+
+This is especially valuable when:
+- You want **automatic fallback** when a provider is rate-limited, out of credit, or unavailable
+- You need **reliable responses** and want to understand exactly which model served each request
+- You use **multiple providers** and want to route requests based on capability, not just availability
+- You want **transparency** — knowing not just that a request succeeded, but *which* model answered and *why*
+
+---
+
+## Why VisualLLM?
+
+### 🎯 Visual First
+Everything is arranged visually. No configuration files to edit, no YAML to learn. What you see is what you get.
+
+### 🔒 Secure by Design
+- **API keys never leave the Rust backend** — the webview has no network or filesystem access
+- **Keys are stored in the OS keychain** (Linux native), not in plaintext files
+- **All network requests flow through Rust** — the renderer only receives state, never credentials
+- **Bound to loopback (127.0.0.1)** — your endpoints are local-only by default
+
+### 📊 Intelligent Routing
+- **Capability checking** — models that can't serve your request are skipped, not tried
+- **Commit gate** — 200 responses are verified to contain usable content before forwarding
+- **Loop detection** — optional Loopwatch catches agents stuck in tool-call loops
+- **Detailed receipts** — every failure is recorded with evidence for debugging
+
+### 🔄 Honest Fallback
+A response isn't successful just because a provider returned HTTP 200. VisualLLM verifies that:
+- The response contains actual content (not just reasoning tokens)
+- The model can actually serve the request (vision, tools, context size)
+- The stream hasn't stalled or died mid-response
+
+Every response includes headers telling you:
+- `x-visualllm-served-by` — which model actually answered
+- `x-visualllm-passed-over` — how many models were skipped or failed
+- `x-visualllm-trail` — the complete story of what happened
+
+### 💡 Built for Developers
+- **OpenAI-compatible** — works with VS Code, Cursor, and any OpenAI-compatible client
+- **No build step** — the renderer is plain HTML/CSS/JS
+- **Rust backend** — fast, safe, and reliable
+- **Tauri framework** — lightweight, secure desktop app
+
+---
+
+## Quick Start
+
+### For Users (Pre-built)
+
+Once packaged, VisualLLM will be available as:
+- `.deb` for Debian/Ubuntu
+- AppImage for any Linux distribution
+- (Windows/macOS support planned — see [ROADMAP.md](ROADMAP.md))
+
+### For Developers (From Source)
+
+#### Prerequisites
+
+**Linux (Ubuntu/Debian):**
 ```bash
-# Ubuntu / Debian
+# System dependencies for WebKit and Tauri
 sudo apt update && sudo apt install -y \
-  build-essential curl wget file libssl-dev libgtk-3-dev \
-  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
+  build-essential curl wget file libssl-dev
 
-# Fedora
-sudo dnf install -y webkit2gtk4.1-devel libxdo-devel libayatana-appindicator-gtk3-devel librsvg2-devel \
-  gcc gcc-c++ make openssl-devel gtk3-devel
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
 
-# Arch
-sudo pacman -S webkit2gtk-4.1 libxdo libayatana-appindicator librsvg base-devel openssl gtk3
+# Node.js (for build tooling)
+nvm install --lts  # or: sudo apt install nodejs npm
 ```
 
-### 2. Install Rust toolchain
+**Other distributions:** See [detailed instructions](#detailed-installation-instructions) below.
+
+#### Build and Run
 
 ```bash
+# Clone the repository
+cd /path/to/visualllm
+
+# Install dependencies
+npm ci
+
+# Verify everything works
+node tools/smoke.js
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# Build the app
+npm run build
+
+# Run for development (recommended launcher for Linux)
+./run.sh
+```
+
+The app will open a window and start the engine on `http://127.0.0.1:4100`.
+
+---
+
+## Using VisualLLM
+
+### 1. Add a Provider
+
+Click **Providers** in the sidebar, then **Add Provider**. Enter:
+- **Name** — a friendly name for this provider
+- **Kind** — `openrouter`, `openai`, `anthropic`, or `generic`
+- **Base URL** — the API endpoint (defaults based on kind)
+- **API Key** — your secret key (stored securely in the OS keychain)
+
+### 2. Browse Models
+
+Click **Browse** to see all models from your configured providers. Use the filters and sorting options to find what you need:
+- Filter by capability (vision, tools, reasoning)
+- Sort by intelligence, coding, agentic scores (OpenRouter)
+- Filter by author, context size, price
+
+### 3. Build a Lane
+
+Click **Pool** to select models you're interested in. Then:
+1. Click **New Lane**
+2. Drag models from the pool into your lane (right to left = primary to fallback)
+3. Give it a name and save
+
+The lane is now a local OpenAI-compatible endpoint at:
+```
+http://127.0.0.1:4100/lane/<lane-slug>/v1
+```
+
+### 4. Connect Your Client
+
+**VS Code / Cursor / Any OpenAI-compatible client:**
+
+- **Base URL:** `http://127.0.0.1:4100/lane/<lane-slug>/v1`
+- **Model:** `<lane-slug>` (the same as your lane name)
+- **API Key:** Leave blank (or use any placeholder if required)
+
+**Direct cURL request:**
+```bash
+curl http://127.0.0.1:4100/lane/my-lane/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "my-lane",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 50
+  }'
+```
+
+---
+
+## Advanced Features
+
+### Per-Member Settings
+
+Each model in a lane can have its own parameters:
+- Temperature, top-p, frequency/presence/repetition penalties
+- Max tokens limit
+- These override the client's request for that specific model
+
+### Reasoning Suppression
+
+Enable **"No thinking"** on a lane to ask providers (that support it) to skip reasoning tokens. This is a preference, not a guarantee — the commit gate catches models that think anyway.
+
+### Loopwatch
+
+Enable **"Unstick"** on a lane to detect and break tool-call loops:
+- **Repeat loops:** Same tool called with same arguments multiple times
+- **Futile loops:** Different arguments returning identical results
+- The loop is collapsed and a diagnostic note is appended to the conversation
+
+### Incident Records
+
+Every failure is recorded with:
+- Timestamp and which lane/member failed
+- The failure kind (rate_limited, out_of_credit, capability_gap, etc.)
+- The evidence (provider error messages, trail notes)
+- Lane settings at the time (no_think, loopwatch enabled)
+
+Click the bell icon in the status bar to view recent incidents.
+
+---
+
+## Architecture
+
+### Security Model
+
+VisualLLM follows a strict security architecture:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    TAURI APPLICATION                        │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐      ┌─────────────────────────────┐ │
+│  │   WEBVIEW       │      │         RUST BACKEND          │ │
+│  │  (Renderer)      │      │  (src-tauri/src/)             │ │
+│  │                 │      │                             │ │
+│  │  • HTML/CSS/JS   │      │  • Provider key storage      │ │
+│  │  • No network    │◄─────┤  • Catalog fetching          │ │
+│  │  • No filesystem │      │  • Request routing           │ │
+│  │  • Tauri commands│      │  • Fallback logic            │ │
+│  │                 │      │  • Loop detection             │ │
+│  │                 │      │  • Incident recording         │ │
+│  └─────────────────┘      └─────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │  OS Keychain     │  ← API keys stored here
+                    └─────────────────┘
+```
+
+**The webview can only:**
+- Render the UI
+- Call Tauri commands defined in `src-tauri/src/main.rs`
+- Receive state from the Rust backend
+
+**The webview CANNOT:**
+- Make HTTP requests
+- Access the filesystem
+- Read API keys
+- Execute arbitrary code
+
+### File Structure
+
+```
+visualllm/
+├── renderer/               # Frontend (HTML/CSS/JS)
+│   ├── index.html          # Main window
+│   ├── style.css           # Styles
+│   └── app.js              # All UI logic
+├── src-tauri/               # Backend (Rust)
+│   ├── src/
+│   │   ├── main.rs         # Tauri shell, commands
+│   │   ├── server.rs       # HTTP engine, routing
+│   │   ├── providers.rs    # Provider management, catalogs
+│   │   ├── lanes.rs        # Lane storage and management
+│   │   ├── incidents.rs    # Failure recording
+│   │   └── loopwatch.rs    # Loop detection
+│   ├── Cargo.toml          # Rust dependencies
+│   └── tauri.conf.json     # Tauri configuration
+├── tools/                  # Development scripts
+│   ├── smoke.js            # Renderer smoke test
+│   └── preview.js          # Browser preview harness
+├── README.md               # This file
+├── ROADMAP.md              # Public release plan
+├── CONTRIBUTING.md         # Development guidelines
+├── SECURITY.md             # Security policy
+└── LICENSE                 # MIT License
+```
+
+### How a Request Flows
+
+```
+Client Request
+     │
+     ▼
+┌─────────────────────┐
+│  Engine (server.rs)  │  ← Listens on 127.0.0.1:4100
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│  Find Lane           │  ← Looks up lane by slug
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│  Inspect Request     │  ← Checks vision, tools, token needs
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│  Walk Members        │  ← Tries each model in order
+└─────────────────────┘
+     │
+     ├─ Can this model serve? (capability check)
+     │
+     ▼
+┌─────────────────────┐
+│  Send to Provider    │  ← With member-specific params
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│  Verify Response     │  ← Commit gate: has usable content?
+└─────────────────────┘
+     │
+     ├─ If usable: Forward to client with headers
+     │
+     ▼
+┌─────────────────────┐
+│  Try Next Member     │  ← If failed or unusable
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│  Return Error        │  ← If all members failed
+└─────────────────────┘
+```
+
+---
+
+## Detailed Installation Instructions
+
+### Linux
+
+#### Ubuntu / Debian
+
+```bash
+# Install system dependencies
+sudo apt update && sudo apt install -y \
+  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
+  build-essential curl wget file libssl-dev libgtk-3-dev
+
+# Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 rustup default stable
-```
 
-### 3. Install Node.js (for `npm run dev` / `npm run build`)
-
-```bash
-# via nvm (recommended)
+# Install Node.js (via nvm recommended)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source ~/.bashrc
 nvm install --lts
-
-# or via package manager
-# sudo apt install nodejs npm
 ```
 
-### 4. Build the app
+#### Fedora
 
 ```bash
-# From the repo root
-cd /path/to/visualllm
+sudo dnf install -y \
+  webkit2gtk4.1-devel libxdo-devel libayatana-appindicator-gtk3-devel librsvg2-devel \
+  gcc gcc-c++ make openssl-devel gtk3-devel
 
-# Development build (fast, unoptimised)
-cargo build --manifest-path src-tauri/Cargo.toml
-
-# Release build (optimised, used for .deb / AppImage)
-cargo build --release --manifest-path src-tauri/Cargo.toml
+# Then install Rust and Node.js as above
 ```
 
-The binary will be at:
-- `src-tauri/target/debug/visualllm` (dev)
-- `src-tauri/target/release/visualllm` (release)
+#### Arch Linux
 
-### 5. Run the app (direct binary launch)
+```bash
+sudo pacman -S \
+  webkit2gtk-4.1 libxdo libayatana-appindicator librsvg base-devel openssl gtk3
 
-The Tauri dev server (`npm run dev`) works but inherits the VS Code snap environment, which causes library conflicts. The reliable way is to launch the built binary directly with a clean GTK/X11 environment:
+# Then install Rust and Node.js as above
+```
+
+### Running the App
+
+For reliable launching on Linux (especially under Wayland or in snap environments):
 
 ```bash
 # From the repo root
@@ -352,59 +381,110 @@ env -i \
   ./src-tauri/target/debug/visualllm
 ```
 
-**What each part does:**
-- `env -i` — start with an empty environment (no snap library paths)
-- `HOME="$HOME"` — needed for app data directory (`~/.local/share/app.visualllm`)
-- `PATH="/usr/bin:/bin:$HOME/.cargo/bin"` — system bins + cargo only
-- `DISPLAY="${DISPLAY:-:0}"` — your X11/Wayland display (usually `:0`)
-- `XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"` — X authority cookie (Wayland uses a mutter path like `/run/user/1000/.mutter-Xwaylandauth.*`)
-
-If the window doesn't appear, check your X authority file:
-
-```bash
-echo $XAUTHORITY
-ls -l "$XAUTHORITY"
-# If empty or missing, find it with:
-xauth list
-# Then use that path in the launch command above
-```
-
-### 6. Verify it's working
-
-The app opens a frameless window. The engine serves on `http://127.0.0.1:4100`:
-
-```bash
-# Health check
-curl http://127.0.0.1:4100/health
-
-# List lanes (OpenAI-compatible /v1/models)
-curl http://127.0.0.1:4100/v1/models
-
-# Chat completion through a lane
-curl -X POST http://127.0.0.1:4100/lane/new-lane/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"new-lane","messages":[{"role":"user","content":"Hello"}],"max_tokens":50}'
-```
-
-### 7. Package for distribution (optional)
-
-```bash
-npm run build
-# Outputs .deb and AppImage in src-tauri/target/release/bundle/
-```
+**Why this works:**
+- `env -i` starts with a clean environment (no snap library conflicts)
+- Explicitly sets the paths needed for GTK/WebKit
+- Works with both X11 and Wayland
 
 ### Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `symbol lookup error: libpthread` | You're inheriting the snap `LD_LIBRARY_PATH`. Use the `env -i` launch command above. |
-| `Failed to initialize GTK` | Missing `DISPLAY` or `XAUTHORITY`. Ensure you're on a graphical session and the variables are set. |
+| Issue | Solution |
+|-------|----------|
+| `symbol lookup error: libpthread` | You're inheriting snap's `LD_LIBRARY_PATH`. Use the `env -i` launch command above. |
+| `Failed to initialize GTK` | Missing `DISPLAY` or `XAUTHORITY`. Ensure you're on a graphical session. |
 | `Address already in use (port 4100)` | A previous instance is still running: `pkill -f visualllm && fuser -k 4100/tcp` |
-| Window opens but shows "Could not connect" | The engine didn't start. Check the terminal for `engine: could not listen...` — usually a stale process on 4100. |
+| Window opens but shows "Could not connect" | The engine didn't start. Check terminal for errors, usually a stale process on 4100. |
 | Transparent window shows black/garbled | Your compositor doesn't support ARGB visuals. Set `"transparent": false` in `src-tauri/tauri.conf.json` and rebuild. |
 
-## Public project roadmap
+---
 
-The public-release plan, milestones, non-goals, and release criteria live in
-[`ROADMAP.md`](ROADMAP.md). Contributions and security guidance are documented
-in [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md).
+## Development
+
+### Running Tests
+
+```bash
+# Rust tests (engine logic)
+cargo test --manifest-path src-tauri/Cargo.toml
+
+# Renderer smoke test
+node tools/smoke.js
+
+# Full build
+npm run build
+```
+
+### Project Structure for Contributors
+
+- **`renderer/app.js`** — All UI logic, no framework
+- **`src-tauri/src/main.rs`** — Tauri shell and command definitions
+- **`src-tauri/src/server.rs`** — HTTP engine and routing logic
+- **`src-tauri/src/providers.rs`** — Provider management and catalog fetching
+- **`src-tauri/src/lanes.rs`** — Lane storage and member management
+- **`src-tauri/src/incidents.rs`** — Failure recording and classification
+- **`src-tauri/src/loopwatch.rs`** — Tool-call loop detection
+
+### Adding a New Feature
+
+1. **For UI changes:** Edit files in `renderer/`
+2. **For backend logic:** Edit files in `src-tauri/src/`
+3. **For new Tauri commands:** Add to `main.rs` with `#[tauri::command]`
+4. **For new HTTP routes:** Add to `server.rs` router
+
+All new commands must be added to the capabilities list in `src-tauri/capabilities/default.json`.
+
+---
+
+## Philosophy
+
+### Design Principles
+
+1. **Visibility** — You should be able to understand routing decisions at a glance
+2. **Honesty** — A response is only successful if it contains usable content
+3. **Safety** — API keys never leave the Rust backend
+4. **Simplicity** — The simple path should stay simple
+5. **Compatibility** — Existing lanes and clients should keep working
+
+### Why These Choices?
+
+**Why Tauri?** Lightweight, secure, and Rust-based. It gives us a real desktop app without the overhead of Electron.
+
+**Why no framework in the renderer?** The UI is small and focused. Vanilla JS keeps it fast, auditable, and dependency-free.
+
+**Why Rust for the backend?** Memory safety, performance, and excellent HTTP/async support. Plus, it's where the keys live.
+
+**Why loopback-only by default?** Security. Your API keys are valuable, and we don't want to accidentally expose them to your network.
+
+---
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup
+- Pull request guidelines
+- Code style expectations
+- Testing requirements
+
+## Security
+
+Please see [SECURITY.md](SECURITY.md) for:
+- Our threat model
+- Vulnerability reporting process
+- Security design decisions
+
+## License
+
+VisualLLM is licensed under the [MIT License](LICENSE).
+
+---
+
+## Roadmap
+
+The public release plan, milestones, and criteria are documented in [ROADMAP.md](ROADMAP.md).
+
+## Credits
+
+VisualLLM is built by [Creative Systems Development](https://github.com/CreativeSystemDesign).
+
+---
+
+*Built with ❤️ using Rust, Tauri, and a commitment to making AI routing visible and reliable.*

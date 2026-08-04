@@ -201,48 +201,46 @@
           <input id="bSearch" type="text" placeholder="Search by name or id" spellcheck="false" />
         </div>
 
-        <div class="control-group">
-          <span class="controls-label">Narrow by</span>
-          <div class="browse-row">
-          <div class="field-select">
-            <select id="bProvider"><option value="">All providers</option></select>
-            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+        <div class="browse-filters-grid">
+          <div class="browse-filters-row">
+            <div class="field-select">
+              <select id="bProvider"><option value="">All providers</option></select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+            <div class="field-select">
+              <select id="bAuthor"><option value="">All authors</option></select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+            <div class="field-select">
+              <select id="bContext">
+                <option value="0">Any context</option>
+                <option value="32768">32K or more</option>
+                <option value="131072">128K or more</option>
+                <option value="262144">256K or more</option>
+                <option value="1048576">1M or more</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+            <div class="field-select">
+              <select id="bPrice">
+                <option value="">Any price</option>
+                <option value="0">Free only</option>
+                <option value="1">Under $1/M out</option>
+                <option value="5">Under $5/M out</option>
+                <option value="20">Under $20/M out</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
           </div>
-          <div class="field-select">
-            <select id="bAuthor"><option value="">All authors</option></select>
-            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+          
+          <div class="browse-row filters" id="bFilters">
+            <button class="filter" data-filter="vision">Vision</button>
+            <button class="filter" data-filter="tools">Tools</button>
+            <button class="filter" data-filter="reasoning">Reasoning</button>
+            <button class="filter" data-filter="structured">Structured</button>
+            <button class="filter" data-filter="rated">Benchmarked</button>
+            <button class="filter" data-filter="pooled">In pool</button>
           </div>
-          <div class="field-select">
-            <select id="bContext">
-              <option value="0">Any context</option>
-              <option value="32768">32K or more</option>
-              <option value="131072">128K or more</option>
-              <option value="262144">256K or more</option>
-              <option value="1048576">1M or more</option>
-            </select>
-            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
-          </div>
-          <div class="field-select">
-            <select id="bPrice">
-              <option value="">Any price</option>
-              <option value="0">Free only</option>
-              <option value="1">Under $1/M out</option>
-              <option value="5">Under $5/M out</option>
-              <option value="20">Under $20/M out</option>
-            </select>
-            <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
-          </div>
-        </div>
-
-        </div>
-
-        <div class="browse-row filters" id="bFilters">
-          <button class="filter" data-filter="vision">Vision</button>
-          <button class="filter" data-filter="tools">Tools</button>
-          <button class="filter" data-filter="reasoning">Reasoning</button>
-          <button class="filter" data-filter="structured">Structured output</button>
-          <button class="filter" data-filter="rated">Benchmarked</button>
-          <button class="filter" data-filter="pooled">In my pool</button>
         </div>
       </div>
 
