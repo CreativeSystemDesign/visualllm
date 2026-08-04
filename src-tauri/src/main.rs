@@ -613,6 +613,13 @@ fn pool_write(app: tauri::AppHandle, ids: Vec<lanes::Member>) -> Result<(), Stri
     lanes::pool_save(&store_dir(&app)?, &ids)
 }
 
+/// Live lane activity, for the canvas. The renderer polls this with the
+/// timestamp of the newest entry it has seen; the engine is the only writer.
+#[tauri::command]
+fn activity_read(app: tauri::AppHandle, since: Option<u64>) -> Result<Vec<Value>, String> {
+    Ok(server::activity_read(&store_dir(&app)?, since.unwrap_or(0)))
+}
+
 #[tauri::command]
 fn copy_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -818,6 +825,7 @@ fn main() {
             incidents_read,
             pool_read,
             pool_write,
+            activity_read,
             stats_read,
             stats_refresh,
             lane_test,

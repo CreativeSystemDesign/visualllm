@@ -35,6 +35,7 @@ const api = T
       statsRead: () => T.core.invoke('stats_read'),
       statsRefresh: () => T.core.invoke('stats_refresh'),
       laneTest: (slug) => T.core.invoke('lane_test', { slug }),
+      activityRead: (since) => T.core.invoke('activity_read', { since }),
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
       vscodeIntegrateLane: (slug, name) => T.core.invoke('vscode_integrate_lane', { slug, name }),
@@ -77,6 +78,8 @@ const state = {
   providers: [],
   catalog: [],
   incidents: [],       // engine-recorded failures, with receipts
+  activity: [],        // live per-request feed: trying / answered / failed
+  activitySeenAt: 0,   // high-water mark for the activity poll
   stats: {},
   statsFetchedAt: 0,
   pool: [],             // model ids the user kept — the sidebar shows only these
@@ -436,10 +439,55 @@ function laneCurlExample(slug) {
   return `curl ${laneEndpoint(slug)}/chat/completions \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
 }
 
+/** The live story for one lane, from the activity feed. `trying` is only
+ *  shown while fresh — a stale "trying" from a crashed poll would read as a
+ *  request in flight forever, so it decays. `answered` and `failed` linger
+ *  long enough to be noticed after the fact. */
+function laneLive(lane) {
+  const now = Date.now() / 1000
+  const entries = state.activity
+    .filter((e) => e.lane === lane.slug)
+    .sort((a, b) => b.at - a.at)
+  if (!entries.length) return null
+
+  const trying = entries.find((e) => e.phase === 'trying')
+  const settled = entries.find((e) => e.phase === 'answered' || e.phase === 'failed' || e.phase === 'exhausted')
+
+  if (trying && trying.at > now - 30 && (!settled || trying.at >= settled.at)) {
+    return { kind: 'trying', text: `trying ${shortMember(trying.member)}…`, title: 'A request is walking this lane now' }
+  }
+  if (settled && settled.at > now - 45) {
+    if (settled.phase === 'answered') {
+      const passed = (settled.detail.match(/passed over (\d+)/) || [])[1]
+      const suffix = passed && passed !== '0' ? ` · ${passed} passed over` : ''
+      return { kind: 'answered', text: `answered by ${shortMember(settled.member)}${suffix}`, title: attr(settled.detail) }
+    }
+    if (settled.phase === 'exhausted') {
+      return { kind: 'failed', text: 'every member was skipped or failed', title: attr(settled.detail) }
+    }
+    return { kind: 'failed', text: `${shortMember(settled.member)} failed`, title: attr(settled.detail) }
+  }
+  return null
+}
+
+/** `id@provider` is precise but wide; the activity line has pixels for the
+ *  model name, and the full label stays on hover. */
+function shortMember(label) {
+  if (!label) return ''
+  const id = label.split('@')[0]
+  return id.includes('/') ? id.split('/').slice(1).join('/') : id
+}
+
 function laneActivity(lane) {
+  const live = laneLive(lane)
   const recent = state.incidents
     .filter((incident) => incident.lane === lane.slug)
     .sort((a, b) => b.at - a.at)
+
+  if (live) {
+    const issues = recent.length ? ` · ${recent.length} issue${recent.length === 1 ? '' : 's'}` : ''
+    return `<span class="lane-activity is-${live.kind}" title="${live.title || ''}"><span class="live-dot"></span>${live.text}${issues}</span>`
+  }
   if (!recent.length) return '<span class="lane-activity quiet">No recent activity</span>'
   const latest = recent[0]
   const kind = latest.kind.replaceAll('_', ' ')
@@ -1354,6 +1402,7 @@ function toast(message, detail = '', action = null) {
     })
     el.appendChild(btn)
   }
+  el.classList.toggle('has-detail', !!detail)
   el.classList.toggle('has-action', !!action)
   el.classList.add('show')
   clearTimeout(toast._t)
@@ -2664,6 +2713,22 @@ async function refresh() {
   state.gateway = data.gateway || ''
   state.updatedAt = Date.now()
 
+  // The live lane feed. Polled incrementally (only what is newer than the
+  // high-water mark), and a change here forces a repaint below — a lane that
+  // starts or finishes serving must redraw even when nothing else moved.
+  let activityChanged = false
+  try {
+    const fresh = (await api.activityRead(state.activitySeenAt)) || []
+    if (fresh.length) {
+      state.activitySeenAt = Math.max(...fresh.map((e) => e.at || 0))
+      // Keep the feed small: the canvas reads the newest handful per lane.
+      state.activity = state.activity.concat(fresh).slice(-400)
+      activityChanged = true
+    }
+  } catch (err) {
+    // No live feed still leaves a working canvas; the feed is enhancement.
+  }
+
   // New incidents become notifications on every poll — toasts for what just
   // happened, the bell's count for what faded unseen. This runs regardless
   // of the repaint decision below: news is news even when the canvas has
@@ -2677,7 +2742,7 @@ async function refresh() {
   // one time in fifty and never under scrutiny is this bug, and it was
   // caught by an automated click losing the race that a finger usually wins.
   const signature = JSON.stringify([data, state.incidents])
-  if (signature !== refresh.last) {
+  if (activityChanged || signature !== refresh.last) {
     refresh.last = signature
     render()
     // Keep an open notification center current — evidence a few seconds old
@@ -2719,3 +2784,9 @@ bootstrap()
 // The "updated Ns ago" clock ticks on its own; a repaint every second just to
 // age a label would throw away scroll positions for nothing.
 setInterval(renderUpdated, 1000)
+// Live lane states decay: a "trying…" older than its freshness window, or an
+// "answered" past its linger, disappears on this beat even when no poll has
+// anything new to say. Cheap enough to ride the same one-second clock.
+setInterval(() => {
+  if (state.activity.some((e) => e.at > Date.now() / 1000 - 50)) renderLanes()
+}, 1000)

@@ -83,6 +83,57 @@ use tokio::sync::{oneshot, watch};
 // `crate::` means "from this program", as opposed to an external library.
 use crate::{incidents, lanes, loopwatch, providers};
 
+/// One line of live lane activity, for the canvas.
+///
+/// Fallback is the product, and it was invisible while it happened: the UI
+/// learned about a request only when it failed hard enough to become an
+/// incident, seconds later. This is the live feed — one JSON line per phase
+/// of a request, appended to `activity.jsonl`. The renderer tails it to show
+/// "trying X…" and then "answered by Y · N passed over" on the lane itself.
+///
+/// A plain text append, not a JSON document: it is written on the hot path,
+/// read by polling, and trimmed by size rather than parsed.
+fn note_activity(dir: &PathBuf, lane: &str, member: &str, phase: &str, detail: &str) {
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Sanitize for a single line: details can carry provider error text.
+    let scrub = |s: &str| s.replace(['\n', '\r'], " ");
+    let line = format!(
+        "{{\"at\":{at},\"lane\":\"{lane}\",\"member\":\"{member}\",\"phase\":\"{phase}\",\"detail\":\"{}\"}}\n",
+        scrub(detail)
+    );
+    let path = dir.join("activity.jsonl");
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+    // Trim to the newest ~64KiB so the file cannot grow unbounded. Reads
+    // tolerate a torn first line; the renderer skips unparseable entries.
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > 64 * 1024 {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let keep: String = text.lines().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+                let _ = std::fs::write(&path, keep + "\n");
+            }
+        }
+    }
+}
+
+/// Read the newest activity lines, for the renderer. The renderer polls this;
+/// unparseable lines (a torn trim boundary) are skipped.
+pub fn activity_read(dir: &PathBuf, since: u64) -> Vec<Value> {
+    let text = std::fs::read_to_string(dir.join("activity.jsonl")).unwrap_or_default();
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|entry| entry["at"].as_u64().unwrap_or(0) >= since)
+        .collect()
+}
+
 /// Record one failure with its receipts, so the canvas can explain it later.
 /// The note given here is the same text the trail and the log carry — one set
 /// of facts, three audiences.
@@ -945,6 +996,15 @@ async fn health(State(engine): State<Engine>) -> Json<Value> {
     }))
 }
 
+/// `GET /activity?since=<unix>` — the live lane feed the renderer tails.
+///
+/// The renderer holds no network access of its own, so it reaches this through
+/// the `activity_read` Tauri command, which shares this reader.
+async fn activity(State(engine): State<Engine>, axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>) -> Json<Value> {
+    let since = params.get("since").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    Json(json!({ "activity": activity_read(&engine.dir, since) }))
+}
+
 /// `POST /lane/{slug}/v1/chat/completions` — the one that does the work.
 ///
 /// `async fn` means this function can pause partway through — at every `.await`
@@ -1169,6 +1229,8 @@ async fn chat(
             client.post(format!("{base}/chat/completions")),
             provider,
         );
+        // The canvas shows "trying X…" from this moment.
+        note_activity(&engine.dir, &lane.slug, &label, "trying", "");
         let request = match headers.get("accept") {
             Some(accept) => request.header("accept", accept),
             None => request,
@@ -1201,6 +1263,13 @@ async fn chat(
                                 lane.slug,
                                 tried.len()
                             );
+                            note_activity(
+                                &engine.dir,
+                                &lane.slug,
+                                &served,
+                                "answered",
+                                &format!("committed on {on}; passed over {}", tried.len()),
+                            );
                             let out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref())
                                 .header("content-type", "text/event-stream");
                             let replay = futures_util::stream::iter(
@@ -1230,6 +1299,7 @@ async fn chat(
                         }
                         Gated::Dead(why) => {
                             eprintln!("engine: {}   {label} died in-stream: {why}", lane.slug);
+                            note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
                             note_incident(&engine.dir, lane, &label, &why, tool_count);
                             tried.push(Attempt::failed(&label, &why));
                             continue;
@@ -1259,6 +1329,13 @@ async fn chat(
                                 lane.slug,
                                 tried.len()
                             );
+                            note_activity(
+                                &engine.dir,
+                                &lane.slug,
+                                &served,
+                                "answered",
+                                &format!("served a blocking body; passed over {}", tried.len()),
+                            );
                             let mut out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref());
                             out = match upstream_type {
                                 Some(kind) => out.header("content-type", kind),
@@ -1282,6 +1359,7 @@ async fn chat(
                         }
                         Err(why) => {
                             eprintln!("engine: {}   {label} unusable body: {why}", lane.slug);
+                            note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
                             note_incident(&engine.dir, lane, &label, &why, tool_count);
                             tried.push(Attempt::failed(&label, &why));
                             continue;
@@ -1291,6 +1369,13 @@ async fn chat(
 
                 // Ungated (a tiny-budget probe): pipe straight through, the
                 // pre-commit-gate behaviour.
+                note_activity(
+                    &engine.dir,
+                    &lane.slug,
+                    &served,
+                    "answered",
+                    &format!("ungated probe; passed over {}", tried.len()),
+                );
                 let mut out = success_headers(&lane.slug, &served, &tried, unstuck.as_ref());
                 if streaming {
                     out = out.header("content-type", "text/event-stream");
@@ -1347,6 +1432,7 @@ async fn chat(
                     }
                     Verdict::TryNext(why) => {
                         eprintln!("engine: {}   {label} failed: {why}", lane.slug);
+                        note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
                         note_incident(&engine.dir, lane, &label, &why, tool_count);
                         tried.push(Attempt::failed(&label, &why));
                     }
@@ -1370,6 +1456,7 @@ async fn chat(
                     err.to_string()
                 };
                 eprintln!("engine: {}   {label} unreachable: {why}", lane.slug);
+                note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
                 note_incident(&engine.dir, lane, &label, &why, tool_count);
                 tried.push(Attempt::failed(&label, &why));
             }
@@ -1377,6 +1464,13 @@ async fn chat(
     }
 
     eprintln!("engine: {} exhausted — every member skipped or failed", lane.slug);
+    note_activity(
+        &engine.dir,
+        &lane.slug,
+        "",
+        "exhausted",
+        "every model in the lane was skipped or failed",
+    );
 
     // ---- 4. Nothing worked ------------------------------------------------
 
@@ -1397,6 +1491,7 @@ async fn chat(
 pub fn router(dir: PathBuf) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/activity", get(activity))
         .route("/v1/models", get(models))
         .route("/lane/{slug}/v1/chat/completions", post(chat))
         // Some clients append `/v1/models` to whatever base URL you give them.
