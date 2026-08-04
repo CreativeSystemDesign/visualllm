@@ -1093,6 +1093,29 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .field select { appearance: none; cursor: pointer; }
 
 .field-select { position: relative; display: block; }
+
+/* The gallery's filter selects live in a bare .field-select, not inside a
+   .field — they were falling through to the naked 17px native control. Give
+   the wrapper itself the same material so the two contexts read identically:
+   a glass niche with its own chevron, the select transparent inside it. */
+.field-select select {
+  width: 100%;
+  height: 38px;
+  padding: 0 34px 0 15px;
+  border-radius: 9px;
+  background: rgba(6, 7, 11, 0.55);
+  border: 1px solid var(--glass-edge);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--ink);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: all 260ms var(--ease-mass);
+}
+.field-select select:hover { border-color: var(--glass-edge-hi); }
+.field-select select:focus { border-color: rgba(255, 95, 86, 0.35); box-shadow: 0 0 0 3px var(--signal-soft); outline: none; }
+.field-select select option { background: #14161f; color: var(--ink); }
 .field-select .chev {
   position: absolute;
   right: 13px;
