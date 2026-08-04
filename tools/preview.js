@@ -84,9 +84,20 @@ const fixtures = {
 const indexHtml = fs.readFileSync(path.join(rendererDir, 'index.html'), 'utf8')
 const appSource = fs.readFileSync(path.join(rendererDir, 'app.js'), 'utf8')
 const styleSource = fs.readFileSync(path.join(rendererDir, 'style.css'), 'utf8')
+// The EGL skin is optional: when the renderer has been restyled to the
+// esoteric-generative build, egl.css/egl.js exist and must be inlined the
+// same way. When it has not, they are absent and the replacements below
+// simply match nothing.
+const readMaybe = (name) => {
+  try { return fs.readFileSync(path.join(rendererDir, name), 'utf8') } catch { return null }
+}
+const eglStyle = readMaybe('egl.css')
+const eglScript = readMaybe('egl.js')
 
 const html = indexHtml
   .replace(/<link[^>]*href="style\.css"[^>]*\/?>/i, `<style>\n${styleSource}</style>`)
+  .replace(/<link[^>]*href="egl\.css"[^>]*\/?>/i, eglStyle ? `<style>\n${eglStyle}</style>` : '')
+  .replace(/<script src="egl\.js"><\/script>/i, eglScript ? `<script>\n${eglScript}</script>` : '')
   .replace(
     '<script src="app.js"></script>',
     `<script>
@@ -127,6 +138,8 @@ const html = indexHtml
           console.log('[preview] vscodeIntegrateLane', { slug, name })
           return ok()
         },
+        stateExport: () => ok('/tmp/preview-export.json'),
+        stateImport: () => ok('/tmp/preview-export.json'),
         portGet: () => ok(4100),
         portSet: (port) => ok(port),
       }

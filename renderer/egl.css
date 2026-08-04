@@ -1,0 +1,1684 @@
+/* ============================================================================
+   VisualLLM — Esoteric Generative Luxury. The design system.
+
+   The window is an installation: a dark field (rendered by egl.js — a
+   reaction–diffusion chemistry woven with glyph topography) and, floating
+   in it, slabs of smoked acrylic. The slabs are cut to one asymmetric
+   recursive subdivision — the same pietCell() division the shader draws —
+   so the DOM architecture and the painted architecture are one structure.
+
+   Type is two faces: a wide-tracked display cut for names and numerals,
+   and a mono for everything the machine says. Both are system stacks —
+   luxury is precision, not download size.
+
+   Motion has mass. Nothing tweens under 300 ms; important things take 700.
+   The ease is a long-tail cubic — fast out, very slow in — so the interface
+   moves like a heavy object in oil, never like a web page.
+   ========================================================================== */
+
+:root {
+  /* The field */
+  --obsidian:     #07080c;
+  --obsidian-hi:  #0d0f16;
+
+  /* Acrylic: smoked glass over the field. Alpha is the material — too much
+     and the field dies; too little and the slab has no body. Kept thin
+     enough that the chemistry reads through as shadow and ember. */
+  --glass:        rgba(14, 16, 24, 0.46);
+  --glass-hi:     rgba(21, 24, 35, 0.56);
+  --glass-lo:     rgba(9, 10, 16, 0.34);
+  --glass-edge:   rgba(255, 255, 255, 0.07);
+  --glass-edge-hi: rgba(255, 255, 255, 0.16);
+
+  /* Ink */
+  --ink:          #d8dbe4;
+  --ink-dim:      #8b90a1;
+  --ink-faint:    #4e5261;
+
+  /* The six Piet hues, lit for dark ground. Restraint: one hue is *signal*
+     (coral), the other five appear only as tints carried by class. */
+  --piet-red:     #ff5f56;
+  --piet-yellow:  #e6c34a;
+  --piet-green:   #4cd69b;
+  --piet-cyan:    #5ccce6;
+  --piet-blue:    #7d9bff;
+  --piet-magenta: #c792ea;
+
+  --signal:       var(--piet-red);
+  --signal-soft:  rgba(255, 95, 86, 0.16);
+  --signal-glow:  rgba(255, 95, 86, 0.45);
+
+  --ok:           var(--piet-green);
+  --warn:         var(--piet-yellow);
+  --bad:          var(--piet-red);
+
+  --class-local:  var(--piet-cyan);
+  --class-free:   var(--piet-green);
+  --class-sub:    var(--piet-magenta);
+  --class-paid:   var(--piet-yellow);
+
+  /* Type */
+  --f-display: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  /* Mass */
+  --ease-mass: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 340ms;
+  --t-slow: 720ms;
+
+  /* The macro-structure. These four cuts are the shader's first two
+     subdivision levels, made concrete for the DOM. Read them together:
+     the vault (catalog) is the tall left slab; the atrium (lanes) is the
+     wide right chamber; the plinth runs beneath everything. */
+  --cut-x: 0.272;        /* the golden division's darker third */
+  --vault-w: calc(var(--cut-x) * 100%);
+  --plinth-h: 44px;
+}
+
+/* The reduced-motion contract: the field stills, slabs stop drifting, and
+   every transition collapses to instant. Luxury respects the reader. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  background: var(--obsidian);
+  color: var(--ink);
+  font-family: var(--f-display);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+  cursor: default;
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select { font: inherit; color: inherit; background: none; border: none; outline: none; }
+svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+:focus-visible { outline: 1px solid var(--signal); outline-offset: 2px; }
+
+::selection { background: var(--signal-soft); }
+
+/* Thin scrollbars: a hairline of light in a groove of dark. */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 100px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); background-clip: padding-box; }
+
+/* ============================================================================
+   THE FIELD — egl.js paints here, beneath everything.
+   ============================================================================ */
+
+.egl-field {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+/* ============================================================================
+   THE INSTALLATION — the DOM floats above the field in true layers.
+
+   Depth is physical: each slab gets a translateZ, a blur that increases
+   with distance from the eye, and a shadow that falls *down* the stack.
+   The whole stage tilts a fraction of a degree with the cursor — the
+   building leans toward the hand, with mass.
+   ============================================================================ */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  perspective: 1400px;
+  perspective-origin: 50% 42%;
+  display: grid;
+  grid-template-columns: var(--vault-w) 1fr;
+  grid-template-rows: 1fr var(--plinth-h);
+  gap: 14px;
+  padding: 16px 16px 12px;
+  transform-style: preserve-3d;
+  transition: transform 900ms var(--ease-mass);
+  transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+}
+
+/* A slab of smoked acrylic. */
+.slab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-radius: 14px;
+  background: var(--glass);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  /* The edge is the material, seen edge-on: brighter along the lit corner,
+     darker along the far one — one sun, top-left, for the whole building. */
+  border: 1px solid var(--glass-edge);
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge-hi),
+    inset 1px 0 0 rgba(255, 255, 255, 0.045),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.35),
+    0 30px 80px -20px rgba(0, 0, 0, 0.75),
+    0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* Each slab carries its class tint at its skin — the Piet hue of its
+   purpose, at 4–7%: a stain in the acrylic, never a paint over it. */
+.slab::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.055) 0%, transparent 26%),
+    radial-gradient(120% 90% at 50% 0%, var(--slab-tint, transparent) 0%, transparent 60%);
+  z-index: 0;
+}
+.slab > * { position: relative; z-index: 1; }
+
+/* The vault — the catalog's tall chamber. Tinted the blue of structure. */
+.slab-vault { --slab-tint: rgba(125, 155, 255, 0.05); transform: translateZ(24px); }
+
+/* The atrium — the lanes' wide hall. Tinted the coral of signal. */
+.slab-atrium { --slab-tint: rgba(255, 95, 86, 0.045); transform: translateZ(12px); }
+
+/* The plinth — the long stone everything stands on. */
+.slab-plinth {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 22px;
+  padding: 0 18px;
+  background: var(--glass-lo);
+  --slab-tint: rgba(230, 195, 74, 0.035);
+  transform: translateZ(6px);
+}
+
+/* ============================================================================
+   TYPE — the installation's voice.
+   ============================================================================ */
+
+.display {
+  font-family: var(--f-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.mono {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The overline: small caps, wide tracking, the voice of the building
+   naming its rooms. */
+.overline {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ============================================================================
+   THE TITLE STONE — the building's nameplate, top-left in the vault.
+   ============================================================================ */
+
+.titlestone {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px 14px;
+}
+
+.titlestone .sigil {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--signal);
+  background: linear-gradient(155deg, rgba(255, 95, 86, 0.14), rgba(255, 95, 86, 0.04));
+  border: 1px solid rgba(255, 95, 86, 0.22);
+  box-shadow: 0 0 24px -6px var(--signal-glow);
+}
+.titlestone .sigil svg { width: 17px; height: 17px; stroke-width: 1.7; }
+
+.titlestone .word {
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.titlestone .word em {
+  font-style: normal;
+  color: var(--signal);
+}
+
+/* ============================================================================
+   THE VAULT — the model catalog. The building's collection, wall-high.
+   ============================================================================ */
+
+.vault-head { padding: 6px 20px 12px; display: flex; flex-direction: column; gap: 12px; }
+
+/* The search reliquary: a glass inset with a thin lit base. */
+.reliquary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: rgba(6, 7, 11, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  transition: border-color var(--t-fast) var(--ease-mass), box-shadow var(--t-fast) var(--ease-mass);
+}
+.reliquary:focus-within {
+  border-color: rgba(255, 95, 86, 0.35);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 3px var(--signal-soft);
+}
+.reliquary svg { width: 13px; height: 13px; color: var(--ink-faint); flex-shrink: 0; }
+.reliquary input {
+  width: 100%;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  user-select: text;
+}
+.reliquary input::placeholder { color: var(--ink-faint); }
+
+.vault-row { display: flex; gap: 8px; align-items: center; }
+
+.vault-tools { display: flex; gap: 8px; }
+
+/* A small glass button. */
+.well {
+  height: 34px;
+  min-width: 34px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 9px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.6), inset 0 1px 0 var(--glass-edge);
+  transition: all var(--t-fast) var(--ease-mass);
+}
+.well svg { width: 14px; height: 14px; }
+.well:hover { color: var(--ink); border-color: var(--glass-edge-hi); transform: translateY(-1px); }
+.well:active { transform: translateY(0); background: var(--glass-lo); }
+.well.is-lit { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+
+/* The sort order, as a set of small engraved choices. */
+.order-strip {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+}
+.order-strip button {
+  padding: 5px 11px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  transition: all 260ms var(--ease-mass);
+}
+.order-strip button:hover { color: var(--ink-dim); }
+.order-strip button.is-chosen {
+  color: var(--signal);
+  background: rgba(255, 95, 86, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(255, 95, 86, 0.22), 0 0 16px -4px var(--signal-glow);
+}
+
+/* The filter seals — small class-hued stamps. */
+.seals { display: flex; gap: 6px; }
+.seal {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-lo);
+  transition: all 260ms var(--ease-mass);
+}
+.seal:hover { color: var(--ink-dim); }
+.seal.is-sealed { color: var(--seal-hue, var(--signal)); border-color: currentColor; background: rgba(255,255,255,0.03); box-shadow: 0 0 14px -4px currentColor; }
+.seal[data-filter="free"]   { --seal-hue: var(--class-free); }
+.seal[data-filter="vision"] { --seal-hue: var(--class-local); }
+.seal[data-filter="tools"]  { --seal-hue: var(--class-sub); }
+
+/* The vault's collection, scrolling in the tall chamber. */
+.collection {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  /* The collection fades at its head and foot — depth cues, not decoration. */
+  mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 22px), transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 18px, #000 calc(100% - 22px), transparent 100%);
+}
+
+.vault-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 10px 20px 16px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.vault-foot .hint { font-style: normal; letter-spacing: 0.06em; text-transform: none; }
+
+/* ============================================================================
+   THE RELIC — a model in the collection. Not a chip: a small inscribed
+   stone, its class carried as a seam of hue along its left edge.
+   ============================================================================ */
+
+.relic {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 13px 9px 15px;
+  border-radius: 10px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+  transition:
+    transform var(--t-fast) var(--ease-mass),
+    border-color var(--t-fast) var(--ease-mass),
+    background var(--t-fast) var(--ease-mass),
+    box-shadow var(--t-fast) var(--ease-mass);
+}
+/* The class seam: a 2px vein of the model's Piet hue running down the
+   relic's lit edge, glowing on approach. */
+.relic::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--class-hue, var(--ink-faint));
+  opacity: 0.55;
+  box-shadow: 0 0 10px -2px var(--class-hue, transparent);
+  transition: opacity var(--t-fast) var(--ease-mass), width var(--t-fast) var(--ease-mass);
+}
+.relic[data-class="local"] { --class-hue: var(--class-local); }
+.relic[data-class="free"]  { --class-hue: var(--class-free); }
+.relic[data-class="sub"]   { --class-hue: var(--class-sub); }
+.relic[data-class="paid"]  { --class-hue: var(--class-paid); }
+
+.relic:hover {
+  transform: translateX(3px);
+  border-color: var(--glass-edge-hi);
+  background: rgba(28, 31, 43, 0.72);
+}
+.relic:hover::before { opacity: 1; width: 3px; }
+.relic:active { cursor: grabbing; }
+
+.relic.is-source { opacity: 0.35; }
+.relic.in-track { padding-right: 56px; }
+
+.relic-body { min-width: 0; flex: 1; }
+
+.relic-name {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.relic-meta {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.relic-meta .sep { color: var(--ink-faint); margin: 0 4px; }
+
+.relic-health {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--ink-faint);
+}
+.relic-health.ok   { background: var(--ok);   box-shadow: 0 0 8px var(--ok); }
+.relic-health.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+.relic-health.bad  { background: var(--bad);  box-shadow: 0 0 8px var(--bad); }
+
+/* The ordinal — the primary's numeral is the one piece of true signal
+   colour in a lane, and it is set in the display face, not the mono. */
+.ordinal {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  font-family: var(--f-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-lo);
+}
+.relic.is-primary .ordinal {
+  color: #fff;
+  background: linear-gradient(155deg, var(--signal), #d63f37);
+  border-color: rgba(255, 95, 86, 0.5);
+  box-shadow: 0 0 18px -3px var(--signal-glow);
+}
+.relic.is-primary .relic-name { color: var(--signal); }
+
+.relic-gear, .relic-remove {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px; height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: all 240ms var(--ease-mass);
+}
+.relic-gear { right: 32px; }
+.relic-remove { right: 9px; }
+.relic-gear svg { width: 12px; height: 12px; }
+.relic-remove svg { width: 10px; height: 10px; stroke-width: 2; }
+.relic:hover .relic-gear, .relic:hover .relic-remove { opacity: 1; }
+.relic-gear:hover, .relic-remove:hover { color: var(--signal); background: var(--signal-soft); }
+.relic-gear.tuned { opacity: 0.9; color: var(--signal); }
+
+.relic.is-dead { opacity: 0.5; }
+.relic.is-dead .relic-name { text-decoration: line-through; }
+.relic.is-dead::before { background: var(--ink-faint); box-shadow: none; }
+
+.relic.is-parked { opacity: 0.55; }
+.relic.is-parked .relic-name { text-decoration: line-through; color: var(--ink-faint); }
+
+/* ============================================================================
+   THE ATRIUM — the lanes. The wide chamber where the work happens.
+   ============================================================================ */
+
+.atrium-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px 14px;
+}
+
+.atrium-title {
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.atrium-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  max-width: 58ch;
+}
+
+/* The commissioning stone — "New lane". The one saturated object in the
+   room; commissioning a work is the atrium's primary act. */
+.commission {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 38px;
+  padding: 0 20px 0 16px;
+  border-radius: 100px;
+  background: linear-gradient(155deg, #ff6f66, #e04a41);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  box-shadow:
+    0 10px 30px -8px var(--signal-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: all var(--t-fast) var(--ease-mass);
+}
+.commission svg { width: 13px; height: 13px; stroke-width: 2.2; }
+.commission:hover { transform: translateY(-1px); box-shadow: 0 16px 40px -8px var(--signal-glow), inset 0 1px 0 rgba(255,255,255,0.25); }
+.commission:active { transform: translateY(0); filter: brightness(0.92); }
+
+.halls {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ============================================================================
+   THE HALL — one lane. A long vitrine; inside it, the relics in their
+   order of precedence, right to left, and the flow drawn as light.
+   ============================================================================ */
+
+.hall {
+  border-radius: 13px;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  box-shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.7), inset 0 1px 0 var(--glass-edge);
+  padding: 4px;
+  transition: border-color var(--t-slow) var(--ease-mass), box-shadow var(--t-slow) var(--ease-mass);
+}
+.hall.is-target {
+  border-color: rgba(255, 95, 86, 0.4);
+  box-shadow: 0 0 0 3px var(--signal-soft), 0 22px 60px -18px rgba(0,0,0,0.8);
+}
+
+.hall-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 9px;
+  height: 36px;
+  padding: 0 12px;
+  overflow: hidden;
+}
+
+.hall-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+  padding: 3px 9px;
+  border-radius: 8px;
+  min-width: 48px;
+  max-width: 200px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+  transition: all 260ms var(--ease-mass);
+}
+.hall-name:hover { background: rgba(255, 255, 255, 0.045); }
+.hall-name:focus { background: rgba(6, 7, 11, 0.6); color: var(--signal); max-width: none; flex: 1; }
+
+/* The five lamps of state — small jewels in the hall's cornice. */
+.hall-lamps { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 0 2px; }
+.lamp {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: all var(--t-fast) var(--ease-mass);
+}
+.lamp.on { box-shadow: 0 0 8px currentColor; }
+.lamp-live.on { background: var(--signal); color: var(--signal); animation: liveBreath 1.6s var(--ease-mass) infinite; }
+.lamp-ok.on { background: var(--ok); color: var(--ok); }
+.lamp-bad.on { background: var(--bad); color: var(--bad); }
+.lamp-warn.on { background: var(--warn); color: var(--warn); }
+.lamp-park.on { background: var(--ink-dim); color: var(--ink-dim); }
+@keyframes liveBreath {
+  0%, 100% { box-shadow: 0 0 4px currentColor; }
+  50% { box-shadow: 0 0 14px currentColor, 0 0 4px currentColor; }
+}
+
+.hall-spacer { flex: 1; min-width: 6px; }
+
+.hall-url {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: 100px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  flex-shrink: 0;
+  max-width: 190px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: all 260ms var(--ease-mass);
+}
+.hall-url:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.25); }
+.hall-url svg { width: 10px; height: 10px; flex-shrink: 0; }
+.hall-url .host { color: var(--ink-faint); }
+
+.hall-act {
+  flex-shrink: 0;
+  padding: 4px 11px;
+  border-radius: 100px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  transition: all 260ms var(--ease-mass);
+}
+.hall-act:hover { color: var(--ink); border-color: var(--glass-edge-hi); }
+
+.hall-toggle {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-faint);
+  transition: all 260ms var(--ease-mass);
+}
+.hall-toggle svg { width: 11px; height: 11px; }
+.hall-toggle:hover { color: var(--ink-dim); }
+.hall-toggle.is-on { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); background: var(--signal-soft); }
+
+.hall-remove {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: all 240ms var(--ease-mass);
+}
+.hall-remove svg { width: 9px; height: 9px; stroke-width: 2; }
+.hall:hover .hall-remove { opacity: 1; }
+.hall-remove:hover { color: var(--signal); background: var(--signal-soft); }
+
+/* THE PROCESSION — the track, as a vitrine: a long case of dark glass the
+   relics sit in, the primary at the right edge under the arrow of light. */
+.procession {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 80px;
+  padding: 12px 16px;
+  margin: 0 4px;
+  border-radius: 10px;
+  background: rgba(5, 6, 10, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 3px 14px rgba(0, 0, 0, 0.55);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.procession > .relic { flex-shrink: 0; max-width: 210px; }
+.procession.can-scroll-left { /* the fade at the hidden edge */
+  mask-image: linear-gradient(90deg, transparent 0, #000 30px);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 30px);
+}
+
+/* The flow: a current of light drawn under the relics toward the primary. */
+.flow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 55%, rgba(255, 95, 86, 0.06));
+}
+
+.procession-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+}
+.procession-empty .niche {
+  width: 92px;
+  height: 44px;
+  border-radius: 9px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.answers-first {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--signal);
+  white-space: nowrap;
+}
+.answers-first svg { width: 13px; height: 13px; stroke-width: 2; }
+
+.drop-line {
+  position: absolute;
+  top: 14px; bottom: 14px;
+  width: 2px;
+  border-radius: 100px;
+  background: linear-gradient(180deg, #ff6f66, #d63f37);
+  box-shadow: 0 0 12px var(--signal-glow);
+  pointer-events: none;
+  animation: dropIn 200ms var(--ease-mass);
+}
+@keyframes dropIn { from { opacity: 0; transform: scaleY(0.3); } to { opacity: 1; transform: scaleY(1); } }
+
+/* The hall's foot: the status line, set small in the mono voice. */
+.hall-foot {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 14px 2px;
+}
+.hall-foot .lane-activity {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 7px;
+  transition: all 260ms var(--ease-mass);
+}
+.hall-foot .lane-activity:hover { color: var(--ink); background: rgba(255, 255, 255, 0.04); }
+.hall-foot .foot-live.is-trying { color: var(--signal); font-weight: 650; }
+.hall-foot .foot-live.is-answered { color: var(--ok); font-weight: 650; }
+.hall-foot .foot-live.is-failed { color: var(--bad); font-weight: 650; }
+.hall-foot .foot-dead { color: var(--bad); }
+.hall-foot .foot-parked { color: var(--ink-dim); }
+.hall-foot .foot-issues { color: var(--warn); }
+.hall-foot .foot-criteria { color: var(--ink-faint); cursor: pointer; }
+.hall-foot .foot-criteria:hover { color: var(--signal); text-decoration: underline; }
+.hall-foot .foot-sep { color: var(--ink-faint); margin: 0 7px; }
+.hall-foot .foot-quiet { color: var(--ink-faint); font-style: italic; }
+
+/* ============================================================================
+   THE PLINTH — the long stone. Status, gateway, and the bell.
+   ============================================================================ */
+
+.plinth-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.plinth-stat b { font-weight: 650; color: var(--ink); }
+.plinth-stat .unit { color: var(--ink-faint); }
+
+.plinth-link {
+  border-radius: 7px;
+  padding: 4px 10px;
+  margin-left: -10px;
+  transition: all 260ms var(--ease-mass);
+}
+.plinth-link:hover { color: var(--ink); background: rgba(255, 255, 255, 0.05); }
+
+.plinth-right { margin-left: auto; color: var(--ink-faint); }
+
+.plinth-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); }
+.plinth-dot.ok { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
+.plinth-dot.bad { background: var(--bad); box-shadow: 0 0 7px var(--bad); }
+
+/* The bell, set into the plinth's far end. */
+.campanile {
+  position: relative;
+  flex-shrink: 0;
+  width: 30px; height: 30px;
+  margin-left: 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-faint);
+  transition: all 260ms var(--ease-mass);
+}
+.campanile svg { width: 14px; height: 14px; }
+.campanile:hover { color: var(--ink); }
+.campanile.is-lit { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+
+.campanile-badge {
+  position: absolute;
+  top: -6px; right: -8px;
+  min-width: 16px; height: 16px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 100px;
+  background: linear-gradient(155deg, #ff6f66, #d63f37);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 12px -2px var(--signal-glow);
+}
+
+/* ============================================================================
+   THE WINDOW'S OWN CONTROLS — frameless, they sit on the title stone's
+   shelf, small and quiet.
+   ============================================================================ */
+
+.frame-controls { display: flex; gap: 7px; align-items: center; }
+
+.frame-btn {
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-dim);
+  transition: all 260ms var(--ease-mass);
+}
+.frame-btn svg { width: 11px; height: 11px; }
+.frame-btn:hover { color: var(--ink); border-color: var(--glass-edge-hi); }
+.frame-btn.frame-close:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+
+.frame-btn .glyph-dark { display: none; }
+[data-theme="dark"] .frame-btn .glyph-light { display: none; }
+[data-theme="dark"] .frame-btn .glyph-dark { display: block; }
+
+/* ============================================================================
+   OVERLAYS — the panels float nearest the eye, deepest acrylic.
+   ============================================================================ */
+
+.veil {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 34px;
+  background: rgba(4, 5, 8, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 500;
+  animation: veilIn 240ms var(--ease-mass);
+}
+.veil[hidden] { display: none; }
+@keyframes veilIn { from { opacity: 0; } to { opacity: 1; } }
+
+.chamber {
+  width: min(740px, 95%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: var(--glass-hi);
+  backdrop-filter: blur(30px) saturate(1.4);
+  -webkit-backdrop-filter: blur(30px) saturate(1.4);
+  border: 1px solid var(--glass-edge-hi);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 60px 120px -30px rgba(0, 0, 0, 0.9);
+  overflow: hidden;
+  animation: chamberIn 340ms var(--ease-mass);
+}
+@keyframes chamberIn { from { opacity: 0; transform: translateY(16px) scale(0.985); } to { opacity: 1; transform: none; } }
+
+.chamber-wide { width: min(1240px, 96%); height: min(86vh, 820px); }
+
+.chamber-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 26px 16px;
+}
+.chamber-head h2 {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.chamber-head .atrium-sub { margin-top: 4px; font-size: 11.5px; max-width: 56ch; }
+
+.chamber-body { overflow-y: auto; padding: 0 26px 26px; }
+
+/* Providers */
+.provider-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+
+.provider {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 16px;
+  border-radius: 11px;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  cursor: pointer;
+  transition: all var(--t-fast) var(--ease-mass);
+}
+.provider:hover { border-color: var(--glass-edge-hi); transform: translateX(2px); }
+.provider.is-editing { background: var(--glass-lo); border-color: rgba(255, 95, 86, 0.25); }
+
+.provider-body { flex: 1; min-width: 0; }
+.provider-name { font-size: 13px; font-weight: 650; color: var(--ink); }
+.provider-meta {
+  margin-top: 2px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.provider-count {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: 100px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid var(--glass-edge);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.provider-count.bad { color: var(--signal); }
+
+.provider-edit {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--ink-faint);
+  transition: all 260ms var(--ease-mass);
+}
+.provider-edit:hover { color: var(--ink); background: rgba(255, 255, 255, 0.05); }
+.provider-edit svg { width: 13px; height: 13px; }
+
+/* Forms */
+.provider-form {
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--glass-lo);
+  border: 1px solid var(--glass-edge);
+}
+
+.form-title { font-size: 12.5px; font-weight: 650; color: var(--ink); margin-bottom: 16px; }
+
+.field { display: block; margin-bottom: 16px; }
+.field > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.field input, .field select {
+  width: 100%;
+  height: 38px;
+  padding: 0 15px;
+  border-radius: 9px;
+  background: rgba(6, 7, 11, 0.55);
+  border: 1px solid var(--glass-edge);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--ink);
+  user-select: text;
+  transition: all 260ms var(--ease-mass);
+}
+.field input:focus, .field select:focus { border-color: rgba(255, 95, 86, 0.35); box-shadow: 0 0 0 3px var(--signal-soft); }
+.field input::placeholder { color: var(--ink-faint); }
+.field select { appearance: none; cursor: pointer; }
+
+.field-select { position: relative; display: block; }
+.field-select .chev {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px; height: 12px;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+
+.form-note { min-height: 17px; margin: 4px 0 16px; font-size: 11px; color: var(--ink-dim); }
+.form-note.ok { color: var(--ok); }
+.form-note.bad { color: var(--signal); }
+
+.form-actions { display: flex; align-items: center; gap: 9px; }
+.form-actions .spacer { flex: 1; }
+
+.btn-ghost {
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 100px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  color: var(--ink-dim);
+  transition: all 260ms var(--ease-mass);
+}
+.btn-ghost:hover { color: var(--ink); border-color: var(--glass-edge-hi); }
+.btn-ghost.btn-danger:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+
+.btn-primary {
+  height: 36px;
+  padding: 0 22px;
+  border-radius: 100px;
+  background: linear-gradient(155deg, #ff6f66, #e04a41);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 24px -8px var(--signal-glow), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: all 260ms var(--ease-mass);
+}
+.btn-primary:hover { transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); filter: brightness(0.92); }
+
+.portability {
+  margin-top: 22px;
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--glass-lo);
+  border: 1px solid var(--glass-edge);
+}
+.portability-title { font-size: 12.5px; font-weight: 650; color: var(--ink); margin-bottom: 8px; }
+.portability-note { font-size: 11px; line-height: 1.55; color: var(--ink-dim); margin-bottom: 14px; }
+.portability-actions { display: flex; gap: 10px; margin-bottom: 12px; }
+.portability-import-mode { display: flex; gap: 16px; font-size: 11px; color: var(--ink-dim); }
+.portability-import-mode label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.portability-import-mode input[type="radio"] { accent-color: var(--signal); }
+
+/* ============================================================================
+   THE GALLERY — the browse panel. Wide, a grid of offerings.
+   ============================================================================ */
+
+.gallery-controls { padding: 0 26px 16px; display: flex; flex-direction: column; gap: 12px; }
+.gallery-row { display: flex; align-items: center; gap: 10px; }
+.gallery-row .grow { flex: 1; min-width: 0; }
+.gallery-row .field-select { flex: 1; min-width: 130px; }
+
+.gallery-filters { display: flex; flex-wrap: wrap; gap: 7px; }
+.gallery-filters .seal { flex: 0 0 auto; }
+
+.gallery-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 26px 12px;
+}
+.gallery-count {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.gallery-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px 10px;
+  margin: 0 26px;
+}
+.head-hint { font-size: 10px; font-style: italic; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-spacer { flex-shrink: 0; width: 78px; }
+
+.gallery-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 26px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* An offering in the gallery. */
+.offering {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 11px;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  transition: all var(--t-fast) var(--ease-mass);
+}
+.offering:hover { border-color: var(--glass-edge-hi); transform: translateX(2px); }
+.offering.is-pooled { background: var(--glass-lo); border-color: rgba(255, 95, 86, 0.22); }
+
+.offering-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.offering-title { display: flex; align-items: baseline; gap: 8px; }
+.offering-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.3;
+}
+.offering-author {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.offering-id {
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.offering-metrics {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.metric { text-align: right; min-width: 54px; }
+.metric-value { display: block; font-size: 12px; font-weight: 650; color: var(--ink); }
+.metric-value.dim { color: var(--ink-faint); font-weight: 500; }
+.metric-label {
+  display: block;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 1px;
+}
+
+.offering-caps { display: flex; gap: 5px; flex-shrink: 0; min-width: 92px; }
+.cap {
+  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-faint);
+  font-size: 9px;
+  font-weight: 700;
+}
+.cap.on { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+.cap.unknown { opacity: 0.38; }
+
+.offering-add {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 100px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink-dim);
+  transition: all 260ms var(--ease-mass);
+}
+.offering-add:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+.offering-add.added { background: var(--signal-soft); color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
+
+.col-sort { cursor: pointer; border-radius: 6px; padding: 4px 2px; transition: all 260ms var(--ease-mass); position: relative; }
+.col-sort:hover .metric-label { color: var(--ink); }
+.col-sort.is-sorted .metric-label { color: var(--signal); font-weight: 700; }
+.col-sort.is-sorted { background: rgba(255, 95, 86, 0.06); }
+.col-lock {
+  position: absolute;
+  top: -8px; right: -8px;
+  width: 15px; height: 15px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge-hi);
+  color: var(--signal);
+  opacity: 0;
+  transition: opacity 240ms var(--ease-mass);
+}
+.col-lock svg { width: 8px; height: 8px; }
+.col-sort.is-sorted .col-lock { opacity: 0.55; }
+.col-sort.is-sorted:hover .col-lock { opacity: 1; }
+
+.match { flex-shrink: 0; width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+.match-value { display: block; font-size: 15px; font-weight: 700; color: var(--signal); line-height: 1.1; }
+.match-label { display: block; font-size: 8px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); margin-top: 1px; }
+.match.none { color: var(--ink-faint); font-size: 13px; padding-top: 4px; }
+
+.direction { flex: 0 0 auto; height: 34px; padding: 0 16px; font-size: 11px; white-space: nowrap; }
+
+.lane-criteria { display: flex; align-items: center; gap: 6px; flex-shrink: 1; min-width: 0; overflow: hidden; cursor: pointer; }
+.crit {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 100px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid var(--glass-edge);
+  font-size: 9.5px;
+  font-weight: 650;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  transition: color 260ms var(--ease-mass);
+}
+.lane-criteria:hover .crit { color: var(--signal); }
+
+.row-provider {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: 100px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid var(--glass-edge);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.head-text-sorts { display: flex; align-items: center; gap: 14px; }
+.control-group { display: flex; flex-direction: column; }
+.field-select.is-sort select { color: var(--signal); font-weight: 650; }
+.col-name { align-self: flex-start; padding: 4px 0; text-align: left; }
+.col-name .metric-label { text-align: left; }
+
+@media (max-width: 1250px) {
+  .offering-metrics .metric:nth-last-child(2),
+  .gallery-header .col-sort:nth-last-child(2) { display: none; }
+}
+@media (max-width: 900px) {
+  .offering-metrics .metric:last-child,
+  .gallery-header .col-sort:last-child { display: none; }
+}
+
+/* ============================================================================
+   THE MEMBER DIALS — a floating instrument, nearest the eye.
+   ============================================================================ */
+
+.dials {
+  position: fixed;
+  z-index: 600;
+  width: 258px;
+  padding: 16px;
+  border-radius: 13px;
+  background: var(--glass-hi);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid var(--glass-edge-hi);
+  box-shadow: 0 40px 90px -20px rgba(0, 0, 0, 0.85);
+  animation: chamberIn 240ms var(--ease-mass);
+}
+.dials[hidden] { display: none; }
+
+.dials-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dials-title {
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dials-sub { margin: 8px 0 12px; font-size: 10.5px; line-height: 1.5; color: var(--ink-dim); }
+
+.dial {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dial > span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+.dial input {
+  width: 92px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: rgba(6, 7, 11, 0.55);
+  border: 1px solid var(--glass-edge);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+.dial input::placeholder { color: var(--ink-faint); }
+
+.dials-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.dials-actions .btn-ghost { height: 28px; padding: 0 14px; font-size: 10.5px; }
+
+/* The relic's context menu. */
+.relic-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--glass-hi);
+  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  border: 1px solid var(--glass-edge-hi);
+  box-shadow: 0 30px 70px -18px rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.relic-menu[hidden] { display: none !important; }
+.relic-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+  text-align: left;
+  transition: all 240ms var(--ease-mass);
+}
+.relic-menu-item svg { width: 13px; height: 13px; flex-shrink: 0; }
+.relic-menu-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--signal); }
+.relic-menu-danger:hover { color: var(--signal); }
+
+/* ============================================================================
+   THE NOTIFICATIONS — toasts as small floating stones; the center as a
+   chamber of diagnoses.
+   ============================================================================ */
+
+.notif-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 60px;
+  z-index: 650;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.notif-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 330px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--glass-hi);
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  border: 1px solid var(--glass-edge-hi);
+  box-shadow: 0 30px 70px -16px rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+  animation: chamberIn 260ms var(--ease-mass);
+}
+.notif-toast-body { min-width: 0; flex: 1; }
+.notif-toast-title { display: block; font-size: 12px; font-weight: 650; color: var(--ink); }
+.notif-toast-meta {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notif-toast-close {
+  flex-shrink: 0;
+  width: 20px; height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--ink-faint);
+  transition: all 240ms var(--ease-mass);
+}
+.notif-toast-close svg { width: 9px; height: 9px; stroke-width: 2; }
+.notif-toast-close:hover { color: var(--signal); background: var(--signal-soft); }
+
+#notifList { display: flex; flex-direction: column; gap: 12px; }
+
+.issue {
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+}
+.issue-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.issue-title { font-size: 12.5px; font-weight: 650; color: var(--ink); }
+.issue-meta { flex-shrink: 0; font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-faint); }
+.issue-evidence {
+  margin: 0 0 12px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  background: rgba(6, 7, 11, 0.55);
+  border: 1px solid var(--glass-edge);
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.issue-why { font-size: 11.5px; line-height: 1.6; color: var(--ink-dim); margin-bottom: 8px; }
+.issue-advice { font-size: 11.5px; line-height: 1.6; color: var(--ink); }
+.issue-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.issue-fix { height: 30px; padding: 0 16px; font-size: 11px; }
+.issue-mute, .issue-mute-lane { height: 30px; padding: 0 16px; font-size: 11px; }
+.issue-mute-lane { color: var(--ink-dim); }
+.issue-mute-lane:hover { color: var(--ink); }
+.issue.is-muted { opacity: 0.55; }
+
+.notif-scope {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink-dim);
+  padding: 8px 14px;
+  margin-bottom: 16px;
+  border-radius: 100px;
+  background: rgba(6, 7, 11, 0.5);
+  border: 1px solid var(--glass-edge);
+}
+.notif-scope-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; }
+.notif-scope-select {
+  appearance: none;
+  border: none;
+  background: var(--glass-hi);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  padding: 5px 24px 5px 12px;
+  border-radius: 100px;
+  border: 1px solid var(--glass-edge);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238b90a1' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 6.5L8 10l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 11px;
+}
+.notif-scope-clear { color: var(--signal); font-weight: 650; padding: 0 3px; }
+.notif-scope-clear:hover { text-decoration: underline; }
+.notif-body { padding-top: 6px; }
+
+/* ============================================================================
+   THE TOAST — a word from the building, bottom centre.
+   ============================================================================ */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 66px;
+  transform: translate(-50%, 14px);
+  padding: 12px 24px;
+  border-radius: 100px;
+  background: var(--glass-hi);
+  backdrop-filter: blur(26px) saturate(1.4);
+  -webkit-backdrop-filter: blur(26px) saturate(1.4);
+  border: 1px solid var(--glass-edge-hi);
+  box-shadow: 0 24px 60px -14px rgba(0, 0, 0, 0.85);
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: all var(--t-fast) var(--ease-mass);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.has-detail, .toast.has-action { border-radius: 14px; padding: 16px 26px; }
+.toast-detail { font-size: 10.5px; font-weight: 500; color: var(--ink-dim); max-width: 68vw; text-align: center; overflow: hidden; margin-top: 2px; }
+.toast.has-action { pointer-events: auto; }
+.toast-action {
+  margin-top: 10px;
+  background: linear-gradient(155deg, #ff6f66, #e04a41);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 7px 20px;
+  border-radius: 100px;
+  box-shadow: 0 8px 22px -6px var(--signal-glow);
+  transition: all 260ms var(--ease-mass);
+}
+.toast-action:hover { transform: translateY(-1px); }
+
+/* ============================================================================
+   EMPTY STATES
+   ============================================================================ */
+
+.empty-state {
+  padding: 34px 22px;
+  text-align: center;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+  border-radius: 11px;
+  border: 1px dashed rgba(255, 255, 255, 0.09);
+}
+.empty-state strong { display: block; color: var(--ink-dim); font-weight: 650; margin-bottom: 6px; font-size: 12.5px; }
+
+.load-more {
+  display: block;
+  width: 100%;
+  margin: 6px 0;
+  padding: 11px 16px;
+  border-radius: 9px;
+  background: var(--glass-hi);
+  border: 1px solid var(--glass-edge);
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  transition: all 260ms var(--ease-mass);
+}
+.load-more:hover { color: var(--ink); border-color: var(--glass-edge-hi); }
+
+.onboarding-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.onboarding-empty strong { font-size: 15px; color: var(--ink); margin-bottom: 0; }
+.onboarding-empty span { max-width: 430px; line-height: 1.6; }
+.onboarding-empty .empty-explain { color: var(--ink-dim); }
+.empty-action { margin-top: 12px; }
+
+.provider-onboarding { display: flex; flex-direction: column; gap: 8px; line-height: 1.55; }
+.provider-onboarding strong { font-size: 13.5px; color: var(--ink); }
+.provider-onboarding span { color: var(--ink-faint); }
+
+/* ============================================================================
+   THE DRAG GHOST — the relic in the hand, lifted and lit.
+   ============================================================================ */
+
+.ghost {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  transform-origin: 20px 50%;
+  animation: lift 200ms var(--ease-mass) forwards;
+  box-shadow: 0 30px 70px -14px rgba(0, 0, 0, 0.9), 0 0 0 1px var(--glass-edge-hi) !important;
+}
+@keyframes lift {
+  from { transform: scale(1) rotate(0deg); }
+  to   { transform: scale(1.04) rotate(-1.2deg); }
+}
+body.is-dragging, body.is-dragging .relic { cursor: grabbing !important; }
