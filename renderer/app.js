@@ -499,6 +499,23 @@ function laneActivity(lane) {
   return `<span class="lane-activity" title="${attr(latest.evidence)}">${recent.length} issue${recent.length === 1 ? '' : 's'} · ${attr(kind)}</span>`
 }
 
+/** Members the engine will skip at request time, named in the lane head so the
+ *  gap between what you see and what runs is never a surprise at 2am. Dead
+ *  members (not in any catalog) warn in coral; parked members are noted
+ *  neutrally — parking is a choice, dead is a problem. */
+function laneWarnings(lane) {
+  const dead = lane.members.filter((ref) => !modelByRef(ref.provider, ref.id)).length
+  const parked = lane.members.filter((ref) => ref.disabled).length
+  const pills = []
+  if (dead) {
+    pills.push(`<span class="lane-warn is-dead" title="${dead} member${dead === 1 ? '' : 's'} not in any provider's catalog — the lane will skip ${dead === 1 ? 'it' : 'them'} at request time. Remove or replace.">${dead} dead</span>`)
+  }
+  if (parked) {
+    pills.push(`<span class="lane-warn is-parked" title="${parked} member${parked === 1 ? '' : 's'} parked — skipped at request time, keeping ${parked === 1 ? 'its' : 'their'} place and dials.">${parked} parked</span>`)
+  }
+  return pills.join('')
+}
+
 function laneEl(lane) {
   const el = document.createElement('article')
   el.className = 'lane'
@@ -515,6 +532,7 @@ function laneEl(lane) {
     <button class="lane-action lane-copy-setup" title="Copy a curl setup example">Setup</button>
     <button class="lane-action lane-vscode" title="Add this lane to VS Code model picker">VS Code</button>
     ${laneActivity(lane)}
+    ${laneWarnings(lane)}
     ${(lane.criteria || []).length ? `<span class="lane-criteria" title="What this lane was built for. Click to search the catalog with these criteria — it does not change the lane.">${
       lane.criteria.map((c) => `<span class="crit">${criterionWords(c)}</span>`).join('')
     }</span>` : ''}
@@ -573,7 +591,17 @@ function renderLanes() {
     if (!track) return
     const previous = scrolls.get(el.dataset.lane)
     track.scrollLeft = previous === undefined ? track.scrollWidth : previous
+    updateScrollFade(track)
+    if (!track.dataset.fadeWired) {
+      track.dataset.fadeWired = '1'
+      track.addEventListener('scroll', () => updateScrollFade(track), { passive: true })
+    }
   })
+}
+
+/** The left-edge fade appears only when members hide off that side. */
+function updateScrollFade(track) {
+  track.classList.toggle('can-scroll-left', track.scrollLeft > 2)
 }
 
 function renderStatusBar() {
@@ -855,7 +883,20 @@ function endDrag() {
       .map(({ field, desc }) => ({ field, desc }))
   }
 
-  if (index === 0) toast(`${model.id} answers first in ${lane.name}`)
+  // The first member is the product moment: the lane just became a live
+  // endpoint, and the next step is connecting a client. Celebrate once — the
+  // moment is earned exactly one time per lane — with the URL and what to do
+  // with it. Later drops just confirm the ordering.
+  const firstEverMember = lane.members.length === 1 && !lane._celebrated
+  if (firstEverMember) {
+    lane._celebrated = true
+    toast(
+      `${lane.name} is live`,
+      `${laneEndpoint(lane.slug)} — point any OpenAI-compatible client here. Setup copies a curl example, VS Code adds it to the model picker.`
+    )
+  } else if (index === 0) {
+    toast(`${model.id} answers first in ${lane.name}`)
+  }
   render()
   saveLanes()
 }
@@ -1734,6 +1775,30 @@ document.addEventListener('keydown', (event) => {
   if (name && event.key === 'Enter') {
     event.preventDefault()
     name.blur()
+  }
+})
+
+// Shortcuts. The app is a power tool used alongside editors, so it should be
+// drivable without the mouse: the three panels, a new lane, and a help overlay
+// on `?`. Guarded against typing — a shortcut must never fire mid-word in the
+// search box or an input.
+document.addEventListener('keydown', (event) => {
+  const typing = event.target.closest('input, textarea, select, [contenteditable]')
+  if (typing) return
+
+  const mod = event.ctrlKey || event.metaKey
+  if (mod && event.key.toLowerCase() === 'n') {
+    event.preventDefault()
+    $('newLane').click()
+  } else if (mod && event.key.toLowerCase() === 'b') {
+    event.preventDefault()
+    openBrowse()
+  } else if (mod && event.key === ',') {
+    event.preventDefault()
+    openSettings()
+  } else if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+    event.preventDefault()
+    toast('Shortcuts', 'Ctrl+N new lane · Ctrl+B browse · Ctrl+, settings · Esc close · right-click a member for its menu', null)
   }
 })
 

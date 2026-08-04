@@ -728,6 +728,24 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 }
 .notif-scope-clear:hover { color: var(--accent-deep); }
 
+/* Members the lane will skip, named in the head. Dead warns in coral; parked
+   is neutral — parking is a choice, dead is a problem. Both are small pressed
+   pills, same family as the activity line. */
+.lane-warn {
+  flex-shrink: 0;
+  padding: 4px 11px;
+  border-radius: 100px;
+  background: var(--pressed-bg);
+  box-shadow: var(--in1);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.lane-warn.is-dead { color: var(--bad); }
+.lane-warn.is-parked { color: var(--text-dim); }
+
 .lane-kind {
   margin-left: auto;
   flex-shrink: 0;
@@ -827,6 +845,33 @@ svg    { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: ro
 }
 
 .track > .chip { flex-shrink: 0; max-width: 240px; }
+
+/* The track can hold more members than it is wide. A lane scrolled to its
+   right-hand (primary) edge hides the fallbacks off the left, and nothing said
+   so — the fade says it. `can-scroll-left` is toggled from app.js on scroll and
+   render. */
+.track::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 36px;
+  border-radius: 20px 0 0 20px;
+  background: linear-gradient(90deg, var(--pressed-bg) 8%, transparent);
+  opacity: 0;
+  transition: opacity 0.25s var(--ease);
+  pointer-events: none;
+  z-index: 2;
+}
+.track.can-scroll-left::before { opacity: 1; }
+/* The thin scrollbar, neumorphically: the track is the pressed-in ground, the
+   thumb a small raised pill. */
+.track::-webkit-scrollbar { height: 6px; }
+.track::-webkit-scrollbar-track { background: transparent; }
+.track::-webkit-scrollbar-thumb {
+  background: var(--dark);
+  border-radius: 100px;
+  box-shadow: inset 1px 1px 2px rgba(255,255,255,0.5);
+}
 
 .flow {
   position: absolute; 
@@ -1300,10 +1345,9 @@ body.is-dragging, body.is-dragging .chip { cursor: grabbing !important; }
   font-size: 10.5px;
   font-weight: 500;
   color: var(--text-dim);
-  max-width: 60vw;
+  max-width: 68vw;
+  text-align: center;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   margin-top: 1px;
 }
 .toast.has-action { pointer-events: auto; }
