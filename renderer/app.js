@@ -1039,7 +1039,7 @@ const DIAGNOSIS = {
     why: () =>
       'The provider refused with 429. There are two species: this provider throttling you (another member fixes it — exactly what a lane is for) and an account-wide block (only waiting fixes it). They arrive with the same status code.',
     advice: () =>
-      'Members spread across different providers dodge per-provider throttles. Telling the two species apart automatically by reading the error body is on the roadmap; until then, the quoted evidence usually names which limit was hit.',
+      'Members spread across different providers dodge per-provider throttles. VisualLLM reads the error body when it can; if the receipt names an account-wide free-tier limit, waiting for reset is usually the only fix.',
   },
   out_of_credit: {
     title: 'Out of credit',
