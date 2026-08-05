@@ -18,7 +18,8 @@ VisualLLM is a **visual fallback router** for AI models. It's a desktop applicat
 
 - **Add your AI providers** (OpenRouter, OpenAI, Anthropic, or any OpenAI-compatible endpoint)
 - **Browse their model catalogs** with rich filtering and sorting
-- **Drag models into ordered "lanes"** to create fallback chains
+- **Drag models from the vault (left sidebar) into any lane** — each lane is an ordered fallback chain
+- **Reorder models within a lane by dragging** — the rightmost model answers first; everything to its left is a fallback
 - **Expose lanes as local OpenAI-compatible endpoints** that your tools can connect to
 
 When a request comes in, the rightmost model answers first. If it fails, can't serve the request, or returns unusable content, VisualLLM automatically tries the next model in line — and explains exactly what happened at each step.
