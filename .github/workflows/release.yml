@@ -301,14 +301,20 @@ jobs:
           echo "Found tar.gz: $TAR_GZ"
           echo "SHA256: $SHA256"
       - name: Update Homebrew tap
-        uses: dawidd6/action-update-homebrew-formula@v1
-        with:
-          repository: CreativeSystemDesign/homebrew-visualllm
-          formula-name: visualllm
-          formula-path: Formula/visualllm.rb
-          version: ${{ steps.sha256.outputs.sha256 }}
-          commit-message: "Update visualllm to ${{ github.ref_name }}"
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          SHA256="${{ steps.sha256.outputs.sha256 }}"
+          # Clone the tap repo
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/CreativeSystemDesign/homebrew-visualllm.git /tmp/homebrew-visualllm
+          cd /tmp/homebrew-visualllm
+          # Update the formula
+          sed -i "s|url \".*\"|url \"https://github.com/CreativeSystemDesign/visualllm/releases/download/${TAG}/visualllm-${TAG}.tar.gz\"|" Formula/visualllm.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/visualllm.rb
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update visualllm to ${TAG}"
+          git push
 
   # AUR package - DISABLED (AUR account setup pending)
   # aur:
