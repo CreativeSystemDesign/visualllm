@@ -122,6 +122,25 @@ Once packaged, VisualLLM will be available as:
 - AppImage for any Linux distribution
 - (Windows/macOS support planned — see [ROADMAP.md](ROADMAP.md))
 
+### 🧪 Calling All Testers!
+
+**We're actively looking for testers on all platforms!** VisualLLM is Linux-first, but we want to ensure it works well on macOS and Windows too. If you can help test:
+
+- **macOS** — Test the `.dmg` installer, notarization, and code signing
+- **Windows** — Test the `.msi` and `.exe` installers, code signing, and WebView2 integration
+- **Linux** — Test `.deb`, AppImage, and Flatpak on various distributions
+
+**How to help:**
+1. Download the latest release artifacts from [GitHub Releases](https://github.com/CreativeSystemDesign/visualllm/releases)
+2. Install and run VisualLLM on your platform
+3. Report any issues at [GitHub Issues](https://github.com/CreativeSystemDesign/visualllm/issues) with:
+   - Your OS and version
+   - The artifact you tested (.dmg, .msi, .exe, .deb, AppImage, Flatpak)
+   - Steps to reproduce any problems
+   - Screenshots if applicable
+
+Your feedback directly shapes the quality of the first public release!
+
 ### For Developers (From Source)
 
 #### Prerequisites

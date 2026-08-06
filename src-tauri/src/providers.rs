@@ -191,7 +191,19 @@ pub fn cache_write(dir: &PathBuf, models: &[CatalogModel]) {
     }
     if let Err(e) = write_state(cache_path(dir), models) {
         eprintln!("providers: failed to write cache file: {e}");
+        return;
     }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    cache_meta_write(
+        dir,
+        &CatalogMeta {
+            stale: false,
+            retained_at: now,
+        },
+    );
 }
 
 pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
@@ -203,6 +215,39 @@ pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
                 cache_path(dir)
             );
             Vec::new()
+        }
+    }
+}
+
+/// Whether the catalog on disk is a stale cache retained after a failed
+/// refresh. The engine uses this to warn, once per request, that its
+/// capability checks may be out of date.
+#[derive(Serialize, Deserialize, Default)]
+pub struct CatalogMeta {
+    pub stale: bool,
+    /// Unix seconds when the cache was last written or retained.
+    pub retained_at: u64,
+}
+
+pub fn cache_meta_path(dir: &PathBuf) -> PathBuf {
+    dir.join("catalog-meta.json")
+}
+
+pub fn cache_meta_read(dir: &PathBuf) -> CatalogMeta {
+    std::fs::read_to_string(cache_meta_path(dir))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+pub fn cache_meta_write(dir: &PathBuf, meta: &CatalogMeta) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    if let Ok(text) = serde_json::to_string_pretty(meta) {
+        let temp = cache_meta_path(dir).with_extension("json.tmp");
+        if std::fs::write(&temp, text).is_ok() {
+            let _ = std::fs::rename(&temp, cache_meta_path(dir));
         }
     }
 }

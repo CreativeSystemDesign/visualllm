@@ -57,3 +57,19 @@ Keep pull requests focused. Explain:
 
 Changes involving provider keys, Tauri permissions, network binding, persistence
 formats, or fallback decisions need explicit tests and documentation.
+
+## Issue labels and triage
+
+We use a small set of labels to keep issues actionable:
+
+- `bug` — something is broken or behaves unexpectedly
+- `provider` — specific to a provider setup, catalog, or auth issue
+- `ui/ux` — renderer, interaction, or visual design issue
+- `engine` — routing, fallback, request handling, or Rust backend issue
+- `packaging` — build, AppImage, `.deb`, or installation problem
+- `docs` — documentation, README, or release notes
+- `good first issue` — small, well-scoped task for new contributors
+
+When an issue is opened, maintainers will add the appropriate labels and ask
+for any missing reproduction details. Issues without enough information may be
+marked `needs-info` and closed after 30 days of inactivity.

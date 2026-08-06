@@ -1,14 +1,125 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#6344e8"/>
+    <!-- Blue glow for fiber strands -->
+    <filter id="strandGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Soft glow for light nodes -->
+    <filter id="nodeGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Background gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </radialGradient>
+    <!-- Strand gradient (bright blue core, fading edges) -->
+    <linearGradient id="strandGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1e3a5f" stop-opacity="0"/>
+      <stop offset="30%" stop-color="#3b82f6" stop-opacity="0.8"/>
+      <stop offset="50%" stop-color="#60a5fa" stop-opacity="1"/>
+      <stop offset="70%" stop-color="#3b82f6" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#1e3a5f" stop-opacity="0"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#131318"/>
-  <g stroke="url(#g)" stroke-width="26" stroke-linecap="round" fill="none">
-    <path d="M112 168h116M112 256h180M112 344h140"/>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#bgGrad)" stroke="#1e3a5f" stroke-width="2"/>
+
+  <!-- Fiber optic strands flowing ACROSS the surface (tangential paths) -->
+  <g filter="url(#strandGlow)">
+
+    <!-- Horizontal flow strands -->
+    <g stroke="url(#strandGrad)" stroke-width="2" stroke-linecap="round" fill="none">
+      <path d="M30,200 Q130,170 256,185 Q380,200 482,190"/>
+      <path d="M30,260 Q130,240 256,250 Q380,260 482,255"/>
+      <path d="M30,320 Q130,300 256,310 Q380,320 482,315"/>
+    </g>
+
+    <!-- Vertical flow strands -->
+    <g stroke="url(#strandGrad)" stroke-width="2" stroke-linecap="round" fill="none">
+      <path d="M200,30 Q180,130 195,256 Q210,380 205,482"/>
+      <path d="M260,30 Q250,130 255,256 Q260,380 258,482"/>
+      <path d="M320,30 Q310,130 315,256 Q320,380 325,482"/>
+    </g>
+
+    <!-- Diagonal flow strands -->
+    <g stroke="url(#strandGrad)" stroke-width="1.8" stroke-linecap="round" fill="none">
+      <path d="M60,60 Q150,120 256,140 Q360,160 450,90"/>
+      <path d="M450,450 Q360,380 256,360 Q150,340 60,450"/>
+      <path d="M60,450 Q150,380 256,360 Q360,340 450,450"/>
+      <path d="M450,60 Q360,120 256,140 Q150,160 60,60"/>
+    </g>
+
+    <!-- Additional tangential strands at various angles -->
+    <g stroke="#3b82f6" stroke-width="1.2" stroke-linecap="round" opacity="0.6">
+      <path d="M50,150 Q120,130 200,140 Q280,150 350,130 Q400,120 460,140"/>
+      <path d="M50,360 Q120,340 200,350 Q280,360 350,340 Q400,330 460,350"/>
+      <path d="M150,50 Q140,120 150,200 Q160,280 140,350 Q130,400 150,460"/>
+      <path d="M360,50 Q370,120 360,200 Q350,280 370,350 Q380,400 360,460"/>
+    </g>
+
+    <!-- Faint outer ring strands -->
+    <g stroke="#93c5fd" stroke-width="0.8" stroke-linecap="round" opacity="0.3">
+      <path d="M100,100 Q180,80 256,90 Q330,100 410,80"/>
+      <path d="M410,430 Q330,450 256,440 Q180,430 100,450"/>
+      <path d="M100,430 Q180,450 256,440 Q330,430 410,450"/>
+      <path d="M100,80 Q180,60 256,70 Q330,80 410,60"/>
+    </g>
   </g>
-  <g fill="url(#g)">
-    <circle cx="300" cy="168" r="34"/><circle cx="364" cy="256" r="34"/><circle cx="324" cy="344" r="34"/>
+
+  <!-- Light nodes along the strands - distributed across the surface -->
+  <g filter="url(#nodeGlow)">
+    <!-- Inner ring of nodes -->
+    <circle cx="256" cy="185" r="4" fill="#60a5fa" opacity="0.9"/>
+    <circle cx="256" cy="250" r="4" fill="#60a5fa" opacity="0.9"/>
+    <circle cx="256" cy="310" r="4" fill="#60a5fa" opacity="0.9"/>
+    <circle cx="195" cy="256" r="4" fill="#60a5fa" opacity="0.9"/>
+    <circle cx="255" cy="256" r="4" fill="#60a5fa" opacity="0.9"/>
+    <circle cx="315" cy="256" r="4" fill="#60a5fa" opacity="0.9"/>
+
+    <!-- Medium ring of nodes -->
+    <circle cx="170" cy="170" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="340" cy="170" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="170" cy="340" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="340" cy="340" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="256" cy="140" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="256" cy="370" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="140" cy="256" r="3" fill="#93c5fd" opacity="0.7"/>
+    <circle cx="370" cy="256" r="3" fill="#93c5fd" opacity="0.7"/>
+
+    <!-- Outer ring of nodes -->
+    <circle cx="120" cy="130" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="390" cy="130" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="120" cy="380" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="390" cy="380" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="256" cy="90" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="256" cy="420" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="90" cy="256" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+    <circle cx="420" cy="256" r="2.5" fill="#bfdbfe" opacity="0.5"/>
+  </g>
+
+  <!-- Bright pulse points along strands (like data flowing) -->
+  <g fill="#ffffff" opacity="0.8">
+    <circle cx="180" cy="175" r="2"/>
+    <circle cx="330" cy="180" r="2"/>
+    <circle cx="180" cy="335" r="2"/>
+    <circle cx="330" cy="330" r="2"/>
+    <circle cx="155" cy="200" r="1.5"/>
+    <circle cx="355" cy="200" r="1.5"/>
+    <circle cx="155" cy="310" r="1.5"/>
+    <circle cx="355" cy="310" r="1.5"/>
+    <circle cx="220" cy="155" r="1.5"/>
+    <circle cx="290" cy="155" r="1.5"/>
+    <circle cx="220" cy="355" r="1.5"/>
+    <circle cx="290" cy="355" r="1.5"/>
   </g>
 </svg>

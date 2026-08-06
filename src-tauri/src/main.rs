@@ -53,7 +53,11 @@ use serde_json::Value;
 use tauri::Manager;
 use tokio::sync::watch;
 
+#[cfg(target_os = "linux")]
+use gtk::prelude::GtkWindowExt;
+
 use providers::{CatalogModel, Provider, ProviderView};
+use tauri_plugin_dialog::DialogExt;
 
 /// VS Code chatLanguageModels.json entry for a custom endpoint model.
 #[derive(Serialize, Deserialize, Clone)]
@@ -518,12 +522,190 @@ fn provider_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
     providers::save(&dir, &all)
 }
 
+// ------------------------------------------------------------------ portability
+
+/// A portable snapshot of configuration that can move between machines.
+/// API keys are intentionally excluded: the destination must re-enter them,
+/// and the keyring on the new machine is the right place for them.
+#[derive(Serialize, Deserialize)]
+struct PortableState {
+    version: u32,
+    exported_at: u64,
+    lanes: Vec<lanes::Lane>,
+    pool: Vec<lanes::Member>,
+    providers: Vec<providers::Provider>,
+}
+
+impl PortableState {
+    fn new(dir: &std::path::PathBuf) -> Self {
+        let exported_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // Load providers without keys: `providers::load` hydrates from the
+        // keyring, and we explicitly strip them again so a portable file never
+        // carries a secret.
+        let providers: Vec<providers::Provider> = providers::load(dir)
+            .into_iter()
+            .map(|mut p| {
+                p.key.clear();
+                p
+            })
+            .collect();
+        Self {
+            version: 1,
+            exported_at,
+            lanes: lanes::load(dir),
+            pool: lanes::pool_load(dir),
+            providers,
+        }
+    }
+
+    fn into_state(
+        self,
+    ) -> (
+        Vec<lanes::Lane>,
+        Vec<lanes::Member>,
+        Vec<providers::Provider>,
+    ) {
+        (self.lanes, self.pool, self.providers)
+    }
+}
+
+/// Export lanes, pool, and provider config to a JSON file. Keys are never
+/// included; the destination re-enters them after import.
+#[tauri::command]
+async fn state_export(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = store_dir(&app)?;
+    let snapshot = PortableState::new(&dir);
+    let text = serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())?;
+
+    let path = app
+        .dialog()
+        .file()
+        .set_file_name("visualllm-export.json")
+        .add_filter("VisualLLM export", &["json"])
+        .blocking_save_file();
+
+    let Some(path) = path else {
+        return Err("export cancelled".into());
+    };
+
+    let target: std::path::PathBuf = path.as_path().map(|p| p.to_path_buf()).unwrap();
+    std::fs::create_dir_all(target.parent().unwrap_or(&target)).map_err(|e| e.to_string())?;
+    let temp = target.with_extension("json.tmp");
+    std::fs::write(&temp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&temp, target.clone()).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+/// Import lanes, pool, and provider config from a JSON file.
+///
+/// `mode` controls what happens to existing state:
+///   * "merge"   (default) keep existing lanes/providers, add new ones by slug/id,
+///               and replace when a collision occurs. Pool is unioned.
+///   * "replace" wipe existing state and use the file exactly.
+#[tauri::command]
+async fn state_import(app: tauri::AppHandle, mode: Option<String>) -> Result<String, String> {
+    let dir = store_dir(&app)?;
+
+    let path = app
+        .dialog()
+        .file()
+        .add_filter("VisualLLM export", &["json"])
+        .blocking_pick_file();
+
+    let Some(path) = path else {
+        return Err("import cancelled".into());
+    };
+
+    let path: std::path::PathBuf = path.as_path().map(|p| p.to_path_buf()).unwrap();
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let snapshot: PortableState = serde_json::from_str(&text)
+        .map_err(|e| format!("{} is not a valid VisualLLM export: {e}", path.display()))?;
+
+    let mode = mode.as_deref().unwrap_or("merge");
+    match mode {
+        "merge" => import_merge(&dir, snapshot),
+        "replace" => import_replace(&dir, snapshot),
+        other => Err(format!("unknown import mode: {other}")),
+    }?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn import_replace(dir: &std::path::Path, snapshot: PortableState) -> Result<(), String> {
+    let (lanes, pool, providers) = snapshot.into_state();
+    lanes::save(&dir.to_path_buf(), &lanes)?;
+    lanes::pool_save(&dir.to_path_buf(), &pool)?;
+    providers::save(&dir.to_path_buf(), &providers)?;
+    Ok(())
+}
+
+fn import_merge(dir: &std::path::Path, snapshot: PortableState) -> Result<(), String> {
+    let (imported_lanes, imported_pool, imported_providers) = snapshot.into_state();
+
+    let mut lanes = lanes::load(&dir.to_path_buf());
+    let mut pool = lanes::pool_load(&dir.to_path_buf());
+    let mut providers = providers::load(&dir.to_path_buf());
+
+    // Providers merge by id: an imported provider with the same id replaces
+    // the local one, but keys are left empty so the existing keyring entry is
+    // preserved unless the provider is genuinely new.
+    let mut provider_ids: std::collections::HashSet<String> =
+        providers.iter().map(|p| p.id.clone()).collect();
+    for p in imported_providers {
+        if provider_ids.contains(&p.id) {
+            let pos = providers.iter().position(|x| x.id == p.id).unwrap();
+            // Keep the local key: the export never carries one, and wiping an
+            // existing key would force an unnecessary re-entry.
+            let local_key = providers[pos].key.clone();
+            providers[pos] = p;
+            providers[pos].key = local_key;
+        } else {
+            provider_ids.insert(p.id.clone());
+            providers.push(p);
+        }
+    }
+
+    // Lanes merge by slug: same slug replaces, new slug appends.
+    let mut lane_slugs: std::collections::HashSet<String> =
+        lanes.iter().map(|l| l.slug.clone()).collect();
+    for l in imported_lanes {
+        if lane_slugs.contains(&l.slug) {
+            let pos = lanes.iter().position(|x| x.slug == l.slug).unwrap();
+            lanes[pos] = l;
+        } else {
+            lane_slugs.insert(l.slug.clone());
+            lanes.push(l);
+        }
+    }
+
+    // Pool is a set of (provider, id) pairs.
+    let mut pool_keys: std::collections::HashSet<(String, String)> = pool
+        .iter()
+        .map(|m| (m.provider.clone(), m.id.clone()))
+        .collect();
+    for m in imported_pool {
+        if pool_keys.insert((m.provider.clone(), m.id.clone())) {
+            pool.push(m);
+        }
+    }
+
+    lanes::save(&dir.to_path_buf(), &lanes)?;
+    lanes::pool_save(&dir.to_path_buf(), &pool)?;
+    providers::save(&dir.to_path_buf(), &providers)?;
+    Ok(())
+}
+
 /// Every configured provider's catalog, merged. A provider that fails reports
 /// its own error rather than emptying the sidebar for the others.
 #[derive(Serialize)]
 struct Catalog {
     models: Vec<CatalogModel>,
     errors: Vec<CatalogError>,
+    stale: bool,
+    retained_at: u64,
 }
 
 #[derive(Serialize)]
@@ -567,6 +749,7 @@ async fn catalog_read(app: tauri::AppHandle, id: Option<String>) -> Result<Catal
     // button is the deliberate way to force a rewrite.
     let cached = providers::cache_read(&dir);
     let shrank = !errors.is_empty() && models.len() < cached.len();
+    let meta = providers::cache_meta_read(&dir);
     if shrank {
         eprintln!(
             "catalog: partial fetch ({} errors, {} models vs {} cached) — keeping the last good cache",
@@ -574,10 +757,26 @@ async fn catalog_read(app: tauri::AppHandle, id: Option<String>) -> Result<Catal
             models.len(),
             cached.len()
         );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        providers::cache_meta_write(
+            &dir,
+            &providers::CatalogMeta {
+                stale: true,
+                retained_at: now,
+            },
+        );
     } else {
         providers::cache_write(&dir, &models);
     }
-    Ok(Catalog { models, errors })
+    Ok(Catalog {
+        models,
+        errors,
+        stale: meta.stale || shrank,
+        retained_at: meta.retained_at,
+    })
 }
 
 /// Check a provider before it is saved, so a bad key is caught at the form
@@ -848,12 +1047,18 @@ fn main() {
                     }
                     gtk_window.connect_realize(shape_to_allocation);
                     gtk_window.connect_size_allocate(|win, _| shape_to_allocation(win));
+                    
+                    // Set window icon for taskbar/dock
+                    if let Ok(pixbuf) = gdk_pixbuf::Pixbuf::from_file("icons/icon.png") {
+                        gtk_window.set_icon(Some(&pixbuf));
+                    }
                 }
             }
 
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_gateway,
             copy_text,
@@ -873,7 +1078,9 @@ fn main() {
             lane_test,
             port_get,
             port_set,
-            vscode_integrate_lane
+            vscode_integrate_lane,
+            state_export,
+            state_import
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|err| {

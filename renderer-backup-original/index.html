@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- No CSP here on purpose. Tauri injects one from tauri.conf.json with the
+       nonces its own bridge script needs; a second policy in this document is
+       intersected with that one, and a hand-written `script-src 'self'` blocks
+       the injection, leaving window.__TAURI__ undefined. -->
+  <title>VisualLLM</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <header class="titlebar" id="titlebar">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7h6M4 12h11M4 17h7" />
+          <circle cx="17.5" cy="7" r="2.4" />
+          <circle cx="20" cy="12" r="2.4" />
+          <circle cx="14.5" cy="17" r="2.4" />
+        </svg>
+        <span class="brand-name">VisualLLM</span>
+      </div>
+
+      <div class="window-controls">
+        <button class="settings-btn" id="openSettings" type="button" title="Engine settings">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 2.5v1.7M8 11.8v1.7M2.5 8h1.7M11.8 8h1.7M4.1 4.1l1.2 1.2M10.7 10.7l1.2 1.2M11.9 4.1l-1.2 1.2M5.3 10.7l-1.2 1.2"/></svg>
+          <span>Settings</span>
+        </button>
+        <button class="wc" id="wcMin" title="Minimise" type="button"><svg viewBox="0 0 12 12"><path d="M3 6h6"/></svg></button>
+        <button class="wc" id="wcMax" title="Maximise" type="button"><svg viewBox="0 0 12 12"><rect x="3" y="3" width="6" height="6" rx="1"/></svg></button>
+        <button class="wc wc-close" id="wcClose" title="Close" type="button"><svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg></button>
+      </div>
+    </header>
+
+    <div class="body">
+
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div class="head-row">
+            <div class="search">
+              <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>
+              </svg>
+              <input id="search" type="text" placeholder="Search models" spellcheck="false" />
+            </div>
+            <button class="icon-btn" id="openBrowse" type="button" title="Browse models">
+              <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.4"/><path d="M10.4 10.4L14 14M7 5v4M5 7h4"/></svg>
+            </button>
+            <button class="icon-btn" id="openProviders" type="button" title="Providers">
+              <svg viewBox="0 0 16 16"><path d="M2.5 5h11M2.5 11h11"/><circle cx="6" cy="5" r="1.9"/><circle cx="10.5" cy="11" r="1.9"/></svg>
+            </button>
+          </div>
+
+          <div class="controls">
+            <span class="controls-label">Sort by</span>
+            <div class="field-select">
+              <select id="sort">
+                <option value="name">Name</option>
+                <option value="price">Cheapest</option>
+                <option value="speed">Fastest measured</option>
+                <option value="intelligence">Most intelligent</option>
+                <option value="coding">Best at coding</option>
+                <option value="agentic">Best at tool use</option>
+                <option value="context">Largest context</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+          </div>
+
+          <div class="filters" id="filters">
+            <button class="filter" data-filter="free">Free</button>
+            <button class="filter" data-filter="vision">Vision</button>
+            <button class="filter" data-filter="tools">Tools</button>
+          </div>
+        </div>
+        <div class="model-list" id="modelList"></div>
+        <div class="sidebar-foot">
+          <span id="modelCount">—</span>
+          <span class="hint">drag into a lane</span>
+        </div>
+      </aside>
+
+      <main class="canvas">
+        <div class="canvas-head">
+          <div>
+            <h1>Endpoints</h1>
+            <p class="sub">Each lane is an endpoint. The model on the right answers first; everything to its left is a fallback.</p>
+          </div>
+          <button class="btn-primary" id="newLane" type="button">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
+            New lane
+          </button>
+        </div>
+        <div class="lanes" id="lanes"></div>
+      </main>
+
+    </div>
+
+    <footer class="statusbar">
+      <button class="stat stat-link" id="statGateway" title="Copy gateway address">
+        <span class="dot" id="barDot"></span>
+        <span id="barGateway">—</span>
+      </button>
+      <span class="stat" id="statModels">—</span>
+      <span class="stat" id="statFastest">—</span>
+      <span class="stat" id="statTraffic">—</span>
+      <button class="stat stat-link" id="statPort" title="Engine port settings">engine 127.0.0.1:4100</button>
+      <span class="stat stat-right" id="statUpdated">—</span>
+      <!-- The bell. Lit with a count when notifications arrived and faded
+           away unviewed; quiet when everything has been seen or muted. -->
+      <button class="notif-bell" id="notifBell" type="button" title="Notifications">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 2.2a3.9 3.9 0 0 0-3.9 3.9c0 3-1.3 4.1-1.3 4.1h10.4s-1.3-1.1-1.3-4.1A3.9 3.9 0 0 0 8 2.2z"/>
+          <path d="M6.7 12.6a1.4 1.4 0 0 0 2.6 0"/>
+        </svg>
+        <span class="bell-badge" id="bellBadge" hidden>0</span>
+      </button>
+    </footer>
+  </div>
+
+  <div class="scrim" id="scrim" hidden>
+    <section class="panel" role="dialog" aria-label="Providers">
+      <header class="panel-head">
+        <div>
+          <h2>Providers</h2>
+          <p class="sub">Add a service, and its models appear in the sidebar. Nothing is hard-coded — the catalog is asked for, every time.</p>
+        </div>
+        <button class="wc" id="closeProviders" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+
+      <div class="panel-body">
+        <div class="provider-list" id="providerList"></div>
+
+        <form class="provider-form" id="providerForm" autocomplete="off">
+          <input type="hidden" id="pId" />
+          <div class="form-title" id="formTitle">Add a provider</div>
+
+          <label class="field">
+            <span>Name</span>
+            <input id="pName" type="text" placeholder="OpenRouter" spellcheck="false" />
+          </label>
+
+          <label class="field">
+            <span>Service</span>
+            <div class="field-select">
+              <select id="pKind">
+                <option value="openrouter">OpenRouter</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="compatible">OpenAI-compatible</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>Base URL</span>
+            <input id="pUrl" type="text" spellcheck="false" placeholder="https://openrouter.ai/api/v1" />
+          </label>
+
+          <label class="field">
+            <span>API key</span>
+            <input id="pKey" type="password" placeholder="sk-or-…" spellcheck="false" />
+          </label>
+
+          <p class="form-note" id="formNote"></p>
+
+          <div class="form-actions">
+            <button type="button" class="btn-ghost" id="pTest">Test</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn-ghost btn-danger" id="pDelete" hidden>Remove</button>
+            <button type="button" class="btn-ghost" id="pCancel" hidden>Cancel</button>
+            <button type="submit" class="btn-primary" id="pSave">Save provider</button>
+          </div>
+        </form>
+
+        <div class="portability">
+          <div class="portability-title">Move your setup</div>
+          <p class="portability-note">Export saves lanes, pool, and provider settings. API keys stay in the keychain and are not included — import on a new machine and re-enter keys there.</p>
+          <div class="portability-actions">
+            <button type="button" class="btn-ghost" id="pExport">Export…</button>
+            <button type="button" class="btn-ghost" id="pImport">Import…</button>
+          </div>
+          <div class="portability-import-mode">
+            <label><input type="radio" name="importMode" value="merge" checked> Merge with existing</label>
+            <label><input type="radio" name="importMode" value="replace"> Replace everything</label>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="scrim" id="browseScrim" hidden>
+    <section class="panel panel-wide" role="dialog" aria-label="Browse models">
+      <header class="panel-head">
+        <div>
+          <h2>Browse models</h2>
+          <p class="sub">Everything your providers offer. Add the ones worth keeping — those are what appear in the sidebar to drag into lanes.</p>
+        </div>
+        <button class="wc" id="closeBrowse" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+
+      <div class="browse-controls">
+        <div class="search">
+          <svg class="search-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>
+          </svg>
+          <input id="bSearch" type="text" placeholder="Search by name or id" spellcheck="false" />
+        </div>
+
+        <div class="browse-filters-grid">
+          <div class="browse-filters-row">
+            <div class="field-select">
+              <select id="bProvider"><option value="">All providers</option></select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+            <div class="field-select">
+              <select id="bAuthor"><option value="">All authors</option></select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+            <div class="field-select">
+              <select id="bContext">
+                <option value="0">Any context</option>
+                <option value="32768">32K or more</option>
+                <option value="131072">128K or more</option>
+                <option value="262144">256K or more</option>
+                <option value="1048576">1M or more</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+            <div class="field-select">
+              <select id="bPrice">
+                <option value="">Any price</option>
+                <option value="0">Free only</option>
+                <option value="1">Under $1/M out</option>
+                <option value="5">Under $5/M out</option>
+                <option value="20">Under $20/M out</option>
+              </select>
+              <svg class="chev" viewBox="0 0 16 16"><path d="M4.5 6.5L8 10l3.5-3.5"/></svg>
+            </div>
+          </div>
+          
+          <div class="browse-row filters" id="bFilters">
+            <button class="filter" data-filter="vision">Vision</button>
+            <button class="filter" data-filter="tools">Tools</button>
+            <button class="filter" data-filter="reasoning">Reasoning</button>
+            <button class="filter" data-filter="structured">Structured</button>
+            <button class="filter" data-filter="rated">Benchmarked</button>
+            <button class="filter" data-filter="pooled">In pool</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="browse-count browse-count-row">
+        <span id="bCount">—</span>
+        <button class="btn-ghost browse-refresh" id="bRefresh" type="button" title="Refresh provider catalogs and measured speed data">Refresh catalogs</button>
+      </div>
+      <div class="browse-header" id="bHeader"></div>
+      <div class="browse-list" id="bList"></div>
+    </section>
+  </div>
+
+  <!-- The notification center. Every entry is a diagnosis with its receipts:
+       what happened (the provider's own bytes, quoted), why it happens (the
+       mechanism), and what to try (a specific control in this app). A
+       failure the evidence cannot clearly attribute says so — "unexplained"
+       with the raw bytes — because a verdict without receipts is folklore,
+       and people choosing free models deserve facts. Opening this marks
+       everything in it as seen; per-type "ignore" silences a kind without
+       stopping the engine from recording it. -->
+  <div class="scrim" id="notifScrim" hidden>
+    <section class="panel" role="dialog" aria-label="Notifications">
+      <header class="panel-head">
+        <div>
+          <h2>Notifications</h2>
+          <p class="sub">What went wrong across your lanes, with the evidence, the reason, and what to try. Ignored types stay recorded but arrive silently.</p>
+        </div>
+        <button class="wc" id="closeNotif" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+      <div class="panel-body notif-body">
+        <div id="notifList"></div>
+      </div>
+    </section>
+  </div>
+
+  <div class="scrim" id="settingsScrim" hidden>
+    <section class="panel" role="dialog" aria-label="Engine settings">
+      <header class="panel-head">
+        <div>
+          <h2>Engine settings</h2>
+          <p class="sub">The local OpenAI-compatible engine listens on loopback only.</p>
+        </div>
+        <button class="wc" id="closeSettings" type="button" title="Close">
+          <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+        </button>
+      </header>
+      <div class="panel-body">
+        <form class="provider-form" id="settingsForm">
+          <label class="field">
+            <span>Engine port</span>
+            <input id="enginePort" type="number" min="1024" max="65535" step="1" required />
+          </label>
+          <p class="form-note">Use an unused port from 1024–65535. The loopback listener moves immediately; existing client connections may finish on the old port.</p>
+          <div class="form-actions">
+            <span class="spacer"></span>
+            <button type="button" class="btn-ghost" id="cancelSettings">Cancel</button>
+            <button type="submit" class="btn-primary">Save port</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <!-- Live notifications land here, bottom-right, and wait to be clicked.
+       Click one and it counts as viewed; let it fade and the bell keeps the
+       score. Hovering pauses the fade — a notification exists to be read,
+       and a timer must never win a race against a reader. -->
+  <div class="notif-stack" id="notifStack"></div>
+
+  <!-- Per-member dials. Opens from the gear on a chip in a lane; positioned
+       beside that chip by app.js. Blank means "no opinion" — the client's own
+       value, or the provider's default, is used. That is why these are number
+       inputs and not sliders: a slider always has a position, and these
+       settings need an honest unset state. -->
+  <div class="member-pop" id="memberPop" hidden>
+    <div class="pop-head">
+      <span class="pop-title" id="popTitle">model</span>
+      <button class="wc" id="popClose" type="button" title="Close">
+        <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+      </button>
+    </div>
+    <p class="pop-sub">Dials the lane fixes for this member. Blank leaves the choice to the client or the provider.</p>
+    <label class="pop-field"><span>temperature</span><input data-dial="temperature" type="number" step="0.1" min="0" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>top p</span><input data-dial="top_p" type="number" step="0.05" min="0" max="1" placeholder="—" /></label>
+    <label class="pop-field"><span>frequency penalty</span><input data-dial="frequency_penalty" type="number" step="0.1" min="-2" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>presence penalty</span><input data-dial="presence_penalty" type="number" step="0.1" min="-2" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>repetition penalty</span><input data-dial="repetition_penalty" type="number" step="0.05" min="0.5" max="2" placeholder="—" /></label>
+    <label class="pop-field"><span>max output tokens</span><input data-dial="max_tokens" type="number" step="100" min="1" placeholder="—" /></label>
+    <div class="pop-actions"><button class="btn-ghost" id="popClear" type="button">Clear all</button></div>
+  </div>
+
+  <!-- The chip menu. Right-click on a lane member: the gear and the
+       drag-out-to-remove gesture are invisible until you know them, so this is
+       how those actions are discovered. Park keeps a member's place and dials
+       while the lane skips it — tuning by subtraction without losing work. -->
+  <div class="chip-menu" id="chipMenu" hidden>
+    <button class="chip-menu-item" data-menu="settings" type="button">
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.6v1.9M8 11.5v1.9M2.6 8h1.9M11.5 8h1.9M4.2 4.2l1.3 1.3M10.5 10.5l1.3 1.3M11.8 4.2l-1.3 1.3M5.5 10.5l-1.3 1.3"/></svg>
+      <span>Member settings</span>
+    </button>
+    <button class="chip-menu-item" data-menu="park" type="button">
+      <svg viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>
+      <span id="chipMenuParkLabel">Park this member</span>
+    </button>
+    <button class="chip-menu-item chip-menu-danger" data-menu="remove" type="button">
+      <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+      <span>Remove from lane</span>
+    </button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -151,6 +151,15 @@ ab192b1  UX: silence capability-skip alerts, surface trail/served-by, undo, z-or
 
 - `catalog_read` keeps the previous good catalog when a partial fetch would shrink it.
 - Logs when stale data is retained.
+- Toasts once per distinct failure set: per-provider errors say "<name>: catalog failed — using the last good cache"; a stale cache with no active errors also toasts with the retention timestamp.
+- Engine emits one line per request when serving from stale cache: `engine: serving from stale catalog cache retained at <unix>`.
+
+### WS10 — Portability
+
+- Providers panel has Export… / Import… buttons.
+- Export writes a JSON file with lanes, pool, and provider config. API keys are never included.
+- Import supports Merge (by slug/id, preserving existing keys) and Replace (wipe local state).
+- `tauri-plugin-dialog` is used for file picker/save dialogs; capability entries added.
 
 ### WS6 — Window / z-order
 
@@ -171,6 +180,8 @@ ab192b1  UX: silence capability-skip alerts, surface trail/served-by, undo, z-or
 - First-lane completion state with endpoint URL and VS Code inline setup.
 - Dead members shown in lane footer.
 - Lane headers compacted to one line with indicator lights and status footer.
+- Notification center has a lane filter dropdown and per-(lane, kind) mute in addition to global kind mute.
+- Sidebar and browse no longer hard-cap at 300/150 rows; they render an initial batch and offer a "Show N more" button, reset when filters/search/sort change.
 
 ---
 
@@ -178,17 +189,27 @@ ab192b1  UX: silence capability-skip alerts, surface trail/served-by, undo, z-or
 
 These are the remaining items from `ROADMAP.md`:
 
-1. **WS5 — Catalog error notification.** Surface "provider catalog failed — using last good cache" as a toast, not just a red count in the provider list. Also add one-line engine log when serving from stale cache.
+2. **WS7 — Single-binary / AppImage verification.** Confirm the AppImage bundles WebKitGTK and runs on a clean VM. Decide if AppImage is the canonical download. Add a release checklist entry.
 
-2. **WS6 — Verify z-order on user's hardware.** Run the app normally, stack over VS Code, confirm clicks land on VisualLLM. If it still falls through, flip `"transparent": false` in `src-tauri/tauri.conf.json` and restyle.
-
-3. **WS7 — Single-binary / AppImage verification.** Confirm the AppImage bundles WebKitGTK and runs on a clean VM. Decide if AppImage is the canonical download. Add a release checklist entry.
-
-4. **WS10 — Portability / export-import (not yet in ROADMAP but requested).** Add lane export/import, provider config portability, and state migration helpers.
+4. ~~**WS10 — Portability / export-import.**~~ Done: lanes, pool, and providers can be exported and imported; keys stay in the keychain and are not included in the export.
 
 5. **WS9 follow-ups:**
-   - Notification center: filter by lane; per-(lane, kind) mute.
-   - Sidebar / browse caps: "show all" or render-on-scroll instead of hard caps.
+- ~~Notification center: filter by lane; per-(lane, kind) mute.~~ Done.
+- ~~Sidebar / browse caps: "show all" or render-on-scroll instead of hard caps.~~ Done.
+
+## Release build verification
+
+A release build was produced with `npm run build`:
+
+- AppImage: `src-tauri/target/release/bundle/appimage/VisualLLM_0.1.0_amd64.AppImage` (80 MB)
+- .deb: `src-tauri/target/release/bundle/deb/VisualLLM_0.1.0_amd64.deb` (3.1 MB)
+
+Findings:
+- AppImage extraction confirms WebKitGTK, JavaScriptCore, and GTK3 libraries are bundled.
+- `.deb` includes desktop entry, icons, and binary; depends on system WebKitGTK/GTK3.
+- Release binary single-instance behavior works: a second process exits quickly when one is running.
+- One run printed `free(): corrupted unsorted chunks` on shutdown/kill. This needs to be reproduced and investigated before a public release; it may be a GTK/WebKit cleanup ordering issue in the release profile.
+- `tools/launch-system.sh` now prefers `target/release/visualllm` when present, falling back to debug.
 
 ---
 

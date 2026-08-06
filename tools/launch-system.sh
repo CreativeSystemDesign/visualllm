@@ -5,9 +5,18 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-BIN="$ROOT/src-tauri/target/debug/visualllm"
+RELEASE_BIN="$ROOT/src-tauri/target/release/visualllm"
+DEBUG_BIN="$ROOT/src-tauri/target/debug/visualllm"
 
-if [[ ! -x "$BIN" ]]; then
+# Prefer a release build when one exists; otherwise fall back to the debug
+# build and build it on demand. This lets the same launcher work for both
+# development and release-package testing.
+if [[ -x "$RELEASE_BIN" ]]; then
+  BIN="$RELEASE_BIN"
+elif [[ -x "$DEBUG_BIN" ]]; then
+  BIN="$DEBUG_BIN"
+else
+  BIN="$DEBUG_BIN"
   printf 'VisualLLM binary not found or not executable: %s\n' "$BIN" >&2
   printf 'Attempting to build it now (this may take a minute)...\n'
   # Build in the repo root so the manifest path is correct and the user's

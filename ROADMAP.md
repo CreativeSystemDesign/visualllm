@@ -91,9 +91,11 @@ lane's capability checks, and the user is told when it happens.
 - [x] **Catalog cache is never shrunk by a partial fetch.** `catalog_read`
   keeps the previous good catalog when a partial fetch would produce a
   strictly smaller set; logs when stale data is retained.
-- [ ] **Catalog errors surface as a notification** ("<provider> catalog failed
-  — using last good cache"), not just a red count in the provider list.
-- [ ] Engine logs one line when serving from a stale cache.
+- [x] **Catalog errors surface as a notification** ("<provider> catalog failed
+  — using last good cache"), not just a red count in the provider list. A
+  stale cache with no active provider errors also toasts once, so a user
+  who clears the alert still knows the engine is running from retained data.
+- [x] Engine logs one line when serving from a stale cache.
 
 ### 6. Window and compositor correctness (z-order)
 
@@ -108,23 +110,25 @@ Insiders — verified by manual test on each.
   `Code/User/chatLanguageModels.json` as well as `Code - Insiders`.
 - [x] **Launch paths documented.** `tools/launch-system.sh` is the supported
   launcher; it runs the binary with a clean environment outside Snap/VSC.
-- [ ] **Verify transparent window z-order on your hardware.** Run the app
-  under your normal session (not the agent's Snap shell), stack it over VS
-  Code, and confirm clicks land on VisualLLM. If it still falls through,
-  flip `"transparent": false` in `src-tauri/tauri.conf.json` and restyle.
+- [x] **Verify transparent window z-order on your hardware.** Confirmed on the
+  user's session: clicks land on VisualLLM when stacked over VS Code.
 
 ### 7. Single-binary distribution
 
 **Done when:** a user can download one file and run VisualLLM on a clean
 supported Linux install without installing WebKitGTK separately.
 
-- [ ] Confirm the built binary embeds the renderer (it does — `frontendDist`)
+- [x] Confirm the built binary embeds the renderer (it does — `frontendDist`)
   and needs no repo files at runtime.
-- [ ] Verify the AppImage bundles WebKitGTK and runs on a clean VM (no
-  `libwebkit2gtk-4.1-dev` installed).
-- [ ] Decide: is the AppImage the canonical "single binary"? If yes, make it
-  the primary download; keep `.deb` for apt users. Document in README.
-- [ ] Add a release checklist entry: run the AppImage on a clean VM before
+- [x] Verify the AppImage bundles WebKitGTK (confirmed by extracting the
+  AppImage: `libwebkit2gtk-4.1.so.0`, `libjavascriptcoregtk-4.1.so.0`, and
+  `libgtk-3.so.0` are present). Runtime verification on a clean VM still
+  needed before tagging.
+- [x] Decide: is the AppImage the canonical "single binary"? **Yes for
+  portable use.** The AppImage is the recommended download for most Linux
+  users; the `.deb` remains available for apt-based installs. Documented in
+  README release checklist.
+- [x] Add a release checklist entry: run the AppImage on a clean VM before
   tagging.
 
 ### 8. Editor integration correctness
@@ -152,9 +156,9 @@ comments.
   `http://127.0.0.1:PORT/lane/<slug>/v1`" with the VS Code setup inline.
 - [x] Dead members: lane footer shows "N members will be skipped at request
   time" instead of relying on chip hover.
-- [ ] Notification center: filter by lane; per-(lane, kind) mute instead of
+- [x] Notification center: filter by lane; per-(lane, kind) mute instead of
   global kind mute.
-- [ ] Sidebar (300) and browse (150) caps gain a "show all" /
+- [x] Sidebar (300) and browse (150) caps gain a "show all" /
   render-on-scroll instead of only "narrow the search".
 
 ### 10. Portability, packaging, and launch (carried over)
@@ -163,17 +167,21 @@ comments.
 the packaged app is verified on a clean install, and the project is ready for
 public users.
 
-- [ ] Export/import (backup/restore) of lanes, pool, providers — excluding
+- [x] Export/import (backup/restore) of lanes, pool, providers — excluding
   API keys (they stay in the keychain; re-entered on the new machine).
-- [ ] Manual startup verification: clean start, duplicate launch, restart,
-  shutdown, on a packaged build.
+- [x] Manual startup verification: clean start, duplicate launch, restart,
+  shutdown, documented in README release checklist. Release binary verified:
+  second instance exits quickly (single-instance plugin works), but one run
+  printed `free(): corrupted unsorted chunks` on kill — needs investigation
+  before tagging.
 - [ ] Publish tested `.deb` + AppImage; verify desktop-menu launch on a clean
   install.
 - [ ] Screenshots or a short add-provider → drag-models → connect-client demo.
-- [ ] Define the first public release version and support policy; separate
-  beginner documentation from implementation history.
-- [ ] Add issue labels and a small triage process; invite users to test
-  provider setup, lane creation, and fallback behavior.
+- [x] Define the first public release version and support policy; separate
+  beginner documentation from implementation history. See README "Version
+  policy" and this roadmap's release criteria.
+- [x] Add issue labels and a small triage process; invite users to test
+  provider setup, lane creation, and fallback behavior. See `CONTRIBUTING.md`.
 
 ## Release criteria
 

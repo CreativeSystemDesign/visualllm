@@ -1096,6 +1096,13 @@ async fn chat(
     // ---- 2. Work out what the request needs -------------------------------
 
     let catalog = providers::cache_read(&engine.dir);
+    let meta = providers::cache_meta_read(&engine.dir);
+    if meta.stale {
+        eprintln!(
+            "engine: serving from stale catalog cache retained at {}",
+            meta.retained_at
+        );
+    }
     let configured = providers::load(&engine.dir);
     let needs = inspect(&body);
     let streaming = body["stream"].as_bool().unwrap_or(false);
