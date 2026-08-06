@@ -289,6 +289,67 @@ fn vscode_integrate_lane(
     Ok(results)
 }
 
+/// Remove a VisualLLM lane from every supported editor's model picker.
+///
+/// The lane's model entry is removed from each editor's
+/// chatLanguageModels.json. If the visualllm provider entry
+/// becomes empty after removal, the entire provider is dropped.
+/// A failure in one editor is reported without stopping the
+/// others — the user asked for all of them, and one editor's
+/// broken config must not silently strand the rest.
+#[tauri::command]
+fn vscode_remove_lane(
+    app: tauri::AppHandle,
+    slug: String,
+) -> Result<Vec<VscodeIntegrationResult>, String> {
+    let _store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
+
+    let mut results = Vec::new();
+    for (path, editor) in vscode_chat_models_paths()? {
+        let outcome: Result<(), String> = (|| {
+            if !path.exists() {
+                return Ok(()); // nothing to remove
+            }
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let mut config: VscodeChatModels = serde_json::from_str(&text)
+                .map_err(|e| format!("could not parse existing config: {e}"))?;
+
+            // Remove the visualllm provider entry entirely if it only
+            // contained this lane, or remove just this lane's model
+            // from the provider if it has other models.
+            let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
+            if let Some(idx) = visualllm_idx {
+                let provider = &mut config[idx];
+                provider.models.retain(|m| m.id != slug);
+                if provider.models.is_empty() {
+                    config.remove(idx);
+                }
+            }
+
+            vscode_write_models_at(&path, &config)
+        })();
+        match outcome {
+            Ok(()) => {
+                results.push(VscodeIntegrationResult {
+                    editor: editor.to_string(),
+                    path: path.display().to_string(),
+                    written: true,
+                    error: None,
+                });
+            }
+            Err(error) => {
+                results.push(VscodeIntegrationResult {
+                    editor: editor.to_string(),
+                    path: path.display().to_string(),
+                    written: false,
+                    error: Some(error),
+                });
+            }
+        }
+    }
+    Ok(results)
+}
+
 /// Where the old Python gateway lives.
 ///
 /// SCAFFOLDING. This app read its lanes from that gateway before it had an
@@ -1119,6 +1180,7 @@ fn main() {
             port_get,
             port_set,
             vscode_integrate_lane,
+            vscode_remove_lane,
             state_export,
             state_import
         ])
