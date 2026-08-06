@@ -496,3 +496,72 @@ From `/home/shane/llm_gateway`:
 The user wants work to continue autonomously where safe, but UI/runtime testing
 should wait until explicitly requested or until they switch back to a connection
 that will not risk the active development session.
+
+---
+
+## Handoff: VS Code Model Picker Integration Deep Dive
+
+**Date:** 2026-08-05  
+**Author:** GitHub Copilot (visualllm agent)
+
+### What was investigated
+
+A deep dive into the VS Code model picker integration (`vscode_integrate_lane` in `main.rs`, the `VscodeModelEntry`/`VscodeProviderEntry` types, and the `renderer/app.js` VS Code button handler).
+
+### How the integration works
+
+The integration writes to `~/.config/Code/User/chatLanguageModels.json` (and the Insiders equivalent). This is a simple JSON config file that VS Code reads to populate its model picker dropdown. No API keys are involved — the file just tells VS Code "here's a custom endpoint, here's what models it offers."
+
+The current code produces an entry like:
+
+```json
+{
+  "name": "visualllm",
+  "vendor": "customendpoint",
+  "apiKey": "placeholder",
+  "apiType": "chat-completions",
+  "models": [
+    {
+      "id": "my-lane",
+      "name": "visualllm: My Lane",
+      "url": "http://127.0.0.1:4100/lane/my-lane/v1",
+      "toolCalling": true,
+      "vision": false,
+      "maxInputTokens": 250144,
+      "maxOutputTokens": 8000
+    }
+  ]
+}
+```
+
+### Key findings
+
+1. **The `api_key: "placeholder"` is misleading.** The local engine doesn't need an API key, but VS Code may try to use this value and prompt the user for one. The field should be omitted or set to an empty string.
+
+2. **Capabilities are hardcoded, not derived.** `vision: false`, `tool_calling: true`, `max_input_tokens: 250144`, and `max_output_tokens: 8000` are set for every lane regardless of what models are actually in it. These should be computed from the lane's members and the cached catalog.
+
+3. **No remove/unintegrate path.** There's `vscode_integrate_lane` but no `vscode_remove_lane`. When a lane is deleted, the entry stays in `chatLanguageModels.json` forever.
+
+4. **No Cursor support.** Cursor reads the same `chatLanguageModels.json` format but from its own config directory (`~/.config/Cursor/User/chatLanguageModels.json`). It's not in the paths list.
+
+5. **No Windsurf support.** Windsurf uses the same format at `~/.config/Windsurf/User/chatLanguageModels.json`.
+
+6. **No Zed support.** Zed uses a different configuration system. It needs its own integration approach.
+
+7. **No status indicator.** The user has no way to know if a lane is currently integrated without checking the file manually.
+
+8. **No port-change handling.** If the engine port changes, the VS Code entries still point to the old port.
+
+### Recommendations (prioritized for the 1.0 release)
+
+1. **Derive capabilities from lane members** — compute `vision`, `tool_calling`, `max_input_tokens`, `max_output_tokens` from the actual models in the lane.
+2. **Remove/fix the `api_key` field** — omit it or set it to empty string for local endpoints.
+3. **Add `vscode_remove_lane` command** — clean up entries when lanes are deleted.
+4. **Add Cursor and Windsurf support** — add their `chatLanguageModels.json` paths to the editor config list.
+5. **Add Zed support** — Zed uses a different config format; investigate and implement.
+6. **Add integration status indicator** — show which editors a lane is integrated with.
+7. **Handle port changes** — update entries automatically or provide a re-integrate button.
+
+### Full analysis
+
+See `RELEASE_ROADMAP.md` for the complete major release plan covering all editor integrations, UI changes, testing, and documentation.
