@@ -258,12 +258,17 @@ macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
 
 ## 9. Post-1.0 feature candidates (Phase 3, ranked)
 
-Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Not committed work;
-each builds on data the engine already emits. Re-confirm priority with the user
+Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Item 1 shipped
+2026-08-06; the rest are not committed work. Re-confirm priority with the user
 before starting.
 
-1. **Per-lane failure budgets / auto-park** — park a lane automatically after N
-   failures in a rolling window (5 in 10 min default), with an "auto" badge.
+1. **Per-lane failure budgets / auto-park** — **done (2026-08-06).** A lane
+   that keeps failing the same transient way (provider errors, dead
+   connections, silence, rate limits) parks itself after a rolling-window
+   budget (default 5 in 10 min), answers 503 (`lane_parked`) until a human
+   unparks it, and records an `auto_parked` incident with the receipt. Header
+   button + notification action both unpark and reset the budget. Budget is
+   configurable per lane in `lanes.json`.
 2. **Request replay in the notification center** — retry a failed request from
    the incident record (confirmation-gated; replay spends money).
 3. **Lane cloning** — duplicate a lane with members/params/criteria; no

@@ -719,6 +719,20 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .hall-act:hover { color: var(--ink); border-color: var(--glass-edge-hi); }
 .hall-act.is-on { color: var(--ok); border-color: rgba(76, 214, 155, 0.3); background: rgba(76, 214, 155, 0.12); }
 
+/* The auto-parked lane's one-click exit. Amber, like the lamp it rides with:
+   a state to resolve, not a failure to ignore. */
+.hall-act.lane-parked {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.35);
+  background: rgba(255, 209, 102, 0.1);
+}
+.hall-act.lane-parked:hover {
+  color: #ffe6a8;
+  border-color: rgba(255, 209, 102, 0.55);
+  background: rgba(255, 209, 102, 0.18);
+}
+.hall-act.lane-parked svg { width: 10px; height: 10px; vertical-align: -1px; margin-right: 5px; }
+
 .hall-toggle {
   flex-shrink: 0;
   width: 24px; height: 24px;

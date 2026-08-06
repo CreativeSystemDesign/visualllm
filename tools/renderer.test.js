@@ -93,6 +93,7 @@ const exportLine = `
 globalThis.__t = {
   state,
   COLUMNS,
+  DIAGNOSIS,
   pricePerMillion,
   fmtPrice,
   fmtAgo,
@@ -315,4 +316,35 @@ test('browseMatches: criteria sorts rank by score, unjudgeable sinks last', () =
   ])
   t.state.browse.sorts = [{ field: 'intelligence', desc: true }]
   assert.deepEqual(t.browseMatches().map((m) => m.id), ['smart', 'dumb', 'mystery'])
+})
+
+// ---------------------------------------------------------------- diagnosis
+
+test('auto_parked diagnosis exists and offers unpark only while parked', () => {
+  const d = t.DIAGNOSIS.auto_parked
+  assert.ok(d, 'the engine writes auto_parked; the renderer must explain it')
+  assert.ok(d.title && d.why && d.advice, 'title, why and advice are the contract')
+  // The fix fires only while the lane is still parked — once unparked there is
+  // nothing to unpark, and the button must disappear.
+  assert.equal(d.fix({}, { parked: true }), 'unpark')
+  assert.equal(d.fix({}, { parked: false }), null)
+  assert.equal(d.fix({}, null), null)
+})
+
+test('auto_parked advice carries the engine receipt', () => {
+  const d = t.DIAGNOSIS.auto_parked
+  assert.match(d.advice({ evidence: '3 budgetable failures within the last 600s' }, {}), /3 budgetable failures/)
+})
+
+test('every incident kind the engine writes has a diagnosis', () => {
+  const kinds = [
+    'reasoning_burn', 'empty_response', 'midstream_error', 'rate_limited',
+    'out_of_credit', 'key_rejected', 'model_missing', 'capability_gap',
+    'context_overflow', 'provider_trouble', 'unreachable', 'stalled',
+    'loop_repeat', 'loop_futile', 'loop_sweep', 'request_rejected',
+    'skipped_by_catalog', 'auto_parked', 'unattributed',
+  ]
+  for (const kind of kinds) {
+    assert.ok(t.DIAGNOSIS[kind], `DIAGNOSIS.${kind} is missing`)
+  }
 })

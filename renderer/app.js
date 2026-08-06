@@ -29,6 +29,7 @@ const api = T
       catalogRead: (id) => T.core.invoke('catalog_read', { id: id ?? null }),
       lanesRead: () => T.core.invoke('lanes_read'),
       lanesWrite: (lanes) => T.core.invoke('lanes_write', { lanes }),
+      laneUnpark: (slug) => T.core.invoke('lane_unpark', { slug }),
       incidentsRead: () => T.core.invoke('incidents_read'),
       poolRead: () => T.core.invoke('pool_read'),
       poolWrite: (ids) => T.core.invoke('pool_write', { ids }),
@@ -236,6 +237,7 @@ const ICON = {
   brain: '<svg viewBox="0 0 16 16"><path d="M8 2.5a2.6 2.6 0 0 0-2.6 2.6c-1.5.3-2.4 1.5-2.4 3 0 1 .5 1.9 1.2 2.4-.1.3-.2.7-.2 1 0 1.6 1.4 2.9 3 2.9.5 0 1-.1 1.4-.4.3.2.6.3 1 .3a2.9 2.9 0 0 0 2.9-2.9c0-.3 0-.7-.2-1 .8-.5 1.3-1.4 1.3-2.4 0-1.5-1-2.7-2.4-3A2.6 2.6 0 0 0 8 2.5z"/></svg>',
   loop: '<svg viewBox="0 0 16 16"><path d="M3 8a5 5 0 0 1 8.5-3.5M13 8a5 5 0 0 1-8.5 3.5M11.5 2v2.5H9M4.5 14v-2.5H7"/></svg>',
   plug: '<svg viewBox="0 0 16 16"><path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v1.5a3.5 3.5 0 0 1-3.5 3.5 3.5 3.5 0 0 1-3.5-3.5z"/></svg>',
+  pause: '<svg viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>',
   check: '<svg viewBox="0 0 12 12"><path d="M2.5 6.5l2.5 2.5 4.5-5.5"/></svg>',
 }
 
@@ -566,6 +568,9 @@ function laneEl(hall) {
       ${ICON.copy}<span class="host">${engineHost()}</span><span>/lane/${hall.slug}/v1</span>
     </button>
     <span class="hall-spacer"></span>
+    ${hall.parked
+      ? `<button class="hall-act lane-parked" title="Auto-parked after repeated failures — click to unpark">${ICON.pause} Parked — resume</button>`
+      : ''}
     <button class="hall-act lane-test" title="Test this endpoint">Test</button>
     <button class="hall-act lane-copy-setup" title="Copy a curl setup example">Setup</button>
 
@@ -1161,6 +1166,7 @@ function renderNotifCenter() {
         <p class="issue-advice">${d.advice(latest, hall)}</p>
         <div class="issue-actions">
           ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-hall="${attr(latest.hall)}">Turn on “no thinking” for this endpoint</button>` : ''}
+          ${fix === 'unpark' ? `<button class="btn-ghost issue-fix" data-fix="unpark" data-hall="${attr(latest.hall)}">Unpark this endpoint</button>` : ''}
           <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}">${
             muted ? 'Ignored — click to restore' : 'Ignore this type'
           }</button>
@@ -1248,6 +1254,14 @@ const DIAGNOSIS = {
     why: () => 'Connection failed or timed out before any response existed.',
     advice: () => 'Check the base URL in Providers if this recurs — for local servers, that the server is running.',
   },
+  auto_parked: {
+    title: 'Parked this endpoint after repeated failures',
+    why: () =>
+      'The engine gave this lane a budget of transient failures — provider errors, dead connections, silence — and the lane spent it. Rather than keep burning attempts on something that will not succeed, it took itself out of rotation: requests now answer 503 until someone unparks it.',
+    advice: (i) =>
+      `The receipt: ${i.evidence}. Check the failures underneath before unparking — the cause is in the list. If it was a provider outage, unpark once it clears; if the lane's members keep failing the same way, fix the lane instead of resurrecting it.`,
+    fix: (i, hall) => (hall && hall.parked ? 'unpark' : null),
+  },
   // The engine no longer records capability skips as incidents — a member
   // passed over for a request it can't serve is the hall working as designed,
   // and badging it trained users to ignore the bell. This entry remains only
@@ -1311,7 +1325,7 @@ function fmtAgo(at) {
 $('notifBell').addEventListener('click', openNotifications)
 $('closeNotif').addEventListener('click', closeNotifications)
 
-$('notifScrim').addEventListener('click', (event) => {
+$('notifScrim').addEventListener('click', async (event) => {
   if (event.target === $('notifScrim')) return closeNotifications()
 
   const scopeClear = event.target.closest('.notif-scope-clear')
@@ -1330,6 +1344,15 @@ $('notifScrim').addEventListener('click', (event) => {
     renderLanes()
     renderNotifCenter()
     toast(`${hall.name}: members will be asked to answer without thinking`)
+    return
+  }
+
+  if (fix && fix.dataset.fix === 'unpark') {
+    const hall = state.lanes.find((l) => l.slug === fix.dataset.hall)
+    if (hall) {
+      await unparkLane(hall)
+      renderNotifCenter()
+    }
     return
   }
 
@@ -1775,6 +1798,15 @@ document.addEventListener('click', async (event) => {
     const slug = setup.closest('.hall').dataset.hall
     await api.copy(laneCurlExample(slug))
     toast('Curl setup copied')
+    return
+  }
+
+  // A parked lane's one-click exit: same action as the notification center's
+  // "Unpark this endpoint" — one path, two doors.
+  const unpark = event.target.closest('.lane-parked')
+  if (unpark) {
+    const hall = state.lanes.find((l) => l.slug === unpark.closest('.hall').dataset.hall)
+    if (hall) await unparkLane(hall)
     return
   }
 
@@ -2991,7 +3023,7 @@ document.addEventListener('keydown', (event) => {
 async function saveLanes() {
   try {
     await api.lanesWrite(
-      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick, integrated_editors }) => ({
+      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick, integrated_editors, parked, budget }) => ({
         slug,
         name,
         members: members.map(({ provider, id, params, disabled }) => ({
@@ -3004,6 +3036,12 @@ async function saveLanes() {
         suppress_reasoning: !!suppress_reasoning,
         unstick: !!unstick,
         integrated_editors: integrated_editors || [],
+        // The park state rides along so a save that happens while parked (e.g.
+        // a drag while another lane is in trouble) does not silently resurrect
+        // it. The engine owns `budget_hits`; the UI clears it via lane_unpark,
+        // which is why it is deliberately absent here.
+        parked: !!parked,
+        budget: budget || { failures: 5, window_secs: 600 },
       }))
     )
   } catch (err) {
@@ -3021,6 +3059,23 @@ async function loadLanes() {
   // code never has to wonder which shape it is holding.
   state.lanes.forEach((hall) => (hall.members = (hall.members || []).map(asRef)))
   renderLanes()
+}
+
+/** Lift an auto-parked lane back into rotation. The engine parks lanes on its
+ *  own; only a human unparks them, and this is the only entry point — the
+ *  header's "Parked — resume" button and the notification center's unpark
+ *  action both land here. The backend clears the failure history with the
+ *  flag, so the fresh start is real; re-reading the lanes keeps this view
+ *  honest about what the engine wrote. */
+async function unparkLane(hall) {
+  try {
+    await api.laneUnpark(hall.slug)
+  } catch (err) {
+    toast(`Could not unpark: ${err}`)
+    return
+  }
+  await loadLanes()
+  toast(`${hall.name}: unparked — requests will reach its members again`)
 }
 
 /** The editors a lane can be integrated into. The menu is rendered from this

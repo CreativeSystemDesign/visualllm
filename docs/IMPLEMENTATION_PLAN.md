@@ -289,9 +289,9 @@ renderer/preview seam.
 
 ## Phase 3 — Ranked feature ideas (after Phase 1+2 land)
 
-**Status: deferred (2026-08-06).** Phases 1 and 2 are complete. Phase 3 items
-below are ranked candidate features, not committed work — pick them up after the
-Phase 1+2 commit lands and the user confirms the priority order.
+**Status: started (2026-08-06).** 3.1 is complete. The remaining items below
+are ranked candidate features — pick them up after the user confirms the next
+priority order.
 
 Build in this order; each builds on data the engine already emits.
 
@@ -313,6 +313,40 @@ honest).
 `renderer/app.js` (badge/detail).
 **Verify:** pure-function unit test for the budget decision; server test that N
 consecutive failures park the lane and an unpark resets it.
+
+**Status: done (2026-08-06).** Implementation notes, where the plan and the
+shipped shape differ:
+- **Budgetable kinds are narrower than the plan's list.** The plan named
+  `midstream_error`; the shipped `incidents::counts_toward_budget` counts only
+  *transient, provider-side* failures — `provider_trouble`, `unreachable`,
+  `stalled`, `rate_limited`. Behavioural failures (reasoning burn, empty
+  responses, loops, a request the model cannot handle) are NOT budgeted: the
+  answer to those is to change the lane, not to park it and stop the traffic.
+  `out_of_credit` (billing) and `midstream_error` are treated as behavioural
+  for the same reason — parking won't fix an empty account.
+- **Parking is lane-level, not per-member.** The pre-existing "parked" UI is
+  per-member (`Member.disabled`, a tuning choice); auto-park sets a NEW lane
+  flag (`Lane.parked` + `parked_after`), which answers 503 with `error.type =
+  lane_parked` before any member is contacted. The two states are independent
+  and both survive on the lane.
+- **Budget bookkeeping lives on the lane** (`budget` = `{failures,
+  window_secs}`, `budget_hits` = timestamps), written by the engine on every
+  budgetable failure so the sliding window survives restarts. `lanes.rs`:
+  `over_budget()` is the pure, unit-tested decision.
+- **Unpark resets the budget.** `lane_unpark` tauri command (registered in
+  `main.rs`) → `lanes::unpark` clears `parked`, `parked_after`, and
+  `budget_hits`. The header shows an amber "Parked — resume" button; the
+  notification center's `auto_parked` card carries an "Unpark this endpoint"
+  action. Both call the same `unparkLane()` path in the renderer.
+- **The `auto_parked` incident is visible, not silent** — it notifies like
+  every other kind, so the ring keeps the cause and the canvas explains it.
+  Renderer `DIAGNOSIS.auto_parked` renders the engine's receipt
+  ("N budgetable failures within the last Xs").
+
+**Tests:** `lanes::over_budget` sliding-window unit test; `park`/`unpark` disk
+round-trip; `incidents::counts_toward_budget` kind classifier;
+`server` integration tests: N consecutive 503s park the lane (provider not
+called again), unpark clears the budget and the lane runs again.
 
 ### 3.2 Request replay in the notification center
 **Context:** incidents carry evidence text but not a structured request

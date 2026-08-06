@@ -169,6 +169,25 @@ pub fn kind_of(note: &str) -> &'static str {
     }
 }
 
+/// Does an incident of this kind count against a lane's auto-park budget?
+///
+/// Only TRANSIENT, provider-side failures do — the ones a lane cannot fix by
+/// trying its other members, because every member was tried and failed the
+/// same way. When a 503 or a dead connection keeps happening, the lane is
+/// burning attempts on something that will not succeed, and parking it is
+/// the honest move.
+///
+/// Behavioural failures (reasoning burn, empty responses, loops, a request
+/// the model simply cannot handle) are NOT budgeted: the answer to those is
+/// to change the lane, not to send its traffic nowhere. Parking would hide
+/// the diagnosis the canvas is meant to surface.
+pub fn counts_toward_budget(kind: &str) -> bool {
+    matches!(
+        kind,
+        "provider_trouble" | "unreachable" | "stalled" | "rate_limited"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +296,34 @@ mod tests {
             ),
             "loop_futile"
         );
+    }
+
+    #[test]
+    fn budget_counts_only_transient_failures() {
+        for transient in ["provider_trouble", "unreachable", "stalled", "rate_limited"] {
+            assert!(
+                counts_toward_budget(transient),
+                "{transient} should park a lane"
+            );
+        }
+        for behavioral in [
+            "reasoning_burn",
+            "empty_response",
+            "midstream_error",
+            "loop_repeat",
+            "loop_futile",
+            "request_rejected",
+            "capability_gap",
+            "context_overflow",
+            "key_rejected",
+            "out_of_credit",
+            "model_missing",
+            "unattributed",
+        ] {
+            assert!(
+                !counts_toward_budget(behavioral),
+                "{behavioral} should not park a lane"
+            );
+        }
     }
 }

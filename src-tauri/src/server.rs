@@ -150,20 +150,87 @@ pub fn activity_read(dir: &std::path::Path, since: u64) -> Vec<Value> {
 /// The note given here is the same text the trail and the log carry — one set
 /// of facts, three audiences.
 fn note_incident(dir: &std::path::Path, lane: &lanes::Lane, member: &str, note: &str, tools: u64) {
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let kind = incidents::kind_of(note).to_string();
     incidents::record(
         dir,
         incidents::Incident {
-            at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            at,
             lane: lane.slug.clone(),
             member: member.to_string(),
-            kind: incidents::kind_of(note).to_string(),
+            kind: kind.clone(),
             evidence: note.to_string(),
             no_think: lane.suppress_reasoning,
             loopwatch: lane.unstick,
             tools,
+        },
+    );
+    consider_auto_park(dir, lane, &kind, at);
+}
+
+/// Give a lane a budget of transient failures before the engine parks it.
+///
+/// Every budgetable incident bumps the lane's failure history; when enough
+/// fresh failures pile up inside the sliding window the lane is parked on
+/// disk, so its next request answers 503 before contacting anyone. The
+/// parking itself is recorded as an incident too — the ring keeps the cause,
+/// and the canvas turns it into the "this lane kept failing, so I stopped it"
+/// explanation. A human unparks from the header or the notification.
+fn consider_auto_park(dir: &std::path::Path, lane: &lanes::Lane, kind: &str, now: u64) {
+    if !incidents::counts_toward_budget(kind) || lane.parked {
+        return;
+    }
+    let budget = lane.budget;
+    // Record the hit. The window must survive restarts, so the history is
+    // written even when the lane stays running — a hit the process died before
+    // saving would let a fresh burst start the count from zero. The write and
+    // the park that may follow are two small atomic renames; a reader between
+    // them sees "not parked, one hit newer than the budget" for a moment, and
+    // the only consequence is that the next request may add one more failure
+    // before the park lands. Harmless in the only direction that matters.
+    {
+        let mut lanes = lanes::load(dir);
+        let Some(target) = lanes.iter_mut().find(|l| l.slug == lane.slug) else {
+            return;
+        };
+        target.budget_hits.push(now);
+        if lanes::save(dir, &lanes).is_err() {
+            return;
+        }
+    }
+    // Then decide: enough fresh failures inside the window?
+    let hits = lanes::load(dir)
+        .iter()
+        .find(|l| l.slug == lane.slug)
+        .map(|l| l.budget_hits.clone())
+        .unwrap_or_default();
+    if !lanes::over_budget(&budget, &hits, now) {
+        return;
+    }
+    if lanes::park(dir, &lane.slug, now).is_err() {
+        return;
+    }
+    eprintln!(
+        "engine: {} auto-parked: {} budgetable failures within the last {}s (budget {})",
+        lane.slug, budget.failures, budget.window_secs, kind
+    );
+    incidents::record(
+        dir,
+        incidents::Incident {
+            at: now,
+            lane: lane.slug.clone(),
+            member: "(lane)".into(),
+            kind: "auto_parked".into(),
+            evidence: format!(
+                "{} budgetable failures within the last {}s — lane parked until unparked",
+                budget.failures, budget.window_secs
+            ),
+            no_think: lane.suppress_reasoning,
+            loopwatch: lane.unstick,
+            tools: 0,
         },
     );
 }
@@ -1092,6 +1159,23 @@ async fn chat(
             StatusCode::SERVICE_UNAVAILABLE,
             format!("lane '{}' has no models in it", lane.name),
             "lane_empty",
+            vec![],
+        );
+    }
+
+    // A parked lane takes itself out of rotation: the engine stopped it after
+    // it kept failing, and it answers 503 until a human unparks it. The
+    // request is refused before any member is considered, and deliberately
+    // NOT logged as an incident — being parked is the current state, not a
+    // fresh failure.
+    if lane.parked {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!(
+                "lane '{}' was auto-parked after repeated failures; unpark it in VisualLLM to resume",
+                lane.name
+            ),
+            "lane_parked",
             vec![],
         );
     }
@@ -2144,6 +2228,13 @@ mod tests {
             suppress_reasoning: false,
             unstick: false,
             integrated_editors: Vec::new(),
+            parked: false,
+            parked_after: None,
+            budget: lanes::LaneBudget {
+                failures: 5,
+                window_secs: 600,
+            },
+            budget_hits: Vec::new(),
         }
     }
 
@@ -2349,6 +2440,86 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(models.status(), StatusCode::OK);
+        task.abort();
+    }
+
+    // ----------------------------------------------------------- auto-parking
+
+    /// A lane that can only fail: `primary` always answers 503, so every
+    /// request exhausts the lane and records a budgetable "provider error"
+    /// incident. The tiny budget makes two requests park it.
+    fn configure_park_test(dir: &std::path::Path, address: std::net::SocketAddr, failures: u32) {
+        configure_test_files(dir, address, &["primary"]);
+        let mut lane = lanes::load(dir).remove(0);
+        lane.budget = lanes::LaneBudget {
+            failures,
+            window_secs: 600,
+        };
+        lanes::save(dir, std::slice::from_ref(&lane)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_transient_failures_park_the_lane_and_refuse_further_requests() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_park_test(dir.path(), address, 2);
+
+        let first = call_lane(dir.path(), false).await;
+        assert_eq!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let second = call_lane(dir.path(), false).await;
+        assert_eq!(second.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let parked = &lanes::load(dir.path())[0];
+        assert!(
+            parked.parked,
+            "the second failure should have parked the lane"
+        );
+        assert_eq!(parked.budget_hits.len(), 2);
+
+        // The incident ring keeps the cause next to the failure receipts.
+        assert!(incidents::load(dir.path())
+            .iter()
+            .any(|i| i.kind == "auto_parked"));
+
+        // The lane now answers 503 with the parked reason before any member is
+        // contacted — the provider is not called a third time.
+        let third = call_lane(dir.path(), false).await;
+        assert_eq!(third.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(third.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("lane_parked"));
+        assert_eq!(&*calls.lock().unwrap(), &["primary", "primary"]);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn unparking_clears_the_budget_and_the_lane_runs_again() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_park_test(dir.path(), address, 2);
+
+        for _ in 0..2 {
+            let _ = call_lane(dir.path(), false).await;
+        }
+        assert!(lanes::load(dir.path())[0].parked);
+
+        lanes::unpark(dir.path(), "fallback").unwrap();
+        let running = &lanes::load(dir.path())[0];
+        assert!(!running.parked);
+        assert_eq!(running.parked_after, None);
+        assert!(running.budget_hits.is_empty());
+
+        // Back in rotation: the provider is contacted again, and one fresh
+        // failure no longer crosses the (cleared) budget.
+        let response = call_lane(dir.path(), false).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let lane = &lanes::load(dir.path())[0];
+        assert!(!lane.parked, "one failure after unparking must not re-park");
+        assert_eq!(lane.budget_hits.len(), 1);
+        assert_eq!(&*calls.lock().unwrap(), &["primary", "primary", "primary"]);
         task.abort();
     }
 }

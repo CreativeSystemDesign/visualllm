@@ -126,6 +126,7 @@ const html = indexHtml
         catalogRead: () => ok({ models: data.catalog, errors: [] }),
         lanesRead: () => ok(data.lanes),
         lanesWrite: (lanes) => { data.lanes = lanes; return ok() },
+        laneUnpark: (slug) => { const lane = data.lanes.find((l) => l.slug === slug); if (lane) { lane.parked = false; lane.parked_after = null; lane.budget_hits = [] } return ok() },
         poolRead: () => ok(data.pool),
         poolWrite: (ids) => { data.pool = ids; return ok() },
         statsRead: () => ok(data.stats),

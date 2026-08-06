@@ -212,6 +212,29 @@ logic is under test, and version drift fails CI instead of shipping.
 - [x] **Frontend hygiene.** The dead theme toggle is gone; the active skin is
   dark-first by construction, no half-baked light path.
 
+### 12. Auto-park lane failure budgets (2026-08-06)
+
+**Done when:** a lane that keeps failing the same transient way parks itself,
+answers 503 until a human unparks it, and the parking is visible and reversible
+on the canvas.
+
+- [x] **Per-lane failure budget.** `lanes::Lane.budget` (`failures`/`window_secs`,
+  default 5/600) plus `budget_hits` timestamps; `over_budget()` is a pure
+  sliding-window decision, unit-tested.
+- [x] **Engine parks the lane.** Every budgetable failure (transient,
+  provider-side kinds only — `provider_trouble`, `unreachable`, `stalled`,
+  `rate_limited`) is recorded and counted; crossing the budget sets `parked` +
+  `parked_after` and writes an `auto_parked` incident with the receipt.
+  Behavioural failures never park a lane.
+- [x] **Parked lanes refuse work.** A parked lane answers `503` with
+  `error.type = lane_parked` before any member is contacted; the engine's
+  budget bookkeeping survives restarts.
+- [x] **Unpark resets the budget.** `lane_unpark` command → `lanes::unpark`
+  clears the flag and the history. Header shows an amber "Parked — resume"
+  button; the notification center's `auto_parked` card carries an unpark action.
+- [x] **Visible and reversible.** `DIAGNOSIS.auto_parked` explains the parking
+  with the engine's receipt; the incident notifies like any other kind.
+
 ## Release criteria
 
 A first public release should meet all of these conditions:

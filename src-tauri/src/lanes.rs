@@ -128,6 +128,27 @@ pub struct Criterion {
     pub desc: bool,
 }
 
+/// When a lane is auto-parked, how many budgetable failures trip it and over
+/// what window. The window is a sliding one: only failures still inside it
+/// count, so a burst parks a lane and an old scar does not.
+///
+/// Deliberately coarse and lane-wide. The engine is the only writer of the
+/// budget bookkeeping; the file schema is the knob for changing the numbers.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+pub struct LaneBudget {
+    pub failures: u32,
+    pub window_secs: u64,
+}
+
+impl Default for LaneBudget {
+    fn default() -> Self {
+        Self {
+            failures: 5,
+            window_secs: 600,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lane {
     pub slug: String,
@@ -186,6 +207,30 @@ pub struct Lane {
     /// load with integration off — the safe default.
     #[serde(default)]
     pub integrated_editors: Vec<String>,
+    /// Auto-parked: the engine has stopped sending this lane's requests to
+    /// its members until a human unparks it (see `auto_park` in server.rs).
+    ///
+    /// Distinct from parking individual members (`Member.disabled`): that is a
+    /// deliberate tuning choice, this is the engine catching a lane that kept
+    /// failing and pulling it out of rotation before it burns more attempts.
+    /// The lane answers `503` while parked. `#[serde(default)]` so lanes saved
+    /// before this feature existed load as running.
+    #[serde(default)]
+    pub parked: bool,
+    /// When the lane was parked, as unix seconds — the "parked since" moment
+    /// the UI shows next to the unpark control. `None` when running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked_after: Option<u64>,
+    /// The failure budget this lane parks under. `#[serde(default)]` so the
+    /// schema addition loads as the standard budget.
+    #[serde(default)]
+    pub budget: LaneBudget,
+    /// Timestamps (unix seconds) of the budgetable failures the engine has
+    /// recorded, sliding-window. The engine owns this bookkeeping; it is kept
+    /// on the lane so the state survives a restart and the number is
+    /// inspectable in the file. Empty when running or parked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub budget_hits: Vec<u64>,
 }
 
 const STATE_SCHEMA_VERSION: u32 = 1;
@@ -244,6 +289,44 @@ pub fn load(dir: &std::path::Path) -> Vec<Lane> {
 pub fn save(dir: &std::path::Path, lanes: &[Lane]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     write_state(store_path(dir), lanes)
+}
+
+/// The budget decision itself, kept pure so it is unit-testable without a
+/// clock or a disk. `now` is unix seconds.
+///
+/// A hit set parks the lane when at least `budget.failures` hits still fall
+/// inside the window. Everything outside the window is dead weight: it expired
+/// before the lane could do anything about it, and counting it would let one
+/// old scar do half the work of a fresh burst.
+pub fn over_budget(budget: &LaneBudget, hits: &[u64], now: u64) -> bool {
+    hits.iter()
+        .filter(|hit| now.saturating_sub(**hit) < budget.window_secs)
+        .count()
+        >= budget.failures as usize
+}
+
+/// Park a lane in place: set the flag and stamp when. The members stay exactly
+/// as they were — parking is about the lane, not its contents.
+pub fn park(dir: &std::path::Path, slug: &str, now: u64) -> Result<(), String> {
+    let mut lanes = load(dir);
+    if let Some(lane) = lanes.iter_mut().find(|lane| lane.slug == slug) {
+        lane.parked = true;
+        lane.parked_after = Some(now);
+    }
+    save(dir, &lanes)
+}
+
+/// Unpark a lane: clear the flag, the stamp, and the accumulated failure
+/// history, so the budget starts clean. Idempotent — unparking a running lane
+/// is a no-op.
+pub fn unpark(dir: &std::path::Path, slug: &str) -> Result<(), String> {
+    let mut lanes = load(dir);
+    if let Some(lane) = lanes.iter_mut().find(|lane| lane.slug == slug) {
+        lane.parked = false;
+        lane.parked_after = None;
+        lane.budget_hits.clear();
+    }
+    save(dir, &lanes)
 }
 
 // ============================================================================
@@ -328,6 +411,10 @@ mod tests {
             suppress_reasoning: false,
             unstick: false,
             integrated_editors: Vec::new(),
+            parked: false,
+            parked_after: None,
+            budget: LaneBudget::default(),
+            budget_hits: Vec::new(),
         };
         save(dir.path(), std::slice::from_ref(&lane)).unwrap();
         let written = std::fs::read_to_string(store_path(dir.path())).unwrap();
@@ -350,5 +437,61 @@ mod tests {
         assert!(load(dir.path()).is_empty());
         std::fs::write(&path, r#"{\"schema_version\":99,\"data\":[]}"#).unwrap();
         assert!(load(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn over_budget_counts_only_hits_inside_the_window() {
+        let budget = LaneBudget {
+            failures: 3,
+            window_secs: 600,
+        };
+        // Three fresh failures, sixty seconds in: parked.
+        let now = 1_000;
+        let hits = vec![now - 10, now - 30, now - 60];
+        assert!(over_budget(&budget, &hits, now));
+
+        // The oldest expired (age >= window): only two count, running.
+        let now = 1_550;
+        let hits = vec![now - 610, now - 30, now - 60];
+        assert!(!over_budget(&budget, &hits, now));
+
+        // Just under the threshold stays running; equal trips it.
+        assert!(!over_budget(&budget, &hits[1..], now));
+        let hits = vec![now, now - 1, now - 2];
+        assert!(over_budget(&budget, &hits, now));
+    }
+
+    #[test]
+    fn park_and_unpark_round_trip_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let lane = Lane {
+            slug: "s".into(),
+            name: "N".into(),
+            members: Vec::new(),
+            criteria: Vec::new(),
+            suppress_reasoning: false,
+            unstick: false,
+            integrated_editors: Vec::new(),
+            parked: false,
+            parked_after: None,
+            budget: LaneBudget::default(),
+            budget_hits: vec![100, 200],
+        };
+        save(dir.path(), std::slice::from_ref(&lane)).unwrap();
+
+        park(dir.path(), "s", 300).unwrap();
+        let parked = &load(dir.path())[0];
+        assert!(parked.parked);
+        assert_eq!(parked.parked_after, Some(300));
+
+        unpark(dir.path(), "s").unwrap();
+        let running = &load(dir.path())[0];
+        assert!(!running.parked);
+        assert_eq!(running.parked_after, None);
+        assert!(running.budget_hits.is_empty());
+
+        // Unparking a lane that never parked is a no-op, not an error.
+        unpark(dir.path(), "s").unwrap();
+        assert!(!load(dir.path())[0].parked);
     }
 }

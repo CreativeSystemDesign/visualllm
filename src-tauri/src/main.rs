@@ -976,6 +976,14 @@ fn lanes_write(app: tauri::AppHandle, lanes: Vec<lanes::Lane>) -> Result<(), Str
     lanes::save(&store_dir(&app)?, &lanes)
 }
 
+/// Lift an auto-parked lane back into rotation: clears the parked flag and
+/// the accumulated failure history, so the budget starts clean. The engine
+/// parks lanes; only a human unparks them.
+#[tauri::command]
+fn lane_unpark(app: tauri::AppHandle, slug: String) -> Result<(), String> {
+    lanes::unpark(&store_dir(&app)?, &slug)
+}
+
 /// Throughput and latency, from the cache. Cheap; safe to call on every render.
 #[tauri::command]
 fn stats_read(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -1375,6 +1383,7 @@ fn main() {
             catalog_read,
             lanes_read,
             lanes_write,
+            lane_unpark,
             incidents_read,
             pool_read,
             pool_write,
