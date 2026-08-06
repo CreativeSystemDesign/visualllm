@@ -250,11 +250,13 @@ jobs:
         with:
           name: visualllm-linux
           path: artifacts
-      - name: Create tar.gz from release binary
+      - name: Create tar.gz from AppImage
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           mkdir -p visualllm-${TAG}
-          cp artifacts/visualllm visualllm-${TAG}/ 2>/dev/null || cp src-tauri/target/release/visualllm visualllm-${TAG}/
+          # Use the AppImage as the distributable binary
+          cp artifacts/*.AppImage visualllm-${TAG}/visualllm
+          chmod +x visualllm-${TAG}/visualllm
           tar -czf visualllm-${TAG}.tar.gz visualllm-${TAG}
           sha256sum visualllm-${TAG}.tar.gz > SHA256SUMS-tarball.txt
           cat SHA256SUMS-tarball.txt
