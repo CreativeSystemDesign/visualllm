@@ -21,6 +21,8 @@ VisualLLM is a **visual fallback router** for AI models. It's a desktop applicat
 - **Drag models from the vault (left sidebar) into any lane** — each lane is an ordered fallback chain
 - **Reorder models within a lane by dragging** — the rightmost model answers first; everything to its left is a fallback
 - **Expose lanes as local OpenAI-compatible endpoints** that your tools can connect to
+- **Integrate a lane into your editor** (VS Code, VS Code Insiders, Windsurf) with one click — it shows up in the editor's own model picker
+- **Self-update from GitHub** — the app checks for a new signed release at startup and offers to restart when one is ready
 
 When a request comes in, the rightmost model answers first. If it fails, can't serve the request, or returns unusable content, VisualLLM automatically tries the next model in line — and explains exactly what happened at each step.
 
@@ -117,10 +119,16 @@ Every response includes headers telling you:
 
 ### For Users (Pre-built)
 
-Once packaged, VisualLLM will be available as:
+Ready-to-run installers are published to [GitHub Releases](https://github.com/CreativeSystemDesign/visualllm/releases):
 - `.deb` for Debian/Ubuntu
 - AppImage for any Linux distribution
-- (Windows/macOS support planned — see [ROADMAP.md](ROADMAP.md))
+- `.msi` / `.exe` for Windows
+- `.dmg` for macOS
+
+**VisualLLM updates itself.** A few seconds after launch it checks GitHub for a
+newer release, downloads it in the background, and offers to restart — every
+download is signature-verified against the key embedded in the app. No manual
+reinstall needed.
 
 ### 🧪 Calling All Testers!
 
@@ -237,6 +245,21 @@ curl http://127.0.0.1:4100/lane/my-lane/v1/chat/completions \
     "max_tokens": 50
   }'
 ```
+
+### 5. Integrate a Lane into Your Editor
+
+Instead of wiring endpoints by hand, add a lane straight into an editor's model
+picker with one click. On each lane, open the editor picker and choose a target:
+
+- **VS Code** — the lane appears as a `customendpoint` model you can select in
+  Copilot Chat / the model picker
+- **VS Code Insiders** — same integration for the Insiders build
+- **Windsurf** — same VS Code schema, `Windsurf` config directory
+
+VisualLLM writes the lane into the editor's `chatLanguageModels.json`, derives
+its capabilities (vision, tools, context window) from the lane's actual members,
+and **removes it automatically when the lane is deleted**. Re-running an
+integration updates the existing entry rather than duplicating it.
 
 ---
 
@@ -584,7 +607,13 @@ Before tagging a release:
 5. Run the AppImage on a clean Linux VM with no WebKitGTK development packages
    installed to confirm it bundles its dependencies.
 6. Update `CHANGELOG.md` with the version, date, and summary of changes.
-7. Tag the release and attach the `.deb`, AppImage, and source archive.
+7. Bump the version to match in `src-tauri/Cargo.toml`,
+   `src-tauri/tauri.conf.json`, and `package.json` — the CI release pipeline
+   refuses a tag whose version doesn't match the source.
+8. Tag the release (`git tag vX.Y.Z && git push origin vX.Y.Z`). The pipeline
+   builds and signs the `.deb`, AppImage, `.msi`, `.exe`, and `.dmg`, uploads
+   their `.sig` files and a fresh `latest.json`, and publishes the GitHub
+   Release — which is also what the in-app auto-updater checks against.
 
 ## Version policy
 
