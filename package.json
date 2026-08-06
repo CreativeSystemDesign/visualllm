@@ -7,6 +7,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "smoke": "node tools/smoke.js",
+    "test": "node --test tools/*.test.js",
     "tauri": "tauri",
     "start:system": "sh ./run.sh"
   },
