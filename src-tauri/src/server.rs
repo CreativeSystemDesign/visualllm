@@ -93,7 +93,7 @@ use crate::{incidents, lanes, loopwatch, providers};
 ///
 /// A plain text append, not a JSON document: it is written on the hot path,
 /// read by polling, and trimmed by size rather than parsed.
-fn note_activity(dir: &PathBuf, lane: &str, member: &str, phase: &str, detail: &str) {
+fn note_activity(dir: &std::path::Path, lane: &str, member: &str, phase: &str, detail: &str) {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -138,7 +138,7 @@ fn note_activity(dir: &PathBuf, lane: &str, member: &str, phase: &str, detail: &
 
 /// Read the newest activity lines, for the renderer. The renderer polls this;
 /// unparseable lines (a torn trim boundary) are skipped.
-pub fn activity_read(dir: &PathBuf, since: u64) -> Vec<Value> {
+pub fn activity_read(dir: &std::path::Path, since: u64) -> Vec<Value> {
     let text = std::fs::read_to_string(dir.join("activity.jsonl")).unwrap_or_default();
     text.lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -149,7 +149,7 @@ pub fn activity_read(dir: &PathBuf, since: u64) -> Vec<Value> {
 /// Record one failure with its receipts, so the canvas can explain it later.
 /// The note given here is the same text the trail and the log carry — one set
 /// of facts, three audiences.
-fn note_incident(dir: &PathBuf, lane: &lanes::Lane, member: &str, note: &str, tools: u64) {
+fn note_incident(dir: &std::path::Path, lane: &lanes::Lane, member: &str, note: &str, tools: u64) {
     incidents::record(
         dir,
         incidents::Incident {
@@ -2080,6 +2080,7 @@ mod tests {
             criteria: Vec::new(),
             suppress_reasoning: false,
             unstick: false,
+            integrated_editors: Vec::new(),
         }
     }
 
@@ -2123,7 +2124,7 @@ mod tests {
 
     fn configure_test_files(dir: &std::path::Path, address: std::net::SocketAddr, models: &[&str]) {
         providers::save(
-            &dir.to_path_buf(),
+            dir,
             &[providers::Provider {
                 id: "fake".into(),
                 name: "Fake provider".into(),
@@ -2133,7 +2134,7 @@ mod tests {
             }],
         )
         .unwrap();
-        lanes::save(&dir.to_path_buf(), &[test_lane(models)]).unwrap();
+        lanes::save(dir, &[test_lane(models)]).unwrap();
     }
 
     async fn call_lane(dir: &std::path::Path, stream: bool) -> Response {

@@ -75,11 +75,11 @@ pub struct Incident {
     pub tools: u64,
 }
 
-pub fn store_path(dir: &PathBuf) -> PathBuf {
+pub fn store_path(dir: &std::path::Path) -> PathBuf {
     dir.join("incidents.json")
 }
 
-pub fn load(dir: &PathBuf) -> Vec<Incident> {
+pub fn load(dir: &std::path::Path) -> Vec<Incident> {
     match read_state(store_path(dir)) {
         Some(v) => v,
         None => {
@@ -95,7 +95,7 @@ pub fn load(dir: &PathBuf) -> Vec<Incident> {
 /// Append one incident, trimming to the newest `KEEP`. Best-effort by
 /// design: evidence-keeping must never fail a request that is already
 /// having a bad day.
-pub fn record(dir: &PathBuf, incident: Incident) {
+pub fn record(dir: &std::path::Path, incident: Incident) {
     if incident.evidence.trim().is_empty() {
         return; // no receipts, no record — the rule, mechanically enforced
     }

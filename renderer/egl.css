@@ -821,7 +821,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 }
 @keyframes dropIn { from { opacity: 0; transform: scaleY(0.3); } to { opacity: 1; transform: scaleY(1); } }
 
-/* The hall's foot: the status line, set small in the mono voice. */
+/* The hall's foot: the status line, set small in the mono voice. The
+   Integrate button rides the same bar, so the activity line yields: it is a
+   flex item that truncates rather than shoving the button off the lane. */
 .hall-foot {
   display: flex;
   align-items: center;
@@ -830,6 +832,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 }
 .hall-foot .lane-activity {
   display: block;
+  min-width: 0;
   font-family: var(--f-mono);
   font-size: 9.5px;
   letter-spacing: 0.02em;
@@ -853,6 +856,33 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .hall-foot .foot-criteria:hover { color: var(--signal); text-decoration: underline; }
 .hall-foot .foot-sep { color: var(--ink-faint); margin: 0 7px; }
 .hall-foot .foot-quiet { color: var(--ink-faint); font-style: italic; }
+
+/* The lane footer's Integrate button. One entry point per lane, opening the
+   menu below — the lane stays clean no matter how many editors the app
+   learns to speak. Sits at the footer's right edge; lights green (via the
+   shared .hall-act.is-on) when the lane is in any editor. */
+.lane-ide {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: 8.5px;
+}
+.lane-ide svg { width: 10px; height: 10px; }
+
+/* The IDE picker menu: the same glass plate as the relic menu, but each item
+   carries a check that lights when the lane lives in that editor. The check
+   is always drawn so the rows hold still; an unlit check reads as "not here". */
+.ide-menu { min-width: 200px; }
+.ide-menu .ide-menu-item svg {
+  color: var(--ink-faint);
+  opacity: 0.35;
+  transition: color 200ms var(--ease-mass), opacity 200ms var(--ease-mass);
+}
+.ide-menu .ide-menu-item.is-on svg { color: var(--ok); opacity: 1; }
+.ide-menu .ide-menu-item.is-on { color: var(--ok); }
 
 /* ============================================================================
    THE PLINTH — the long stone. Status, gateway, and the bell.

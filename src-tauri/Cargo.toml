@@ -1,6 +1,6 @@
 [package]
 name = "visualllm"
-version = "0.1.0"
+version = "0.3.0"
 description = "Design reliable OpenAI-compatible endpoints by arranging AI models visually"
 edition = "2021"
 rust-version = "1.77"
@@ -22,6 +22,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 futures-util = "0.3"

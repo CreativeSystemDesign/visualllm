@@ -157,7 +157,7 @@ pub fn find_repeats(messages: &[Value], threshold: usize) -> Vec<Repeat> {
             answered,
         })
         .collect();
-    repeats.sort_by(|a, b| b.times.cmp(&a.times));
+    repeats.sort_by_key(|r| std::cmp::Reverse(r.times));
     repeats
 }
 

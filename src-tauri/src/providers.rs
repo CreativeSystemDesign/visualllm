@@ -134,11 +134,11 @@ pub struct CatalogModel {
 
 // ------------------------------------------------------------------- storage
 
-pub fn store_path(dir: &PathBuf) -> PathBuf {
+pub fn store_path(dir: &std::path::Path) -> PathBuf {
     dir.join("providers.json")
 }
 
-pub fn load(dir: &PathBuf) -> Vec<Provider> {
+pub fn load(dir: &std::path::Path) -> Vec<Provider> {
     let mut providers: Vec<Provider> = match read_state(store_path(dir)) {
         Some(v) => v,
         None => {
@@ -153,7 +153,7 @@ pub fn load(dir: &PathBuf) -> Vec<Provider> {
     providers
 }
 
-pub fn save(dir: &PathBuf, providers: &[Provider]) -> Result<(), String> {
+pub fn save(dir: &std::path::Path, providers: &[Provider]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = store_path(dir);
 
@@ -180,11 +180,11 @@ pub fn save(dir: &PathBuf, providers: &[Provider]) -> Result<(), String> {
 /// The last catalog seen, kept on disk so the engine can answer "does this
 /// model take images?" without a network round trip on every inbound request.
 /// Refreshed whenever the panel fetches; stale is fine, absent is not.
-pub fn cache_path(dir: &PathBuf) -> PathBuf {
+pub fn cache_path(dir: &std::path::Path) -> PathBuf {
     dir.join("catalog.json")
 }
 
-pub fn cache_write(dir: &PathBuf, models: &[CatalogModel]) {
+pub fn cache_write(dir: &std::path::Path, models: &[CatalogModel]) {
     if let Err(e) = std::fs::create_dir_all(dir) {
         eprintln!("providers: failed to create cache directory {:?}: {e}", dir);
         return;
@@ -206,7 +206,7 @@ pub fn cache_write(dir: &PathBuf, models: &[CatalogModel]) {
     );
 }
 
-pub fn cache_read(dir: &PathBuf) -> Vec<CatalogModel> {
+pub fn cache_read(dir: &std::path::Path) -> Vec<CatalogModel> {
     match read_state(cache_path(dir)) {
         Some(v) => v,
         None => {
@@ -229,18 +229,18 @@ pub struct CatalogMeta {
     pub retained_at: u64,
 }
 
-pub fn cache_meta_path(dir: &PathBuf) -> PathBuf {
+pub fn cache_meta_path(dir: &std::path::Path) -> PathBuf {
     dir.join("catalog-meta.json")
 }
 
-pub fn cache_meta_read(dir: &PathBuf) -> CatalogMeta {
+pub fn cache_meta_read(dir: &std::path::Path) -> CatalogMeta {
     std::fs::read_to_string(cache_meta_path(dir))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-pub fn cache_meta_write(dir: &PathBuf, meta: &CatalogMeta) {
+pub fn cache_meta_write(dir: &std::path::Path, meta: &CatalogMeta) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -540,18 +540,18 @@ pub struct StatsFile {
     pub models: HashMap<String, EndpointStats>,
 }
 
-pub fn stats_path(dir: &PathBuf) -> PathBuf {
+pub fn stats_path(dir: &std::path::Path) -> PathBuf {
     dir.join("endpoint-stats.json")
 }
 
-pub fn stats_read(dir: &PathBuf) -> StatsFile {
+pub fn stats_read(dir: &std::path::Path) -> StatsFile {
     std::fs::read_to_string(stats_path(dir))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-pub fn stats_write(dir: &PathBuf, file: &StatsFile) {
+pub fn stats_write(dir: &std::path::Path, file: &StatsFile) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -596,7 +596,11 @@ fn best_stats(body: &Value) -> EndpointStats {
 /// being throttled here costs the whole column rather than one row. A failure
 /// on any single model leaves it absent rather than aborting the run — a
 /// partial column is useful, a missing one is not.
-pub async fn hydrate_stats(dir: &PathBuf, models: &[CatalogModel], all: &[Provider]) -> usize {
+pub async fn hydrate_stats(
+    dir: &std::path::Path,
+    models: &[CatalogModel],
+    all: &[Provider],
+) -> usize {
     use futures_util::stream::{self, StreamExt};
 
     let client = match reqwest::Client::builder()

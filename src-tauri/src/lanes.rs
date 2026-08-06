@@ -175,17 +175,17 @@ pub struct Lane {
     /// announced in an `x-visualllm-unstuck` header rather than done quietly.
     #[serde(default)]
     pub unstick: bool,
-    /// Whether this lane is integrated into editor model pickers.
+    /// Which editors this lane is integrated into.
     ///
-    /// When true, VisualLLM adds the lane as a model entry in each
-    /// editor's `chatLanguageModels.json`. When the app closes,
-    /// all integrated lanes are removed from the editor configs so
-    /// stale endpoints don't linger after the gateway stops.
+    /// When non-empty, VisualLLM adds the lane as a model entry in
+    /// each listed editor's `chatLanguageModels.json`. When the app
+    /// closes, all integrated lanes are removed from the editor configs
+    /// so stale endpoints don't linger after the gateway stops.
     ///
     /// `#[serde(default)]` so lanes saved before this field existed
     /// load with integration off — the safe default.
     #[serde(default)]
-    pub vscode_integrated: bool,
+    pub integrated_editors: Vec<String>,
 }
 
 const STATE_SCHEMA_VERSION: u32 = 1;
@@ -222,11 +222,11 @@ where
     std::fs::rename(&temp, path).map_err(|e| e.to_string())
 }
 
-pub fn store_path(dir: &PathBuf) -> PathBuf {
+pub fn store_path(dir: &std::path::Path) -> PathBuf {
     dir.join("lanes.json")
 }
 
-pub fn load(dir: &PathBuf) -> Vec<Lane> {
+pub fn load(dir: &std::path::Path) -> Vec<Lane> {
     match read_state(store_path(dir)) {
         Some(v) => v,
         None => {
@@ -241,7 +241,7 @@ pub fn load(dir: &PathBuf) -> Vec<Lane> {
 
 /// The whole set is rewritten on every change. At the scale a person can drag
 /// chips around, a diff would be more code than it saves.
-pub fn save(dir: &PathBuf, lanes: &[Lane]) -> Result<(), String> {
+pub fn save(dir: &std::path::Path, lanes: &[Lane]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     write_state(store_path(dir), lanes)
 }
@@ -250,18 +250,17 @@ pub fn save(dir: &PathBuf, lanes: &[Lane]) -> Result<(), String> {
 // THE POOL
 // ============================================================================
 
-
 /// The models the user has chosen to keep, as (provider, id) pairs.
 ///
 /// A provider's catalog runs to hundreds of models. The pool is the handful
 /// worth having in front of you — picked in the browser, and the only thing the
 /// sidebar shows. Browsing and building are different jobs, and this is the
 /// line between them.
-pub fn pool_path(dir: &PathBuf) -> PathBuf {
+pub fn pool_path(dir: &std::path::Path) -> PathBuf {
     dir.join("pool.json")
 }
 
-pub fn pool_load(dir: &PathBuf) -> Vec<Member> {
+pub fn pool_load(dir: &std::path::Path) -> Vec<Member> {
     match read_state(pool_path(dir)) {
         Some(v) => v,
         None => {
@@ -274,7 +273,7 @@ pub fn pool_load(dir: &PathBuf) -> Vec<Member> {
     }
 }
 
-pub fn pool_save(dir: &PathBuf, members: &[Member]) -> Result<(), String> {
+pub fn pool_save(dir: &std::path::Path, members: &[Member]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     write_state(pool_path(dir), members)
 }
@@ -328,27 +327,28 @@ mod tests {
             criteria: Vec::new(),
             suppress_reasoning: false,
             unstick: false,
+            integrated_editors: Vec::new(),
         };
-        save(&dir.path().to_path_buf(), std::slice::from_ref(&lane)).unwrap();
-        let written = std::fs::read_to_string(store_path(&dir.path().to_path_buf())).unwrap();
+        save(dir.path(), std::slice::from_ref(&lane)).unwrap();
+        let written = std::fs::read_to_string(store_path(dir.path())).unwrap();
         assert!(written.contains("\"schema_version\": 1"));
-        assert_eq!(load(&dir.path().to_path_buf())[0].slug, "s");
+        assert_eq!(load(dir.path())[0].slug, "s");
 
         std::fs::write(
-            store_path(&dir.path().to_path_buf()),
+            store_path(dir.path()),
             serde_json::to_string(&[lane]).unwrap(),
         )
         .unwrap();
-        assert_eq!(load(&dir.path().to_path_buf())[0].name, "N");
+        assert_eq!(load(dir.path())[0].name, "N");
     }
 
     #[test]
     fn corrupt_and_future_state_is_ignored_without_panicking() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&dir.path().to_path_buf());
+        let path = store_path(dir.path());
         std::fs::write(&path, "not json").unwrap();
-        assert!(load(&dir.path().to_path_buf()).is_empty());
+        assert!(load(dir.path()).is_empty());
         std::fs::write(&path, r#"{\"schema_version\":99,\"data\":[]}"#).unwrap();
-        assert!(load(&dir.path().to_path_buf()).is_empty());
+        assert!(load(dir.path()).is_empty());
     }
 }

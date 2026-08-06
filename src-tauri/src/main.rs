@@ -57,7 +57,8 @@ use tokio::sync::watch;
 use gtk::prelude::GtkWindowExt;
 
 use providers::{CatalogModel, Provider, ProviderView};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_updater::UpdaterExt;
 
 /// VS Code chatLanguageModels.json entry for a custom endpoint model.
 #[derive(Serialize, Deserialize, Clone)]
@@ -99,33 +100,86 @@ struct VscodeIntegrationResult {
     error: Option<String>,
 }
 
+/// The per-user config root where editors store their settings, per host OS.
+///
+/// Confirmed layout (user-provided, 2026-08-06):
+/// - Windows: `%APPDATA%\<Product>`
+/// - macOS:   `$HOME/Library/Application Support/<Product>`
+/// - Linux:   `$HOME/.config/<Product>`
+fn config_root() -> Result<PathBuf, String> {
+    if cfg!(target_os = "windows") {
+        std::env::var("APPDATA")
+            .map(PathBuf::from)
+            .map_err(|_| "APPDATA not set".to_string())
+    } else if cfg!(target_os = "macos") {
+        let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
+        Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support"))
+    } else {
+        let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
+        Ok(PathBuf::from(home).join(".config"))
+    }
+}
+
 /// Paths to every supported editor's chatLanguageModels.json, with the editor
 /// name each one belongs to.
 ///
-/// The lane lands in BOTH stable VS Code and VS Code Insiders, always. The old
-/// "first existing file wins" heuristic wrote to whichever config appeared
-/// first — stable, once its file existed — so Insiders never saw the lanes.
-/// Writing every target explicitly makes the editor a property of the write,
-/// not an accident of file history.
-fn vscode_chat_models_paths() -> Result<[(PathBuf, &'static str); 2], String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
-    let config = PathBuf::from(home).join(".config");
-    Ok([
+/// The lane lands in ALL targets explicitly — writing every target makes the
+/// editor a property of the write, not an accident of file history.
+///
+/// Only editors that actually read chatLanguageModels.json belong here.
+/// Verified empirically on Linux 2026-08-06 (binary + first-run probing):
+/// - VS Code and VS Code Insiders: consumers (schema registered, vendors
+///   customendpoint/customoai handled).
+/// - Windsurf (now "Devin Desktop", apt package devin-desktop): consumer —
+///   same VS Code schema (vendors customendpoint/customoai present), reads
+///   from its config dir. Current builds use `Devin`; pre-rebrand Windsurf
+///   builds used `Windsurf` at the same layout.
+/// - Cursor 3.14: NOT a consumer (zero chatLanguageModels refs); its base-URL
+///   override and custom models live in `User/globalStorage/state.vscdb`
+///   (SQLite), not settings.json — not integrable via this file.
+/// - Anti-Gravity IDE 2.1.1: NOT a consumer (feature stripped from the
+///   VS Code fork; config dir is `Antigravity IDE` but no file is read).
+fn editor_chat_models_paths() -> Result<Vec<(PathBuf, &'static str)>, String> {
+    let root = config_root()?;
+    Ok(vec![
+        // VS Code (stable)
         (
-            config
-                .join("Code")
+            root.join("Code")
                 .join("User")
                 .join("chatLanguageModels.json"),
             "VS Code",
         ),
+        // VS Code Insiders
         (
-            config
-                .join("Code - Insiders")
+            root.join("Code - Insiders")
                 .join("User")
                 .join("chatLanguageModels.json"),
             "VS Code Insiders",
         ),
+        // Windsurf (rebranded to Devin Desktop). Current builds use the
+        // "Devin" dir; pre-rebrand Windsurf used "Windsurf".
+        (
+            root.join("Devin")
+                .join("User")
+                .join("chatLanguageModels.json"),
+            "Windsurf",
+        ),
     ])
+}
+
+/// The editors a lane can be integrated into, in the order the picker menu
+/// should show them.
+///
+/// The frontend renders its editor menu from this list rather than its own
+/// copy, so adding an editor is a single change in one place.
+#[tauri::command]
+fn editor_list() -> Result<Vec<String>, String> {
+    Ok(editor_chat_models_paths()?
+        .into_iter()
+        .map(|(_, name)| name.to_string())
+        .collect())
 }
 
 /// Write the updated chatLanguageModels.json to one specific editor's file.
@@ -183,9 +237,9 @@ fn vscode_model_entry(
         .members
         .iter()
         .filter_map(|m| {
-            catalog.iter().find(|c| {
-                c.id == m.id && (m.provider.is_empty() || c.provider_id == m.provider)
-            })
+            catalog
+                .iter()
+                .find(|c| c.id == m.id && (m.provider.is_empty() || c.provider_id == m.provider))
         })
         .collect();
 
@@ -211,27 +265,19 @@ fn vscode_model_entry(
     }
 }
 
-/// Add or update a VisualLLM lane in every supported editor's model picker.
+/// Add or update a VisualLLM lane in a specific editor's model picker.
 ///
-/// Each editor keeps its own chatLanguageModels.json, so the lane is merged
-/// into each one separately. A failure in one editor is reported without
-/// stopping the others — the user asked for all of them, and one editor's
-/// broken config must not silently strand the rest.
-///
-/// Capabilities (vision, tool_calling, max_input_tokens, max_output_tokens)
-/// are derived from the lane's actual members and the cached catalog rather
-/// than hardcoded — so the picker accurately reflects what the lane can do.
+/// The lane is merged into only the named editor's
+/// chatLanguageModels.json. Capabilities are derived from the
+/// lane's actual members and the cached catalog rather than
+/// hardcoded — so the picker accurately reflects what the lane can do.
 #[tauri::command]
-fn vscode_integrate_lane(
+fn editor_integrate_lane(
     app: tauri::AppHandle,
     slug: String,
     name: String,
-) -> Result<Vec<VscodeIntegrationResult>, String> {
-    eprintln!(
-        "[vscode_integrate_lane] called with slug={}, name={}",
-        slug, name
-    );
-
+    editor: String,
+) -> Result<VscodeIntegrationResult, String> {
     let store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
     let port = port_load(&store_path);
 
@@ -252,102 +298,109 @@ fn vscode_integrate_lane(
         },
     };
 
-    let mut results = Vec::new();
-    for (path, editor) in vscode_chat_models_paths()? {
-        let outcome: Result<(), String> = (|| {
-            let text = if path.exists() {
-                std::fs::read_to_string(&path).map_err(|e| e.to_string())?
-            } else {
-                "[]".to_string()
-            };
-            let mut config: VscodeChatModels = serde_json::from_str(&text)
-                .map_err(|e| format!("could not parse existing config: {e}"))?;
-            vscode_merge_lane(&mut config, &entry);
-            vscode_write_models_at(&path, &config)
-        })();
-        match outcome {
-            Ok(()) => {
-                eprintln!("[vscode_integrate_lane] {editor}: wrote {}", path.display());
-                results.push(VscodeIntegrationResult {
-                    editor: editor.to_string(),
-                    path: path.display().to_string(),
-                    written: true,
-                    error: None,
-                });
-            }
-            Err(error) => {
-                eprintln!("[vscode_integrate_lane] {editor}: {error}");
-                results.push(VscodeIntegrationResult {
-                    editor: editor.to_string(),
-                    path: path.display().to_string(),
-                    written: false,
-                    error: Some(error),
-                });
-            }
-        }
-    }
-    Ok(results)
-}
+    let (path, editor_name) = editor_chat_models_paths()?
+        .into_iter()
+        .find(|(_, e)| *e == editor)
+        .ok_or_else(|| format!("unknown editor: {editor}"))?;
 
-/// Remove a VisualLLM lane from every supported editor's model picker.
-///
-/// The lane's model entry is removed from each editor's
-/// chatLanguageModels.json. If the visualllm provider entry
-/// becomes empty after removal, the entire provider is dropped.
-/// A failure in one editor is reported without stopping the
-/// others — the user asked for all of them, and one editor's
-/// broken config must not silently strand the rest.
-#[tauri::command]
-fn vscode_remove_lane(
-    app: tauri::AppHandle,
-    slug: String,
-) -> Result<Vec<VscodeIntegrationResult>, String> {
-    let _store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
+    let outcome: Result<(), String> = (|| {
+        let text = if path.exists() {
+            std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+        } else {
+            "[]".to_string()
+        };
+        let mut config: VscodeChatModels = serde_json::from_str(&text)
+            .map_err(|e| format!("could not parse existing config: {e}"))?;
+        vscode_merge_lane(&mut config, &entry);
+        vscode_write_models_at(&path, &config)
+    })();
 
-    let mut results = Vec::new();
-    for (path, editor) in vscode_chat_models_paths()? {
-        let outcome: Result<(), String> = (|| {
-            if !path.exists() {
-                return Ok(()); // nothing to remove
-            }
-            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            let mut config: VscodeChatModels = serde_json::from_str(&text)
-                .map_err(|e| format!("could not parse existing config: {e}"))?;
-
-            // Remove the visualllm provider entry entirely if it only
-            // contained this lane, or remove just this lane's model
-            // from the provider if it has other models.
-            let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
-            if let Some(idx) = visualllm_idx {
-                let provider = &mut config[idx];
-                provider.models.retain(|m| m.id != slug);
-                if provider.models.is_empty() {
-                    config.remove(idx);
+    match outcome {
+        Ok(()) => {
+            eprintln!("[editor_integrate_lane] {editor}: wrote {}", path.display());
+            // Update the lane's integrated_editors list.
+            let mut lanes = lanes::load(&store_path);
+            if let Some(l) = lanes.iter_mut().find(|l| l.slug == slug) {
+                if !l.integrated_editors.contains(&editor) {
+                    l.integrated_editors.push(editor.clone());
                 }
             }
-
-            vscode_write_models_at(&path, &config)
-        })();
-        match outcome {
-            Ok(()) => {
-                results.push(VscodeIntegrationResult {
-                    editor: editor.to_string(),
-                    path: path.display().to_string(),
-                    written: true,
-                    error: None,
-                });
-            }
-            Err(error) => {
-                results.push(VscodeIntegrationResult {
-                    editor: editor.to_string(),
-                    path: path.display().to_string(),
-                    written: false,
-                    error: Some(error),
-                });
-            }
+            lanes::save(&store_path, &lanes)?;
+            Ok(VscodeIntegrationResult {
+                editor: editor_name.to_string(),
+                path: path.display().to_string(),
+                written: true,
+                error: None,
+            })
+        }
+        Err(error) => {
+            eprintln!("[editor_integrate_lane] {editor}: {error}");
+            Err(error)
         }
     }
-    Ok(results)
+}
+
+/// Remove a VisualLLM lane from a specific editor's model picker.
+///
+/// The lane's model entry is removed from the named editor's
+/// chatLanguageModels.json. If the visualllm provider entry
+/// becomes empty after removal, the entire provider is dropped.
+#[tauri::command]
+fn editor_remove_lane(
+    app: tauri::AppHandle,
+    slug: String,
+    editor: String,
+) -> Result<VscodeIntegrationResult, String> {
+    let store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
+
+    let (path, editor_name) = editor_chat_models_paths()?
+        .into_iter()
+        .find(|(_, e)| *e == editor)
+        .ok_or_else(|| format!("unknown editor: {editor}"))?;
+
+    if !path.exists() {
+        return Ok(VscodeIntegrationResult {
+            editor: editor_name.to_string(),
+            path: path.display().to_string(),
+            written: true,
+            error: None,
+        });
+    }
+
+    let outcome: Result<(), String> = (|| {
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut config: VscodeChatModels = serde_json::from_str(&text)
+            .map_err(|e| format!("could not parse existing config: {e}"))?;
+
+        let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
+        if let Some(idx) = visualllm_idx {
+            let provider = &mut config[idx];
+            provider.models.retain(|m| m.id != slug);
+            if provider.models.is_empty() {
+                config.remove(idx);
+            }
+        }
+
+        vscode_write_models_at(&path, &config)
+    })();
+
+    match outcome {
+        Ok(()) => {
+            // Update the lane's integrated_editors list.
+            let mut lanes = lanes::load(&store_path);
+            if let Some(l) = lanes.iter_mut().find(|l| l.slug == slug) {
+                l.integrated_editors.retain(|e| e != &editor);
+            }
+            lanes::save(&store_path, &lanes)?;
+            Ok(VscodeIntegrationResult {
+                editor: editor_name.to_string(),
+                path: path.display().to_string(),
+                written: true,
+                error: None,
+            })
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Where the old Python gateway lives.
@@ -638,7 +691,7 @@ struct PortableState {
 }
 
 impl PortableState {
-    fn new(dir: &std::path::PathBuf) -> Self {
+    fn new(dir: &std::path::Path) -> Self {
         let exported_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -737,18 +790,18 @@ async fn state_import(app: tauri::AppHandle, mode: Option<String>) -> Result<Str
 
 fn import_replace(dir: &std::path::Path, snapshot: PortableState) -> Result<(), String> {
     let (lanes, pool, providers) = snapshot.into_state();
-    lanes::save(&dir.to_path_buf(), &lanes)?;
-    lanes::pool_save(&dir.to_path_buf(), &pool)?;
-    providers::save(&dir.to_path_buf(), &providers)?;
+    lanes::save(dir, &lanes)?;
+    lanes::pool_save(dir, &pool)?;
+    providers::save(dir, &providers)?;
     Ok(())
 }
 
 fn import_merge(dir: &std::path::Path, snapshot: PortableState) -> Result<(), String> {
     let (imported_lanes, imported_pool, imported_providers) = snapshot.into_state();
 
-    let mut lanes = lanes::load(&dir.to_path_buf());
-    let mut pool = lanes::pool_load(&dir.to_path_buf());
-    let mut providers = providers::load(&dir.to_path_buf());
+    let mut lanes = lanes::load(dir);
+    let mut pool = lanes::pool_load(dir);
+    let mut providers = providers::load(dir);
 
     // Providers merge by id: an imported provider with the same id replaces
     // the local one, but keys are left empty so the existing keyring entry is
@@ -793,9 +846,9 @@ fn import_merge(dir: &std::path::Path, snapshot: PortableState) -> Result<(), St
         }
     }
 
-    lanes::save(&dir.to_path_buf(), &lanes)?;
-    lanes::pool_save(&dir.to_path_buf(), &pool)?;
-    providers::save(&dir.to_path_buf(), &providers)?;
+    lanes::save(dir, &lanes)?;
+    lanes::pool_save(dir, &pool)?;
+    providers::save(dir, &providers)?;
     Ok(())
 }
 
@@ -1029,11 +1082,11 @@ const DEFAULT_PORT: u16 = 4100;
 
 static ENGINE_PORT_TX: OnceLock<watch::Sender<u16>> = OnceLock::new();
 
-fn port_path(dir: &PathBuf) -> PathBuf {
+fn port_path(dir: &std::path::Path) -> PathBuf {
     dir.join("port.json")
 }
 
-fn port_load(dir: &PathBuf) -> u16 {
+fn port_load(dir: &std::path::Path) -> u16 {
     let stored = std::fs::read_to_string(port_path(dir))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -1047,8 +1100,8 @@ fn port_load(dir: &PathBuf) -> u16 {
     }
 }
 
-fn port_save(dir: &PathBuf, port: u16) -> Result<(), String> {
-    let clamped = port.max(1024).min(65535);
+fn port_save(dir: &std::path::Path, port: u16) -> Result<(), String> {
+    let clamped = port.clamp(1024, 65535);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = port_path(dir);
     let tmp = dir.join("port.json.tmp");
@@ -1070,7 +1123,7 @@ fn port_get(app: tauri::AppHandle) -> Result<u16, String> {
 #[tauri::command]
 fn port_set(app: tauri::AppHandle, port: u16) -> Result<u16, String> {
     let dir = store_dir(&app)?;
-    let port = port.max(1024).min(65535);
+    let port = port.clamp(1024, 65535);
     // Fail before changing persistence or notifying the server when another
     // process already owns the requested loopback port. The listener reload
     // still binds again as the final authority, but this avoids the normal
@@ -1156,10 +1209,65 @@ fn main() {
                 }
             }
 
+            // Self-update: shortly after startup, ask GitHub whether a newer
+            // build exists, download and install it, then offer to restart.
+            //
+            // Every network byte moves through Rust, so the webview keeps its
+            // no-network posture — an update needs no CSP relaxation and no
+            // new command. The endpoint, pubkey, and version come from
+            // tauri.conf.json (plugins.updater), so nothing is hardcoded here.
+            let updater_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                // Give the window a moment to come up before touching the
+                // network. 5s keeps startup snappy on a slow connection.
+                tokio::time::sleep(Duration::from_secs(5)).await;
+
+                let updater = match updater_app.updater() {
+                    Ok(updater) => updater,
+                    Err(err) => {
+                        eprintln!("updater: not available: {err}");
+                        return;
+                    }
+                };
+                let update = match updater.check().await {
+                    Ok(update) => update,
+                    Err(err) => {
+                        eprintln!("updater: check failed: {err}");
+                        return;
+                    }
+                };
+                let Some(update) = update else {
+                    return;
+                };
+                eprintln!("updater: found version {}", update.version);
+
+                if let Err(err) = update.download_and_install(|_, _| {}, || {}).await {
+                    eprintln!("updater: install failed: {err}");
+                    return;
+                }
+
+                let restart = updater_app
+                    .dialog()
+                    .message(format!(
+                        "VisualLLM {} is installed.\nRestart now to apply the update?",
+                        update.version
+                    ))
+                    .title("Update ready")
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "Restart".to_string(),
+                        "Later".to_string(),
+                    ))
+                    .blocking_show();
+                if restart {
+                    updater_app.restart();
+                }
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             read_gateway,
             copy_text,
@@ -1179,8 +1287,9 @@ fn main() {
             lane_test,
             port_get,
             port_set,
-            vscode_integrate_lane,
-            vscode_remove_lane,
+            editor_list,
+            editor_integrate_lane,
+            editor_remove_lane,
             state_export,
             state_import
         ])

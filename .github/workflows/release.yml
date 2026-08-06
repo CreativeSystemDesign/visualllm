@@ -57,7 +57,12 @@ jobs:
             librsvg2-dev
 
       - run: npm run smoke
-      - run: npm run build
+
+      - name: Build (signed for auto-update)
+        run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Generate checksums
         working-directory: src-tauri/target/release/bundle
@@ -71,7 +76,9 @@ jobs:
           name: visualllm-linux
           path: |
             src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/deb/*.deb.sig
             src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
             src-tauri/target/release/bundle/SHA256SUMS
 
   windows:
@@ -98,7 +105,12 @@ jobs:
         run: npm install -g @tauri-apps/cli
 
       - run: npm run smoke
-      - run: npm run build
+
+      - name: Build (signed for auto-update)
+        run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Generate checksums
         working-directory: src-tauri/target/release/bundle
@@ -112,7 +124,9 @@ jobs:
           name: visualllm-windows
           path: |
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.sig
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
             src-tauri/target/release/bundle/SHA256SUMS.txt
 
   macos:
@@ -134,7 +148,12 @@ jobs:
         run: npm install -g @tauri-apps/cli
 
       - run: npm run smoke
-      - run: npm run build
+
+      - name: Build (signed for auto-update)
+        run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Generate checksums
         working-directory: src-tauri/target/release/bundle
@@ -148,6 +167,8 @@ jobs:
           name: visualllm-macos
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/dmg/*.dmg.sig
+            src-tauri/target/release/bundle/macos/*
             src-tauri/target/release/bundle/SHA256SUMS
 
   macos-sign:
@@ -224,8 +245,52 @@ jobs:
 
       - name: Show downloaded files
         run: |
-          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "*.dmg" -o -name "SHA256SUMS*" \) | sort
+          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "*.dmg" -o -name "*.sig" -o -name "*.tar.gz" -o -name "SHA256SUMS*" \) | sort
           ls -la artifacts/
+
+      - name: Generate latest.json
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          python3 - "$TAG" <<'PY'
+          import glob, json, os, sys, datetime
+
+          tag = sys.argv[1]
+          version = tag.lstrip("v")
+          base = f"https://github.com/CreativeSystemDesign/visualllm/releases/download/{tag}"
+
+          platforms = {}
+          for sig in sorted(glob.glob("artifacts/**/*.sig", recursive=True)):
+              name = os.path.basename(sig)[:-4]
+              with open(sig) as f:
+                  signature = f.read().strip()
+              if name.endswith(".AppImage"):
+                  key = "linux-x86_64-appimage"
+              elif name.endswith(".deb"):
+                  key = "linux-x86_64-deb"
+              elif name.endswith(".msi"):
+                  key = "windows-x86_64-msi"
+              elif name.endswith("-setup.exe"):
+                  key = "windows-x86_64-nsis"
+              elif name.endswith(".app.tar.gz"):
+                  arch = "aarch64" if "aarch64" in name else "x86_64"
+                  key = f"darwin-{arch}"
+              else:
+                  continue
+              platforms[key] = {
+                  "signature": signature,
+                  "url": f"{base}/{name}",
+              }
+
+          manifest = {
+              "version": version,
+              "notes": f"VisualLLM {version}",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms,
+          }
+          with open("artifacts/latest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+          PY
+          cat artifacts/latest.json
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -237,7 +302,10 @@ jobs:
             artifacts/**/*.msi
             artifacts/**/*.exe
             artifacts/**/*.dmg
+            artifacts/**/*.app.tar.gz
+            artifacts/**/*.sig
             artifacts/**/SHA256SUMS*
+            artifacts/latest.json
 
   # Create tar.gz for Homebrew/AUR/Flatpak
   create-tarball:

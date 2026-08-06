@@ -134,12 +134,14 @@ const html = indexHtml
         statsRead: () => ok(data.stats),
         statsRefresh: () => ok(0),
         incidentsRead: () => ok(data.incidents),
-        vscodeIntegrateLane: (slug, name) => {
-          console.log('[preview] vscodeIntegrateLane', { slug, name })
-          return ok([
-            { editor: 'VS Code (preview)', path: '/preview/Code/User/chatLanguageModels.json', written: true, error: null },
-            { editor: 'VS Code Insiders (preview)', path: '/preview/Code - Insiders/User/chatLanguageModels.json', written: true, error: null },
-          ])
+        editorList: () => ok(['VS Code', 'VS Code Insiders', 'Windsurf']),
+        editorIntegrateLane: (slug, name, editor) => {
+          console.log('[preview] editorIntegrateLane', { slug, name, editor })
+          return ok({ editor, path: '/preview/' + editor + '/chatLanguageModels.json', written: true, error: null })
+        },
+        editorRemoveLane: (slug, editor) => {
+          console.log('[preview] editorRemoveLane', { slug, editor })
+          return ok({ editor, path: '/preview/' + editor + '/chatLanguageModels.json', written: true, error: null })
         },
         stateExport: () => ok('/tmp/preview-export.json'),
         stateImport: () => ok('/tmp/preview-export.json'),

@@ -38,8 +38,9 @@ const api = T
       activityRead: (since) => T.core.invoke('activity_read', { since }),
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
-      vscodeIntegrateLane: (slug, name) => T.core.invoke('vscode_integrate_lane', { slug, name }),
-      vscodeRemoveLane: (slug) => T.core.invoke('vscode_remove_lane', { slug }),
+      editorList: () => T.core.invoke('editor_list'),
+      editorIntegrateLane: (slug, name, editor) => T.core.invoke('editor_integrate_lane', { slug, name, editor }),
+      editorRemoveLane: (slug, editor) => T.core.invoke('editor_remove_lane', { slug, editor }),
     }
   : window.vll
 
@@ -69,6 +70,7 @@ const state = {
   error: null,
   models: [],
   lanes: [],
+  editors: [],         // editors a lane can be integrated into, from the backend
   traffic: { requests: 0, failures: 0 },
   gateway: '',
   updatedAt: null,
@@ -231,6 +233,8 @@ const ICON = {
   gear: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.6v1.9M8 11.5v1.9M2.6 8h1.9M11.5 8h1.9M4.2 4.2l1.3 1.3M10.5 10.5l1.3 1.3M11.8 4.2l-1.3 1.3M5.5 10.5l-1.3 1.3"/></svg>',
   brain: '<svg viewBox="0 0 16 16"><path d="M8 2.5a2.6 2.6 0 0 0-2.6 2.6c-1.5.3-2.4 1.5-2.4 3 0 1 .5 1.9 1.2 2.4-.1.3-.2.7-.2 1 0 1.6 1.4 2.9 3 2.9.5 0 1-.1 1.4-.4.3.2.6.3 1 .3a2.9 2.9 0 0 0 2.9-2.9c0-.3 0-.7-.2-1 .8-.5 1.3-1.4 1.3-2.4 0-1.5-1-2.7-2.4-3A2.6 2.6 0 0 0 8 2.5z"/></svg>',
   loop: '<svg viewBox="0 0 16 16"><path d="M3 8a5 5 0 0 1 8.5-3.5M13 8a5 5 0 0 1-8.5 3.5M11.5 2v2.5H9M4.5 14v-2.5H7"/></svg>',
+  plug: '<svg viewBox="0 0 16 16"><path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v1.5a3.5 3.5 0 0 1-3.5 3.5 3.5 3.5 0 0 1-3.5-3.5z"/></svg>',
+  check: '<svg viewBox="0 0 12 12"><path d="M2.5 6.5l2.5 2.5 4.5-5.5"/></svg>',
 }
 
 // ------------------------------------------------------------------ rendering
@@ -510,6 +514,19 @@ function laneFoot(hall) {
   return `<span class="lane-activity" title="Open this endpoint's trail">${body}</span>`
 }
 
+/** The lane footer's Integrate button: one entry point per lane, not one
+ *  button per editor. It lights when the lane is in any editor's model picker;
+ *  the menu it opens carries the per-editor states, so the lane stays clean no
+ *  matter how many editors the app learns to speak. */
+function laneIdeButton(hall) {
+  const count = (hall.integrated_editors || []).length
+  return `<button class="hall-act lane-ide${count ? ' is-on' : ''}" title="${
+    count
+      ? `In ${count} editor${count === 1 ? '' : 's'}'s model picker — click to manage`
+      : "Add this endpoint to an editor's model picker"
+  }">${ICON.plug}${count ? ` ${count}` : ' Integrate'}</button>`
+}
+
 /** The indicator lights in a hall's header. Health is shown, not told: a row
  *  of small lamps that light up, each with its meaning on hover. Live activity
  *  pulses coral; answered glows green; a failure is red; dead members warn
@@ -549,7 +566,7 @@ function laneEl(hall) {
     <span class="hall-spacer"></span>
     <button class="hall-act lane-test" title="Test this endpoint">Test</button>
     <button class="hall-act lane-copy-setup" title="Copy a curl setup example">Setup</button>
-    <button class="hall-act lane-vscode${hall.vscode_integrated ? ' is-on' : ''}" title="${hall.vscode_integrated ? 'Integrated — click to remove from VS Code model picker' : 'Add this endpoint to VS Code model picker'}">${hall.vscode_integrated ? '✓ VS Code' : 'VS Code'}</button>
+
     <button class="hall-toggle${hall.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
       hall.suppress_reasoning
         ? 'No thinking: members are asked to answer directly. Click to allow thinking.'
@@ -569,7 +586,7 @@ function laneEl(hall) {
 
   const foot = document.createElement('div')
   foot.className = 'hall-foot'
-  foot.innerHTML = laneFoot(hall)
+  foot.innerHTML = `${laneFoot(hall)}${laneIdeButton(hall)}`
 
   el.append(head, procession, foot)
   return el
@@ -1464,6 +1481,50 @@ function closeChipMenu() {
   menuTarget.hall = null
 }
 
+// ------------------------------------------------------------- ide menu
+//
+// The lane footer's Integrate button opens this. One entry point keeps the
+// lane clean as editors are added; the menu shows every editor the lane
+// could live in, lit when it does.
+
+const ideMenuTarget = { hall: null }
+
+function ideMenuHall() {
+  return state.lanes.find((l) => l.slug === ideMenuTarget.hall) || null
+}
+
+async function openIdeMenu(button) {
+  // The editor list rides in with the other cold-start loads; if it has not
+  // landed yet (bootstrap's fetch is not awaited), fetch it now rather than
+  // showing an empty menu.
+  if (!state.editors.length) await loadEditors()
+  const hall = state.lanes.find((l) => l.slug === button.closest('.hall').dataset.hall)
+  if (!hall) return
+  ideMenuTarget.hall = hall.slug
+  const menu = $('ideMenu')
+  const integrated = hall.integrated_editors || []
+  menu.innerHTML = state.editors
+    .map((editor) => {
+      const on = integrated.includes(editor)
+      return `<button class="relic-menu-item ide-menu-item${on ? ' is-on' : ''}" data-editor="${attr(editor)}" type="button" title="${
+        on ? `Remove from ${attr(editor)} model picker` : `Add to ${attr(editor)} model picker`
+      }">${ICON.check}<span>${editor}</span></button>`
+    })
+    .join('')
+  menu.hidden = false
+  // Open beneath the button, right-aligned to it, clamped to the window like
+  // the relic menu clamps to the cursor.
+  const rect = button.getBoundingClientRect()
+  const niche = menu.getBoundingClientRect()
+  menu.style.left = `${Math.max(8, Math.min(rect.right - niche.width, window.innerWidth - niche.width - 8))}px`
+  menu.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - niche.height - 8)}px`
+}
+
+function closeIdeMenu() {
+  $('ideMenu').hidden = true
+  ideMenuTarget.hall = null
+}
+
 document.addEventListener('contextmenu', (event) => {
   const relic = event.target.closest('.procession .relic')
   if (!relic) return
@@ -1593,6 +1654,12 @@ document.addEventListener('pointerdown', (event) => {
     closeMemberPop({ rerender: false })
   }
 
+  // The same for the IDE menu. A press inside it must pass through so the
+  // item's own click can act; anything else folds it.
+  if (!$('ideMenu').hidden && !event.target.closest('#ideMenu')) {
+    closeIdeMenu()
+  }
+
   // The gear opens settings; it must not begin a drag. The click handler
   // below does the opening — this guard only keeps the relic from grabbing.
   if (event.target.closest('.relic-gear')) return
@@ -1719,52 +1786,49 @@ document.addEventListener('click', async (event) => {
     return
   }
 
-  const vscodeBtn = event.target.closest('.lane-vscode')
-  if (vscodeBtn) {
-    const laneEl = vscodeBtn.closest('.hall')
-    const slug = laneEl.dataset.hall
-    const hall = state.lanes.find(l => l.slug === slug)
+  // The footer's Integrate button opens the editor menu.
+  const ideButton = event.target.closest('.lane-ide')
+  if (ideButton) {
+    await openIdeMenu(ideButton)
+    return
+  }
+
+  // A choice in that menu toggles the lane in one editor.
+  const ideItem = event.target.closest('#ideMenu .ide-menu-item')
+  if (ideItem) {
+    const hall = ideMenuHall()
+    closeIdeMenu()
     if (!hall) return
+    const editor = ideItem.dataset.editor
+    const integrated = (hall.integrated_editors || []).includes(editor)
     try {
-      if (hall.vscode_integrated) {
-        // Remove the lane from editor model pickers
-        const results = await api.vscodeRemoveLane(slug)
-        const written = results.filter(r => r.written)
-        const failed = results.filter(r => !r.written)
-        if (failed.length === 0) {
-          const editors = written.map(r => r.editor).join(' and ')
-          toast(`Removed "${hall.name}" from ${editors} model picker`)
-        } else if (written.length > 0) {
-          const ok = written.map(r => r.editor).join(', ')
-          const bad = failed.map(r => `${r.editor}: ${r.error}`).join('; ')
-          toast(`Removed from ${ok}; failed in ${bad}`)
+      if (integrated) {
+        // Remove the lane from this editor's model picker
+        const result = await api.editorRemoveLane(hall.slug, editor)
+        if (result.written) {
+          toast(`Removed "${hall.name}" from ${editor} model picker`)
         } else {
-          toast(`Failed: ${failed.map(r => r.error).filter(Boolean).join('; ')}`)
+          toast(`Failed to remove from ${editor}: ${result.error || 'unknown error'}`)
         }
-        hall.vscode_integrated = false
+        hall.integrated_editors = (hall.integrated_editors || []).filter(e => e !== editor)
       } else {
-        // Add the lane to editor model pickers
-        const results = await api.vscodeIntegrateLane(slug, hall.name)
-        const written = results.filter(r => r.written)
-        const failed = results.filter(r => !r.written)
-        if (failed.length === 0) {
-          const editors = written.map(r => r.editor).join(' and ')
-          toast(`Added "${hall.name}" to the ${editors} model picker`, 'Reload the editor windows (Ctrl+R) to see it')
-          hall.vscode_integrated = true
-        } else if (written.length > 0) {
-          const ok = written.map(r => r.editor).join(', ')
-          const bad = failed.map(r => `${r.editor}: ${r.error}`).join('; ')
-          toast(`Added to ${ok}; failed in ${bad}`)
-          hall.vscode_integrated = true
+        // Add the lane to this editor's model picker
+        const result = await api.editorIntegrateLane(hall.slug, hall.name, editor)
+        if (result.written) {
+          toast(`Added "${hall.name}" to ${editor} model picker`, 'Reload the editor windows (Ctrl+R) to see it')
+          if (!hall.integrated_editors) hall.integrated_editors = []
+          if (!hall.integrated_editors.includes(editor)) {
+            hall.integrated_editors.push(editor)
+          }
         } else {
-          toast(`Failed: ${failed.map(r => r.error).filter(Boolean).join('; ')}`)
+          toast(`Failed to add to ${editor}: ${result.error || 'unknown error'}`)
           return
         }
       }
       render()
       saveLanes()
     } catch (error) {
-      console.error('[vscode] failed', error)
+      console.error('[editor-integration] failed', error)
       toast(`Failed: ${error.message}`)
     }
     return
@@ -2855,7 +2919,10 @@ $('bContext').addEventListener('change', (e) => { state.browse.context = Number(
 $('bPrice').addEventListener('change', (e) => { state.browse.price = e.target.value; renderBrowse() })
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !$('browseScrim').hidden) closeBrowse()
+  if (event.key === 'Escape') {
+    if (!$('browseScrim').hidden) closeBrowse()
+    if (!$('ideMenu').hidden) closeIdeMenu()
+  }
 })
 
 // ------------------------------------------------------------------ persistence
@@ -2866,7 +2933,7 @@ document.addEventListener('keydown', (event) => {
 async function saveLanes() {
   try {
     await api.lanesWrite(
-      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick, vscode_integrated }) => ({
+      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick, integrated_editors }) => ({
         slug,
         name,
         members: members.map(({ provider, id, params, disabled }) => ({
@@ -2878,7 +2945,7 @@ async function saveLanes() {
         criteria: criteria || [],
         suppress_reasoning: !!suppress_reasoning,
         unstick: !!unstick,
-        vscode_integrated: !!vscode_integrated,
+        integrated_editors: integrated_editors || [],
       }))
     )
   } catch (err) {
@@ -2896,6 +2963,17 @@ async function loadLanes() {
   // code never has to wonder which shape it is holding.
   state.lanes.forEach((hall) => (hall.members = (hall.members || []).map(asRef)))
   renderLanes()
+}
+
+/** The editors a lane can be integrated into. The menu is rendered from this
+ *  on each open, so an editor added in the backend appears without a UI
+ *  change; an empty list is only ever a moment of cold start. */
+async function loadEditors() {
+  try {
+    state.editors = (await api.editorList()) || []
+  } catch (err) {
+    state.editors = []
+  }
 }
 
 // ---------------------------------------------------------------------- refresh
@@ -2997,6 +3075,7 @@ async function bootstrap() {
   await loadPool()
   render()
   loadStats()
+  loadEditors()
   loadProviders().then(() => {
     renderProviders()
     loadCatalog()

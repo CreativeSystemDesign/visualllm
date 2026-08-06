@@ -13,6 +13,25 @@ This document describes the GitHub repository secrets and external accounts need
 | `WINDOWS_CERTIFICATE` | Base64-encoded .pfx code signing certificate | Export from Windows Certificate Manager, then `base64 -i certificate.pfx` |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Password for the .pfx certificate | The password you set when exporting the certificate |
 
+### Auto-Update Signing Secrets
+
+Every release bundle is signed with the update key so installed apps can
+verify the download before applying it. The app embeds the matching public
+key (`plugins.updater.pubkey` in `src-tauri/tauri.conf.json`); the release
+workflow signs with the private key via these two secrets.
+
+| Secret Name | Description | How to Obtain |
+|-------------|-------------|---------------|
+| `TAURI_SIGNING_PRIVATE_KEY` | Private half of the updater keypair (content of `~/.tauri/visualllm.key`) | `gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/visualllm.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password protecting that private key | The password used at `npx tauri signer generate` |
+
+Regenerate the pair if ever needed (and update `plugins.updater.pubkey` in
+`tauri.conf.json` to match):
+
+```sh
+npx tauri signer generate -w ~/.tauri/visualllm.key
+```
+
 ### Distribution Channel Secrets
 
 | Secret Name | Description | How to Obtain |

@@ -65,115 +65,49 @@ The current VS Code integration is a first pass — it works, but it has hardcod
 
 ---
 
-## 2. Add editor integrations for Anti-Gravity, Cursor, Windsurf, and Zed
+## 2. Editor integrations (empirically verified on Linux 2026-08-06)
 
-### 2.1 Anti-Gravity
+Each editor was downloaded, launched, and its binary + first-run config layout inspected. Only `chatLanguageModels.json` consumers belong in the editor list/menu; everything else is documented here for future writers.
 
-Anti-Gravity is an AI coding agent that uses VS Code's `chatLanguageModels.json` format for its model picker. It reads the same file as VS Code.
+**Config root per OS** (user-confirmed 2026-08-06): Windows `%APPDATA%\<Product>`, macOS `$HOME/Library/Application Support/<Product>`, Linux `$HOME/.config/<Product>`. The engine resolves this natively in Rust (`config_root()`) — no external script needed.
 
-**Integration approach:** The lane should already be written to the VS Code stable and Insiders paths. Anti-Gravity reads from the same location, so no additional file writes are needed — the existing integration covers it.
+### 2.1 VS Code + VS Code Insiders (confirmed consumer)
 
-**Verification needed:** Confirm that Anti-Gravity reads `~/.config/Code/User/chatLanguageModels.json` and that the `customendpoint` vendor format is supported.
+Consumes `chatLanguageModels.json` per code.visualstudio.com/docs/agent-customization/language-models; 7 refs in the installed binary's `out/`. Two-level schema:
 
-**Files to change:** None (covered by existing integration), but add Anti-Gravity to the documentation.
+- Provider: `name: "visualllm"`, `vendor: "customendpoint"`, `apiType: "chat-completions"`, `models: []`. `apiKey` must be a `${input:...}` placeholder or omitted — a raw key is silently dropped, so omitting it is correct for the local gateway.
+- Model: `id` (slug), `name`, `url` (full chat-completions path; VS Code POSTs verbatim), `toolCalling`, `vision`, `maxInputTokens`, `maxOutputTokens`, plus optional `thinking`/`streaming`/`editTools`.
+- Targets: `Code` and `Code - Insiders` under the per-OS config root, each `<Product>/User/chatLanguageModels.json`.
 
-### 2.2 Cursor
+**Status:** implemented — capability derivation, no-op-proof merge by slug, per-editor results, remove path.
 
-Cursor reads `chatLanguageModels.json` from its own config directory, not VS Code's. The file path is:
+### 2.2 Cursor (confirmed — NOT a consumer)
 
-- Linux: `~/.config/Cursor/User/chatLanguageModels.json`
-- macOS: `~/Library/Application Support/Cursor/User/chatLanguageModels.json`
-- Windows: `%APPDATA%/Cursor/User/chatLanguageModels.json`
+Cursor 3.14 has **zero** `chatLanguageModels`/`customendpoint` refs in its app tree — it does not read the file. Its "Override OpenAI Base URL" + custom models are stored in a **SQLite state DB** (`User/globalStorage/state.vscdb`, `ItemTable`, keys `openAIBaseUrl`/`useOpenAIKey`), not `settings.json` — the earlier settings.json claim is outdated. Config dir confirmed at `$HOME/.config/Cursor/User/` (empirically created on launch).
 
-**Integration approach:** Add Cursor's path to `vscode_chat_models_paths()` (rename to `editor_chat_models_paths()` to reflect the broader scope). The merge logic is identical — Cursor uses the same JSON format.
+**Status:** not integrable via a config file; would require reverse-engineering the state DB + opaque keys. Not offered in the editor menu.
 
-**Files to change:** `src-tauri/src/main.rs` — `vscode_chat_models_paths()` → `editor_chat_models_paths()` with Cursor paths added
+### 2.3 Windsurf → Devin Desktop (confirmed consumer)
 
-### 2.3 Windsurf
+Windsurf is rebranded **Devin Desktop** (apt package `devin-desktop`). The 3.6.27 build ships the full VS Code language-model code (`chatLanguageModels` schema registered, vendors `customendpoint` + `customoai` handled, `languageModelsResource` resolution) and created `chatLanguageModels.json` on first run. Config dir empirically confirmed at `$HOME/.config/Devin/User/` (pre-rebrand Windsurf builds used `$HOME/.config/Windsurf/User/`). Same `customendpoint` schema as VS Code, so the existing writer applies verbatim.
 
-Windsurf (by Codeium) also uses the `chatLanguageModels.json` format. Its config path follows the same pattern as Cursor:
+**Status:** implemented — "Windsurf" entry writes to the current `Devin` dir. Legacy `Windsurf` dir not auto-detected.
 
-- Linux: `~/.config/Windsurf/User/chatLanguageModels.json`
-- macOS: `~/Library/Application Support/Windsurf/User/chatLanguageModels.json`
-- Windows: `%APPDATA%/Windsurf/User/chatLanguageModels.json`
+### 2.4 Anti-Gravity IDE (confirmed — NOT a consumer)
 
-**Integration approach:** Same as Cursor — add Windsurf's path to the editor config paths list.
+Antigravity IDE 2.1.1 is a VS Code fork but with the `chatLanguageModels` feature stripped: **zero** refs in the entire app tree, no `language-models` schema, no `customendpoint` vendor. It uses Google's own Gemini model picker. Config dir empirically confirmed at `$HOME/.config/Antigravity IDE/User/` (space in the name; matches the claimed layout), but no file is read there.
 
-**Files to change:** `src-tauri/src/main.rs` — add Windsurf paths to `editor_chat_models_paths()`
+**Status:** not integrable in the current build; the config dir name is confirmed so a future build with the feature can be added by changing one entry.
 
-### 2.4 Zed
+### 2.5 Zed (confirmed — NOT a consumer, top-level settings.json)
 
-Zed is a high-performance editor with AI features. It uses a different configuration format and location:
+Zed does not use `chatLanguageModels.json`. Global model picker config (the "assistant" block) lives in the top-level `settings.json` (Windows `%APPDATA%\Zed\settings.json`, macOS/Linux `$HOME/.config/zed/settings.json`). A writer would merge an OpenAI-compatible provider into the `language_models`/assistant block.
 
-- Linux: `~/.config/zed/extensions/` or `~/.config/zed/settings.json`
-- macOS: `~/Library/Application Support/Zed/extensions/` or `~/Library/Application Support/Zed/settings.json`
+**Status:** paths confirmed; block schema needs confirmation. Note: the macOS path (`$HOME/.config/zed/settings.json`) differs from the commonly cited `~/Library/Application Support/Zed/settings.json` — verify on a Mac before relying on it.
 
-**Integration approach:** Zed does **not** use `chatLanguageModels.json`. It has its own AI provider configuration system. The integration approach needs to be different:
+### 2.6 Architecture conclusion
 
-1. **Option A (recommended):** Zed supports custom OpenAI-compatible endpoints through its AI provider settings. The integration should write a Zed-specific configuration file or provide instructions for the user to add the endpoint manually.
-2. **Option B:** Zed's extension API may allow programmatic configuration in the future. Monitor the Zed extension API for AI provider support.
-
-For now, the integration should:
-- Detect if Zed is installed
-- Write a Zed-compatible configuration (if a standard format exists)
-- Or provide a copy-to-clipboard setup string that the user can paste into Zed's settings
-
-**Files to change:** `src-tauri/src/main.rs` — new `zed_chat_models_path()` function + integration logic; `renderer/app.js` — Zed button in lane header
-
-### 2.5 Unified editor integration architecture
-
-The current code has `vscode_chat_models_paths()` which is VS Code-specific. This should be generalized to support any editor that uses the `chatLanguageModels.json` format, plus editors with different config formats.
-
-**Proposed structure:**
-
-```rust
-/// All supported editors and their chatLanguageModels.json paths.
-fn editor_chat_models_paths() -> Result<Vec<(PathBuf, &'static str)>, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
-    let config = PathBuf::from(home).join(".config");
-
-    let mut paths = Vec::new();
-
-    // VS Code stable
-    paths.push((
-        config.join("Code").join("User").join("chatLanguageModels.json"),
-        "VS Code",
-    ));
-
-    // VS Code Insiders
-    paths.push((
-        config.join("Code - Insiders").join("User").join("chatLanguageModels.json"),
-        "VS Code Insiders",
-    ));
-
-    // Cursor
-    paths.push((
-        config.join("Cursor").join("User").join("chatLanguageModels.json"),
-        "Cursor",
-    ));
-
-    // Windsurf
-    paths.push((
-        config.join("Windsurf").join("User").join("chatLanguageModels.json"),
-        "Windsurf",
-    ));
-
-    // Anti-Gravity (reads VS Code's config)
-    // Already covered by VS Code paths above
-
-    // Zed — different format, handled separately
-    // See zed_integration_paths() below
-
-    Ok(paths)
-}
-
-/// Zed's AI provider configuration path (different format).
-fn zed_config_path() -> Result<Option<PathBuf>, String> {
-    // ... detect Zed installation and return its config path
-}
-```
-
-**Files to change:** `src-tauri/src/main.rs` — refactor `vscode_chat_models_paths()` into `editor_chat_models_paths()` + `zed_config_path()`; rename `vscode_integrate_lane` to `editor_integrate_lane`
+`editor_chat_models_paths()` is a list of confirmed `chatLanguageModels.json` targets (VS Code, Insiders, Windsurf/Devin), resolved against the per-OS config root. Cursor, Anti-Gravity (current build), and Zed are different mechanisms and are NOT offered in the menu until a confirmed writer exists.
 
 ---
 
@@ -254,14 +188,11 @@ Create a `docs/editor-integration.md` file that explains:
 
 - [ ] VS Code stable: integrate a lane, verify it appears in the model picker, reload, verify it's there
 - [ ] VS Code Insiders: same as above
-- [ ] Cursor: install Cursor, integrate a lane, verify it appears in the model picker
-- [ ] Windsurf: install Windsurf, integrate a lane, verify it appears in the model picker
-- [ ] Anti-Gravity: install Anti-Gravity, verify the lane appears (covered by VS Code paths)
-- [ ] Zed: install Zed, integrate a lane, verify the endpoint is available
 - [ ] Remove integration: delete a lane, verify the entry is removed from all editor configs
 - [ ] Port change: change the engine port, verify the VS Code entries are updated or re-integration works
 - [ ] Lane rename: rename a lane, verify the VS Code entry is updated
-- [ ] Multiple editors: integrate with VS Code and Cursor simultaneously, verify both have the entry
+- [ ] Multiple editors: integrate with VS Code and Windsurf/Devin simultaneously, verify both have the entry
+- [ ] Confirmed non-consumers (Cursor, Anti-Gravity, Zed) are absent from the editor menu
 
 ---
 
@@ -289,11 +220,12 @@ Create a `docs/editor-integration.md` file that explains:
 | 1.3 Add `vscode_remove_lane` command | 1 day | High |
 | 1.4 Add VS Code integration status indicator | 1 day | Medium |
 | 1.5 Handle port changes | 1 day | Medium |
-| 2.1 Anti-Gravity integration | 0.5 days | Low (covered by VS Code) |
-| 2.2 Cursor integration | 1 day | High |
-| 2.3 Windsurf integration | 1 day | High |
-| 2.4 Zed integration | 2 days | High |
-| 2.5 Unified editor integration architecture | 1 day | High |
+| 2.1 VS Code + Insiders integration (implemented) | — | — |
+| 2.2 Cursor (not integrable: SQLite state DB) | — | — |
+| 2.3 Windsurf/Devin integration (implemented) | — | — |
+| 2.4 Anti-Gravity (blocked: feature absent in 2.1.1) | — | — |
+| 2.5 Zed settings.json writer (if a user runs Zed) | 1 day | Low |
+| 2.6 Trim editor list to confirmed consumers (done) | — | — |
 | 3.1 Rename VS Code button to "Editors" | 0.5 days | Medium |
 | 3.2 Show integration status per lane | 1 day | Medium |
 | 3.3 Add "Re-integrate" action | 0.5 days | Medium |
@@ -309,9 +241,10 @@ Create a `docs/editor-integration.md` file that explains:
 
 ## 8. Open questions
 
-1. **Zed's configuration format** — Does Zed have a standard `chatLanguageModels.json` equivalent, or does it use a different format? Needs investigation.
-2. **Anti-Gravity's config path** — Does Anti-Gravity use VS Code's config path or its own? Needs verification.
-3. **Windsurf's config path** — Confirmed to use `~/.config/Windsurf/User/chatLanguageModels.json` on Linux, but macOS and Windows paths need verification.
-4. **Cursor's config path** — Confirmed to use `~/.config/Cursor/User/chatLanguageModels.json` on Linux, but macOS and Windows paths need verification.
+1. ~~**Zed's configuration format**~~ — Resolved 2026-08-06: not a `chatLanguageModels.json` consumer; top-level `settings.json` "assistant" block (see §2.5).
+2. ~~**Anti-Gravity's config path**~~ — Resolved 2026-08-06 (empirical): config dir is `<root>/Antigravity IDE/User/`, but the 2.1.1 build has the `chatLanguageModels.json` feature stripped (see §2.4).
+3. ~~**Windsurf's config path**~~ — Resolved 2026-08-06 (empirical): rebranded to Devin Desktop; config dir is `<root>/Devin/User/` and it IS a `chatLanguageModels.json` consumer (see §2.3).
+4. ~~**Cursor's config path**~~ — Resolved 2026-08-06 (empirical): not a consumer; BYOK state lives in `User/globalStorage/state.vscdb` (SQLite) (see §2.2).
 5. **Should the integration be opt-in per editor?** — Some users may not want all editors to be targeted. Consider a settings option to choose which editors to integrate with.
-6. **Should the integration be automatic or manual?** — Currently the user must click the "VS Code" button on each lane. Should integration happen automatically when a lane is created?
+6. **Should the integration be automatic or manual?** — Currently the user must click the "Editors" button on each lane. Should integration happen automatically when a lane is created?
+7. **Zed: implement the settings.json writer?** — Feasible via `language_models.openai_compatible` merge; only worth it if a user actually runs Zed.

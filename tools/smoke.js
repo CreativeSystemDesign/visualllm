@@ -74,7 +74,9 @@ global.window = {
     laneTest: () => ok({ ok: false, status: 0, served_by: null, trail: null, message: 'smoke' }),
     portGet: () => ok(4100),
     portSet: (port) => ok(port),
-    vscodeIntegrateLane: () => ok(),
+    editorList: () => ok(['VS Code', 'VS Code Insiders', 'Windsurf']),
+    editorIntegrateLane: () => ok({ editor: 'smoke', path: '/smoke', written: true, error: null }),
+    editorRemoveLane: () => ok({ editor: 'smoke', path: '/smoke', written: true, error: null }),
   },
 }
 global.document = new Proxy({}, {
