@@ -38,6 +38,8 @@ const api = T
       activityRead: (since) => T.core.invoke('activity_read', { since }),
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
+      gatewayToken: (reveal) => T.core.invoke('gateway_token', { reveal }),
+      gatewayTokenRegenerate: () => T.core.invoke('gateway_token_regenerate'),
       editorList: () => T.core.invoke('editor_list'),
       editorIntegrateLane: (slug, name, editor) => T.core.invoke('editor_integrate_lane', { slug, name, editor }),
       editorRemoveLane: (slug, editor) => T.core.invoke('editor_remove_lane', { slug, editor }),
@@ -2052,12 +2054,24 @@ async function loadPort() {
   }
 }
 
+let tokenVisible = false
+
+async function refreshTokenInput() {
+  const info = await api.gatewayToken(tokenVisible)
+  $('gatewayToken').value = tokenVisible ? info.token : info.masked
+}
+
 function openSettings() {
   $('enginePort').value = enginePort
   $('settingsScrim').hidden = false
+  refreshTokenInput().catch((error) => {
+    $('gatewayToken').value = `could not read token: ${error.message}`
+  })
 }
 
 function closeSettings() {
+  tokenVisible = false
+  $('tokenReveal').textContent = 'Reveal'
   $('settingsScrim').hidden = true
 }
 
@@ -2067,6 +2081,47 @@ $('closeSettings').addEventListener('click', closeSettings)
 $('cancelSettings').addEventListener('click', closeSettings)
 $('settingsScrim').addEventListener('click', (event) => {
   if (event.target === $('settingsScrim')) closeSettings()
+})
+$('tokenReveal').addEventListener('click', async () => {
+  tokenVisible = !tokenVisible
+  try {
+    await refreshTokenInput()
+    $('tokenReveal').textContent = tokenVisible ? 'Mask' : 'Reveal'
+  } catch (error) {
+    toast(`Could not read token: ${error.message}`)
+  }
+})
+$('tokenCopy').addEventListener('click', async () => {
+  try {
+    const info = await api.gatewayToken(true)
+    await api.copy(info.token)
+    toast('Gateway token copied — treat it like an API key')
+  } catch (error) {
+    toast(`Could not copy token: ${error.message}`)
+  }
+})
+let regenArmed = false
+$('tokenRegen').addEventListener('click', async () => {
+  if (!regenArmed) {
+    regenArmed = true
+    $('tokenRegen').textContent = 'Sure?'
+    setTimeout(() => {
+      regenArmed = false
+      $('tokenRegen').textContent = 'Regenerate'
+    }, 3000)
+    return
+  }
+  regenArmed = false
+  $('tokenRegen').textContent = 'Regenerate'
+  try {
+    const info = await api.gatewayTokenRegenerate()
+    tokenVisible = true
+    $('gatewayToken').value = info.token
+    $('tokenReveal').textContent = 'Mask'
+    toast('New gateway token created — applies to engine starts; re-integrate editors')
+  } catch (error) {
+    toast(`Could not rotate token: ${error.message}`)
+  }
 })
 $('settingsForm').addEventListener('submit', async (event) => {
   event.preventDefault()

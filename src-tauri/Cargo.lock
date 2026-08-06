@@ -4875,6 +4875,7 @@ dependencies = [
  "cairo-rs",
  "futures-util",
  "gdk-pixbuf",
+ "getrandom 0.2.17",
  "gtk",
  "keyring",
  "reqwest 0.12.28",

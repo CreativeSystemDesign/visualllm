@@ -200,6 +200,9 @@ fn member_label(member: &lanes::Member) -> String {
 #[derive(Clone)]
 pub struct Engine {
     pub dir: PathBuf,
+    /// Bearer token the lane endpoints require, loaded once at listener build.
+    /// `None` (dev only) leaves the engine open, matching pre-token behaviour.
+    pub secret: Option<String>,
 }
 
 // ============================================================================
@@ -1575,17 +1578,70 @@ async fn chat(
 // ============================================================================
 
 /// The URL table. `{slug}` is a placeholder captured into the `Path` parameter.
-pub fn router(dir: PathBuf) -> Router {
+///
+/// The lane routes are guarded by the gateway token; the read-only surface
+/// (`/health`, `/activity`, `/v1/models`) stays open so a user can probe the
+/// engine without a credential.
+pub fn router(dir: PathBuf, secret: Option<String>) -> Router {
+    let engine = Engine { dir, secret };
     Router::new()
-        .route("/health", get(health))
-        .route("/activity", get(activity))
-        .route("/v1/models", get(models))
         .route("/lane/{slug}/v1/chat/completions", post(chat))
         // Some clients append `/v1/models` to whatever base URL you give them.
         // If someone configures a single lane as their base URL, this stops
         // discovery 404-ing on them.
         .route("/lane/{slug}/v1/models", get(models))
-        .with_state(Engine { dir })
+        .route_layer(axum::middleware::from_fn_with_state(
+            engine.clone(),
+            require_token,
+        ))
+        .route("/health", get(health))
+        .route("/activity", get(activity))
+        .route("/v1/models", get(models))
+        .with_state(engine)
+}
+
+/// Enforce the gateway bearer token on the lane endpoints.
+///
+/// The lanes can spend the user's money, and they are reachable by any local
+/// process (or a DNS-rebinding website), so they demand `Authorization:
+/// Bearer <token>` matching the `secret` file. Compare in constant-ish time to
+/// avoid a trivial timing oracle over the loopback; the comparison is short,
+/// so the difference is a footgun only if someone measures over the network.
+async fn require_token(
+    axum::extract::State(engine): axum::extract::State<Engine>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let authorised = match engine.secret.as_deref() {
+        None => true,
+        Some(secret) => request
+            .headers()
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|presented| {
+                let a = presented.as_bytes();
+                let b = secret.as_bytes();
+                if a.len() != b.len() {
+                    return false;
+                }
+                let mut diff = 0u8;
+                for (x, y) in a.iter().zip(b.iter()) {
+                    diff |= x ^ y;
+                }
+                diff == 0
+            })
+            .unwrap_or(false),
+    };
+    if authorised {
+        Ok(next.run(request).await)
+    } else {
+        Err((
+            axum::http::StatusCode::UNAUTHORIZED,
+            "missing or invalid gateway token — see Engine settings in VisualLLM",
+        )
+            .into_response())
+    }
 }
 
 /// Start listening. Called once at startup from `main.rs`.
@@ -1593,11 +1649,17 @@ pub fn router(dir: PathBuf) -> Router {
 /// Bound to `127.0.0.1` deliberately: that address is reachable only from this
 /// machine. Using `0.0.0.0` would expose an unauthenticated proxy holding the
 /// user's API keys to the entire local network.
-pub async fn serve(dir: PathBuf, port: u16, mut ports: watch::Receiver<u16>) -> Result<(), String> {
+pub async fn serve(
+    dir: PathBuf,
+    port: u16,
+    secret: Option<String>,
+    mut ports: watch::Receiver<u16>,
+) -> Result<(), String> {
     let dir = Arc::new(dir);
+    let secret = Arc::new(secret);
     let listener = bind(port).await?;
     let (mut stop_tx, stop_rx) = oneshot::channel();
-    let mut active = spawn(listener, Arc::clone(&dir), stop_rx);
+    let mut active = spawn(listener, Arc::clone(&dir), Arc::clone(&secret), stop_rx);
     let mut current = port;
 
     loop {
@@ -1629,7 +1691,7 @@ pub async fn serve(dir: PathBuf, port: u16, mut ports: watch::Receiver<u16>) -> 
                 let _ = active.await;
                 let (next_stop_tx, next_stop_rx) = oneshot::channel();
                 stop_tx = next_stop_tx;
-                active = spawn(listener, Arc::clone(&dir), next_stop_rx);
+                active = spawn(listener, Arc::clone(&dir), Arc::clone(&secret), next_stop_rx);
                 current = next;
                 eprintln!("engine: now listening on 127.0.0.1:{current}");
             }
@@ -1646,10 +1708,11 @@ async fn bind(port: u16) -> Result<tokio::net::TcpListener, String> {
 fn spawn(
     listener: tokio::net::TcpListener,
     dir: Arc<PathBuf>,
+    secret: Arc<Option<String>>,
     stop: oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
     tokio::spawn(async move {
-        axum::serve(listener, router((*dir).clone()))
+        axum::serve(listener, router((*dir).clone(), (*secret).clone()))
             .with_graceful_shutdown(async {
                 let _ = stop.await;
             })
@@ -2144,7 +2207,7 @@ mod tests {
             "stream": stream,
             "max_tokens": 32,
         });
-        router(dir.to_path_buf())
+        router(dir.to_path_buf(), None)
             .oneshot(
                 axum::http::Request::builder()
                     .method("POST")
@@ -2199,6 +2262,93 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("fallback"));
         assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
+        task.abort();
+    }
+
+    fn lane_request(token: Option<&str>) -> axum::http::Request<Body> {
+        let mut builder = axum::http::Request::builder()
+            .method("POST")
+            .uri("/lane/fallback/v1/chat/completions")
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        builder
+            .body(Body::from(
+                json!({"model":"fallback","messages":[{"role":"user","content":"hello"}],"max_tokens":32})
+                    .to_string(),
+            ))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn lane_endpoints_require_the_gateway_token() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_test_files(dir.path(), address, &["primary", "fallback"]);
+        let app = router(dir.path().to_path_buf(), Some("secret-token".to_string()));
+
+        // No token: refused before any upstream call.
+        let denied = app.clone().oneshot(lane_request(None)).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "upstream must not be called"
+        );
+
+        // Wrong token: refused too.
+        let wrong = app
+            .clone()
+            .oneshot(lane_request(Some("wrong-token")))
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "upstream must not be called"
+        );
+
+        // Correct token: reaches the lane and answers.
+        let allowed = app
+            .oneshot(lane_request(Some("secret-token")))
+            .await
+            .unwrap();
+        assert_eq!(allowed.status(), StatusCode::OK);
+        assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn health_and_models_stay_open_without_a_token() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_test_files(dir.path(), address, &["primary"]);
+        let app = router(dir.path().to_path_buf(), Some("secret-token".to_string()));
+
+        let health = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let models = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/models")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(models.status(), StatusCode::OK);
         task.abort();
     }
 }

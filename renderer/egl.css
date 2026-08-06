@@ -1119,6 +1119,18 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .field input::placeholder { color: var(--ink-faint); }
 .field select { appearance: none; cursor: pointer; }
 
+.form-divider {
+  border: none;
+  border-top: 1px solid var(--glass-edge);
+  margin: 22px 0;
+}
+.token-panel { margin-top: 2px; }
+.token-panel code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  color: var(--ink-soft);
+}
+
 .field-select { position: relative; display: block; }
 
 /* The gallery's filter selects live in a bare .field-select, not inside a

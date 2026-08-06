@@ -73,6 +73,10 @@ struct VscodeModelEntry {
     max_input_tokens: u64,
     #[serde(rename = "maxOutputTokens")]
     max_output_tokens: u64,
+    /// The gateway bearer token, so the editor can call the lane now that the
+    /// engine requires it. VS Code reads this as request headers.
+    #[serde(rename = "httpHeaders", skip_serializing_if = "Option::is_none")]
+    http_headers: Option<serde_json::Value>,
 }
 
 /// A provider entry in chatLanguageModels.json (contains a models array).
@@ -227,6 +231,7 @@ fn vscode_model_entry(
     slug: &str,
     name: &str,
     port: u16,
+    token: Option<&str>,
     catalog: &[providers::CatalogModel],
     lane: &lanes::Lane,
 ) -> VscodeModelEntry {
@@ -262,6 +267,7 @@ fn vscode_model_entry(
         vision,
         max_input_tokens,
         max_output_tokens,
+        http_headers: token.map(|t| serde_json::json!({ "Authorization": format!("Bearer {t}") })),
     }
 }
 
@@ -280,13 +286,14 @@ fn editor_integrate_lane(
 ) -> Result<VscodeIntegrationResult, String> {
     let store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
     let port = port_load(&store_path);
+    let token = secret_load(&store_path).ok();
 
     let catalog = providers::cache_read(&store_path);
     let lanes = lanes::load(&store_path);
     let lane = lanes.iter().find(|l| l.slug == slug);
 
     let entry = match lane {
-        Some(lane) => vscode_model_entry(&slug, &name, port, &catalog, lane),
+        Some(lane) => vscode_model_entry(&slug, &name, port, token.as_deref(), &catalog, lane),
         None => VscodeModelEntry {
             id: slug.clone(),
             name: format!("visualllm: {name}"),
@@ -295,6 +302,8 @@ fn editor_integrate_lane(
             vision: false,
             max_input_tokens: 250_144,
             max_output_tokens: 8000,
+            http_headers: token
+                .map(|t| serde_json::json!({ "Authorization": format!("Bearer {t}") })),
         },
     };
 
@@ -1115,6 +1124,90 @@ fn port_save(dir: &std::path::Path, port: u16) -> Result<(), String> {
     std::fs::rename(tmp, path).map_err(|e| e.to_string())
 }
 
+/// Where the gateway bearer token lives. A plain file (not JSON) whose content
+/// is the token and nothing else; the file mode is 0600.
+fn secret_path(dir: &std::path::Path) -> PathBuf {
+    dir.join("secret")
+}
+
+/// The gateway bearer token, created on first use.
+///
+/// The loopback engine is reachable by any local process, and a web page can
+/// attempt DNS rebinding. A token that clients must present makes the lane
+/// endpoints — the ones that can spend money — callable only by the user's own
+/// configured clients. `/health` and `/activity` stay open: they leak nothing.
+fn secret_load(dir: &std::path::Path) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let path = secret_path(dir);
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let text = text.trim();
+        if !text.is_empty() {
+            return Ok(text.to_string());
+        }
+    }
+    let secret = secret_generate()?;
+    secret_save(dir, &secret)?;
+    Ok(secret)
+}
+
+/// 64 hex characters from the operating system's CSPRNG.
+fn secret_generate() -> Result<String, String> {
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes)
+        .map_err(|e| format!("could not generate the gateway token: {e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn secret_save(dir: &std::path::Path, secret: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join("secret.tmp");
+    std::fs::write(&tmp, secret.as_bytes()).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(tmp, secret_path(dir)).map_err(|e| e.to_string())
+}
+
+/// What the settings UI may show about the token. `token` is empty unless the
+/// user asked to reveal it; `masked` is always safe to display.
+#[derive(Serialize)]
+struct GatewayToken {
+    has: bool,
+    token: String,
+    masked: String,
+}
+
+#[tauri::command]
+fn gateway_token(app: tauri::AppHandle, reveal: bool) -> Result<GatewayToken, String> {
+    let dir = store_dir(&app)?;
+    let token = secret_load(&dir)?;
+    let masked = format!("{}…{}", &token[..8], &token[token.len() - 4..]);
+    Ok(GatewayToken {
+        has: true,
+        token: if reveal { token } else { String::new() },
+        masked,
+    })
+}
+
+/// Rotate the token for the next engine start. The running listener keeps the
+/// current token until it is rebuilt (port change or restart), so the response
+/// carries the new value and the UI says when it takes effect.
+#[tauri::command]
+fn gateway_token_regenerate(app: tauri::AppHandle) -> Result<GatewayToken, String> {
+    let dir = store_dir(&app)?;
+    let token = secret_generate()?;
+    secret_save(&dir, &token)?;
+    let masked = format!("{}…{}", &token[..8], &token[token.len() - 4..]);
+    Ok(GatewayToken {
+        has: true,
+        token,
+        masked,
+    })
+}
+
 #[tauri::command]
 fn port_get(app: tauri::AppHandle) -> Result<u16, String> {
     let dir = store_dir(&app)?;
@@ -1168,10 +1261,13 @@ fn main() {
             // desktop app should have.
             let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
             let server_port = port_load(&dir);
+            // A token missing/corrupt on disk is regenerated here; the same
+            // loader backs the settings UI, so both agree on the live secret.
+            let secret = secret_load(&dir).ok();
             let (port_tx, port_rx) = watch::channel(server_port);
             let _ = ENGINE_PORT_TX.set(port_tx);
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = server::serve(dir, server_port, port_rx).await {
+                if let Err(err) = server::serve(dir, server_port, secret, port_rx).await {
                     eprintln!("engine: {err}");
                 }
             });
@@ -1288,6 +1384,8 @@ fn main() {
             lane_test,
             port_get,
             port_set,
+            gateway_token,
+            gateway_token_regenerate,
             editor_list,
             editor_integrate_lane,
             editor_remove_lane,
@@ -1371,6 +1469,7 @@ mod vscode_tests {
             vision: false,
             max_input_tokens: 250144,
             max_output_tokens: 8000,
+            http_headers: None,
         }
     }
 
