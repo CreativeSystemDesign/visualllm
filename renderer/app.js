@@ -39,6 +39,7 @@ const api = T
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
       vscodeIntegrateLane: (slug, name) => T.core.invoke('vscode_integrate_lane', { slug, name }),
+      vscodeRemoveLane: (slug) => T.core.invoke('vscode_remove_lane', { slug }),
     }
   : window.vll
 
@@ -548,7 +549,7 @@ function laneEl(hall) {
     <span class="hall-spacer"></span>
     <button class="hall-act lane-test" title="Test this endpoint">Test</button>
     <button class="hall-act lane-copy-setup" title="Copy a curl setup example">Setup</button>
-    <button class="hall-act lane-vscode" title="Add this endpoint to VS Code model picker">VS Code</button>
+    <button class="hall-act lane-vscode${hall.vscode_integrated ? ' is-on' : ''}" title="${hall.vscode_integrated ? 'Integrated — click to remove from VS Code model picker' : 'Add this endpoint to VS Code model picker'}">${hall.vscode_integrated ? '✓ VS Code' : 'VS Code'}</button>
     <button class="hall-toggle${hall.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
       hall.suppress_reasoning
         ? 'No thinking: members are asked to answer directly. Click to allow thinking.'
@@ -1723,27 +1724,45 @@ document.addEventListener('click', async (event) => {
     const laneEl = vscodeBtn.closest('.hall')
     const slug = laneEl.dataset.hall
     const hall = state.lanes.find(l => l.slug === slug)
-    console.log('[vscode] button clicked', { slug, hall: hall?.name })
-    if (!hall) {
-      console.error('[vscode] hall not found', slug)
-      return
-    }
+    if (!hall) return
     try {
-      console.log('[vscode] calling api.vscodeIntegrateLane', { slug, name: hall.name })
-      const results = await api.vscodeIntegrateLane(slug, hall.name)
-      const written = results.filter(r => r.written)
-      const failed = results.filter(r => !r.written)
-      console.log('[vscode] results', results)
-      if (failed.length === 0) {
-        const editors = written.map(r => r.editor).join(' and ')
-        toast(`Added "${hall.name}" to the ${editors} model picker`, 'Reload the editor windows (Ctrl+R) to see it')
-      } else if (written.length > 0) {
-        const ok = written.map(r => r.editor).join(', ')
-        const bad = failed.map(r => `${r.editor}: ${r.error}`).join('; ')
-        toast(`Added to ${ok}; failed in ${bad}`)
+      if (hall.vscode_integrated) {
+        // Remove the lane from editor model pickers
+        const results = await api.vscodeRemoveLane(slug)
+        const written = results.filter(r => r.written)
+        const failed = results.filter(r => !r.written)
+        if (failed.length === 0) {
+          const editors = written.map(r => r.editor).join(' and ')
+          toast(`Removed "${hall.name}" from ${editors} model picker`)
+        } else if (written.length > 0) {
+          const ok = written.map(r => r.editor).join(', ')
+          const bad = failed.map(r => `${r.editor}: ${r.error}`).join('; ')
+          toast(`Removed from ${ok}; failed in ${bad}`)
+        } else {
+          toast(`Failed: ${failed.map(r => r.error).filter(Boolean).join('; ')}`)
+        }
+        hall.vscode_integrated = false
       } else {
-        toast(`Failed: ${failed.map(r => r.error).filter(Boolean).join('; ')}`)
+        // Add the lane to editor model pickers
+        const results = await api.vscodeIntegrateLane(slug, hall.name)
+        const written = results.filter(r => r.written)
+        const failed = results.filter(r => !r.written)
+        if (failed.length === 0) {
+          const editors = written.map(r => r.editor).join(' and ')
+          toast(`Added "${hall.name}" to the ${editors} model picker`, 'Reload the editor windows (Ctrl+R) to see it')
+          hall.vscode_integrated = true
+        } else if (written.length > 0) {
+          const ok = written.map(r => r.editor).join(', ')
+          const bad = failed.map(r => `${r.editor}: ${r.error}`).join('; ')
+          toast(`Added to ${ok}; failed in ${bad}`)
+          hall.vscode_integrated = true
+        } else {
+          toast(`Failed: ${failed.map(r => r.error).filter(Boolean).join('; ')}`)
+          return
+        }
       }
+      render()
+      saveLanes()
     } catch (error) {
       console.error('[vscode] failed', error)
       toast(`Failed: ${error.message}`)
@@ -2841,13 +2860,13 @@ document.addEventListener('keydown', (event) => {
 
 // ------------------------------------------------------------------ persistence
 
-/** Written on every change. Only the three fields that define a hall go to
+/** Written on every change. Only the fields that define a hall go to
  *  disk — anything derived from the models is looked up fresh on load, so a
  *  stale price or a renamed model can never be baked into the file. */
 async function saveLanes() {
   try {
     await api.lanesWrite(
-      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick }) => ({
+      state.lanes.map(({ slug, name, members, criteria, suppress_reasoning, unstick, vscode_integrated }) => ({
         slug,
         name,
         members: members.map(({ provider, id, params, disabled }) => ({
@@ -2859,6 +2878,7 @@ async function saveLanes() {
         criteria: criteria || [],
         suppress_reasoning: !!suppress_reasoning,
         unstick: !!unstick,
+        vscode_integrated: !!vscode_integrated,
       }))
     )
   } catch (err) {
