@@ -161,12 +161,66 @@ fn vscode_merge_lane(config: &mut VscodeChatModels, entry: &VscodeModelEntry) {
     }
 }
 
+/// Derive VS Code model entry capabilities from the lane's actual members
+/// and the cached catalog, rather than using hardcoded values.
+///
+/// A lane's members may carry vision, tools, or custom context windows.
+/// The catalog tells us which capabilities each member actually has.
+/// If a member has no catalog entry (deleted upstream, removed provider),
+/// we fall back to the defaults — the lane still works, just without
+/// capability hints in the picker.
+fn vscode_model_entry(
+    slug: &str,
+    name: &str,
+    port: u16,
+    catalog: &[providers::CatalogModel],
+    lane: &lanes::Lane,
+) -> VscodeModelEntry {
+    let base_url = format!("http://127.0.0.1:{port}/lane/{slug}/v1");
+
+    // Find catalog entries for each member so we can derive capabilities.
+    let member_models: Vec<&providers::CatalogModel> = lane
+        .members
+        .iter()
+        .filter_map(|m| {
+            catalog.iter().find(|c| {
+                c.id == m.id && (m.provider.is_empty() || c.provider_id == m.provider)
+            })
+        })
+        .collect();
+
+    let vision = member_models.iter().any(|m| m.vision);
+    let tool_calling = member_models.iter().any(|m| m.tools);
+    let max_input_tokens = member_models
+        .iter()
+        .map(|m| m.context)
+        .max()
+        .unwrap_or(250_144);
+    // CatalogModel has no max_output_tokens field — use a sensible
+    // default. The VS Code picker uses this as a hint, not a hard limit.
+    let max_output_tokens = 8000;
+
+    VscodeModelEntry {
+        id: slug.to_string(),
+        name: format!("visualllm: {name}"),
+        url: base_url,
+        tool_calling,
+        vision,
+        max_input_tokens,
+        max_output_tokens,
+    }
+}
+
 /// Add or update a VisualLLM lane in every supported editor's model picker.
 ///
 /// Each editor keeps its own chatLanguageModels.json, so the lane is merged
 /// into each one separately. A failure in one editor is reported without
 /// stopping the others — the user asked for all of them, and one editor's
 /// broken config must not silently strand the rest.
+///
+/// Capabilities (vision, tool_calling, max_input_tokens, max_output_tokens)
+/// are derived from the lane's actual members and the cached catalog rather
+/// than hardcoded — so the picker accurately reflects what the lane can do.
 #[tauri::command]
 fn vscode_integrate_lane(
     app: tauri::AppHandle,
@@ -180,17 +234,22 @@ fn vscode_integrate_lane(
 
     let store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
     let port = port_load(&store_path);
-    let base_url = format!("http://127.0.0.1:{port}/lane/{slug}/v1");
-    eprintln!("[vscode_integrate_lane] base_url: {base_url}");
 
-    let entry = VscodeModelEntry {
-        id: slug.clone(),
-        name: format!("visualllm: {name}"),
-        url: base_url,
-        tool_calling: true,
-        vision: false,
-        max_input_tokens: 250144,
-        max_output_tokens: 8000,
+    let catalog = providers::cache_read(&store_path);
+    let lanes = lanes::load(&store_path);
+    let lane = lanes.iter().find(|l| l.slug == slug);
+
+    let entry = match lane {
+        Some(lane) => vscode_model_entry(&slug, &name, port, &catalog, lane),
+        None => VscodeModelEntry {
+            id: slug.clone(),
+            name: format!("visualllm: {name}"),
+            url: format!("http://127.0.0.1:{port}/lane/{slug}/v1"),
+            tool_calling: true,
+            vision: false,
+            max_input_tokens: 250_144,
+            max_output_tokens: 8000,
+        },
     };
 
     let mut results = Vec::new();
