@@ -44,6 +44,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -91,6 +94,9 @@ jobs:
           # WebView2 is usually present on Windows 10/11, but we ensure the bootstrapper is available
           # The MSI installer will handle WebView2 installation automatically
 
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli
+
       - run: npm run smoke
       - run: npm run build
 
@@ -123,6 +129,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli
 
       - run: npm run smoke
       - run: npm run build
