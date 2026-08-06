@@ -1,0 +1,333 @@
+# VisualLLM Implementation Plan
+
+Pickup document for a fresh session. This plan is written so the next session can
+execute each item without re-doing the codebase review. Read **Context** first,
+then follow **Phase 1** in order. Verify each phase with the commands in
+**Definition of Done**.
+
+Source of truth: a full code review was delivered 2026-08-06 against commit
+`5f404c7` (branch `ide-integration`, the current work branch). Every item below
+maps back to a specific finding in that review, not to a guess.
+
+---
+
+## Context (read this first)
+
+### What the product is
+VisualLLM is a Tauri 2.x desktop app: a visual fallback router for LLMs.
+Models are arranged into horizontal "lanes"; each lane is a local
+OpenAI-compatible endpoint. In a lane the **rightmost** model is tried first and
+every member to its left is a fallback. The engine runs a loopback HTTP server
+(`http://127.0.0.1:<port>/lane/<slug>/v1/chat/completions`) that editors like
+VS Code call through `chatLanguageModels.json`.
+
+### Architecture (file map)
+- `src-tauri/src/main.rs` — Tauri commands, state (`PortableState`), editor
+  integration (`vscode_integrate_lane` writes `chatLanguageModels.json`),
+  capability-gap decision, `port.json` (engine port), loopback auth-less gateway.
+- `src-tauri/src/server.rs` — the axum engine: `chat()` route, per-member
+  fallback loop, timeouts (CONNECT 10s / STREAM 120s / BLOCKING 300s),
+  incidents (ring of 200), per-lane traffic stats, `x-visualllm-trail` header,
+  `GET /activity` JSONL tail.
+- `src-tauri/src/providers.rs` — provider registry + keyring (OS keychain)
+  integration; `save()` writes blank keys to providers.json and stores real keys
+  in the keyring.
+- `src-tauri/src/lanes.rs` — lane model (`Lane`, `Member`, params, criteria).
+- `src-tauri/src/incidents.rs` — incident ring buffer, kinds, mute rules.
+- `src-tauri/src/state.rs` — `port.json`, `StateFile` persistence.
+- `renderer/index.html` — the EGL-skin UI shell; loads only `egl.css`.
+- `renderer/egl.css` — active skin (~3300 lines).
+- `renderer/app.js` — all canvas/UI logic (~3238 lines, signature-based repaint).
+- `renderer/style.css` — **dead code** (2066 lines, old neumorphic skin; nothing
+  loads it).
+- `renderer-backup-original/` — **dead code** (backup of an older renderer).
+- `tools/smoke.js` — renderer smoke test (loads index.html with stubs).
+- `tools/preview.js` — builds a single HTML preview of the app with a
+  `window.vll` seam; used for quick manual testing and future e2e.
+- `.github/workflows/release.yml` — tag-gated release build (deb/AppImage/nsis/
+  dmg); macOS job signs the DMG but does **not** notarize.
+- `.github/workflows/ci.yml` — renderer smoke + `cargo fmt`/`clippy`/`test` +
+  package validation.
+- `src-tauri/tauri.conf.json` — CSP `default-src 'none'`, transparent window,
+  updater pubkey/endpoints.
+- `src-tauri/capabilities/default.json` — renderer capabilities.
+
+### The current invariant set (do not break)
+1. **Display reversal**: the rightmost model answers first. `renderTrack` and
+   `domSlotToIndex` in `app.js` reverse logical order to DOM order. Any renderer
+   edit must preserve this.
+2. **Keys are one-way**: provider API keys live ONLY in the OS keyring
+   (providers.rs). They are never written to providers.json (which stores blank
+   keys) and never exposed to the webview (export/import strips them).
+3. **Capability-gap semantics**: a model that cannot serve a request (e.g. no
+   vision) is skipped silently as a `skipped_by_catalog`, never recorded as an
+   incident, and the passed-over story lives on the lane activity line — not the
+   notification center.
+4. **The probe budget**: lane test uses a 64-token probe, above the `budget <
+   16` gate bypass, so Test actually measures the commit gate.
+5. **Compatibility**: existing lanes, `port.json`, and `chatLanguageModels.json`
+   files must keep working across versions.
+
+### Verified baseline (2026-08-06)
+- `npm run smoke` passes.
+- `cargo test` = **52 passed, 0 failed**.
+- `cargo fmt --check` and `cargo clippy -- -D warnings` — run before any merge;
+  baseline was clean on the review commit.
+- Single canonical remote: `origin` → `https://github.com/CreativeSystemDesign/visualllm.git`
+  (dual-remote with `CreativeSystemsDevelopment` was removed 2026-08-06; the
+  dev account is deleted/logged out everywhere).
+
+### Release posture
+Version is `0.4.0` (Cargo.toml, tauri.conf.json, package.json). No public
+release has shipped. The product is pre-1.0; see `ROADMAP.md` (workstream plan,
+release criteria) and `RELEASE_ROADMAP.md` (1.0 editor-integration work).
+
+---
+
+## Phase 0 — Hygiene (already done, do not redo)
+
+- Removed git remotes `creativesystemsdevelopment` and `creativesystemdesign`;
+  kept single `origin`. `main` re-pointed to track `origin/main`.
+- Deleted GitHub repo `CreativeSystemsDevelopment/VisualLLM`; logged the dev
+  gh account out; removed stale `branch.<name>.vscode-merge-base` git-config
+  keys; verified via API that no visualllm artifacts remain under the dev
+  account.
+- Added `docs/IMPLEMENTATION_PLAN.md` (this file).
+
+---
+
+## Phase 1 — Confirmed issues (fix these first; each is a finding from the review)
+
+### 1.1 Remove the dead theme toggle (renderer-only)
+**Finding:** `renderer/index.html:75` renders a `themeToggle` button and
+`egl.css:977-978` styles `[data-theme="dark"]` glyph swaps, but there is **no
+handler anywhere in `app.js`** — the button does nothing. `<body
+data-theme="dark">` is hardcoded at `index.html:12`. The active skin is
+dark-first; the old light theme lives only in the dead `style.css`.
+**Decision:** remove the button and its CSS rules. Do not build a light theme
+for the EGL skin in this cycle — the skin is a dark installation and
+half-baked light theming is worse than none.
+**Steps:**
+- In `index.html`, delete the `themeToggle` button element (and any id/class
+  references to it).
+- In `egl.css`, delete the `[data-theme="dark"]` frame-btn glyph rules at
+  ~:977-978 and the `#themeToggle` styles if present.
+- Grep `app.js` for `theme`/`themeToggle` to confirm nothing listens for it;
+  remove dead handlers if found.
+**Verify:** `npm run smoke`; `grep -n themeToggle renderer/*` returns nothing.
+
+### 1.2 Degrade gracefully when the OS keyring is unavailable (backend)
+**Finding:** `providers.rs:175` `keyring_set(&provider.id, &provider.key)?`
+hard-fails `provider_save` (which propagates through `main.rs:626`/`:664`).
+On Linux boxes with no working Secret Service the user **cannot save a
+provider** — a show-stopper, and the app fails at "add provider", the most
+basic flow.
+**Fix:** make keyring failure non-fatal:
+- In `providers.rs:save()`, change the keyring loop (~:172-176) so a
+  `keyring::Error` is logged (continue using the existing `eprintln!` pattern
+  at ~:189) instead of returned.
+- Surface the degraded state to the UI: add a `key_storage: String` field to
+  the `ProviderView` struct returned to the renderer (e.g. `"keyring"` on
+  success, `"memory"` on keyring failure).
+- In `main.rs`, have `provider_save` return the view with `key_storage` set;
+  do not `?`-propagate keyring errors.
+- Renderer: when `key_storage == "memory"`, show a toast after save:
+  "Key stored in memory only — OS keychain unavailable. Re-enter after
+  restart." (keys stay in-memory for the session only).
+- `forget_key` (`providers.rs:739`) must remain best-effort and silent on
+  error — it already is; verify.
+**Note on security posture:** do NOT fall back to writing keys into
+providers.json. Principle 4 in `ROADMAP.md`: "Local means local" — the webview
+must never receive secrets, and plaintext key files would leak them.
+**Verify:** `cargo test`. Manual: launch with `DBUS_SESSION_BUS_ADDRESS=`
+unset (no Secret Service) and confirm a provider saves with the memory toast;
+confirm a normal session still reports `keyring`.
+
+### 1.3 Delete dead frontend assets
+**Finding:** `renderer/style.css` (2066 lines) is not referenced by
+`index.html` (which loads only `egl.css`) and `renderer-backup-original/` is a
+backup of an older renderer. Both are dead weight in the shipped bundle.
+**Steps:**
+- `git rm renderer/style.css` and `git rm -r renderer-backup-original/`.
+- Grep the whole repo for `style.css` references:
+  - `renderer/index.html` (must be clean),
+  - `tools/preview.js` (it currently inlines whichever CSS files exist — remove
+    the `style.css` read, keep `egl.css`),
+  - `tools/smoke.js`, docs, CI — fix any dangling reference.
+**Verify:** `npm run smoke`; `cargo build` (frontendDist still assembles);
+run `node tools/preview.js` and open the output to confirm styling is intact.
+
+### 1.4 Remove the stray zero-length `git` file
+**Finding:** a zero-length file literally named `git` sits in the repo root
+(no extension). It has no content and no purpose.
+**Step:** `git rm git` (after confirming it is empty and untracked-by-content).
+**Verify:** `git status` clean; `ls` shows no `git` file.
+
+### 1.5 macOS auto-update: sign properly or disable the path
+**Finding:** `release.yml` macOS job (~:186) code-signs only the DMG and does
+**not** notarize the `.app`; Tauri's updater on macOS requires a signed +
+notarized bundle. As shipped, macOS "auto-update" would be broken.
+**Decision:** do not spend money on an Apple Developer account now. Make macOS
+not pretend to auto-update:
+- Gate the macOS release job to manual (`workflow_dispatch`) OR make it skip
+  the updater artifacts so the app doesn't advertise an update channel.
+- Update `RELEASE_ROADMAP.md` with an explicit "macOS distribution deferred"
+  note (needs Apple Developer ID + notarization before auto-update is real).
+- Keep Linux + Windows updater paths (they need only the minisign artifacts the
+  workflow already emits; Windows shows SmartScreen without signing — document,
+  don't block).
+**Verify:** `release.yml` is valid YAML (parse it); no CI run needed for a
+workflow-only change.
+
+---
+
+## Phase 2 — Real gaps (trust + testability)
+
+### 2.1 Loopback engine auth (backend + renderer + docs)
+**Finding:** the engine binds `127.0.0.1:<port>` with **no authentication**.
+Any local process (or website via DNS rebinding) can POST to a lane and burn
+credits / trigger paid models. This is a trust gap, not a cosmetic one.
+**Design:**
+- On first run, generate a random secret: 32 random bytes hex-encoded. Store
+  it in the app data dir next to `port.json` (e.g. `secret.json`), chmod 600.
+- Require `Authorization: Bearer <secret>` (or a dedicated
+  `x-visualllm-token` header) on engine routes. Return 401 on missing/bad
+  token with a plain-text explanation pointing at the UI settings.
+- Editor integration must include the header: `vscode_merge_lane` /
+  `vscode_integrate_lane` write the URL *and* `httpHeaders` into the
+  `chatLanguageModels.json` entry (VS Code's schema supports `httpHeaders`).
+  Re-run integration on upgrade so existing files gain the header.
+- UI: a settings row "Gateway token" with reveal-copy (warning: anyone with
+  this can call your lanes) and a "regenerate" button.
+- Version/breaking note: existing `chatLanguageModels.json` entries and any
+  hand-written clients will break until re-integrated. This is an accepted
+  cost for a pre-1.0 app; call it out in the README + release notes. Keep
+  `GET /activity` and health endpoints token-free (they leak only what the
+  renderer already sees).
+**Files:** `src-tauri/src/server.rs` (middleware), `src-tauri/src/state.rs`
+(secret persistence), `src-tauri/src/main.rs` (commands, editor writer),
+`renderer/app.js` + `renderer/index.html` (settings row),
+`README.md` / `docs/editor-integration.md` (docs).
+**Verify:** unit tests for the token check (valid / missing / wrong / non-loopback
+origin); integration test that a no-token request gets 401 and a token request
+passes; `cargo test`; re-integrate a lane and confirm the editor file contains
+the header.
+
+### 2.2 Unit-test the renderer's scoring/sort logic (renderer)
+**Finding:** the whole renderer is 3238 lines with `tools/smoke.js` as the only
+test (it loads the file and checks it parses). The scoring (`scoreModels`),
+`visibleColumns`, `browseMatches`, `pricePerMillion`, `fmtAge`, and the
+display-reversal helpers are untested.
+**Approach (least invasive):** `tools/smoke.js` already loads `app.js` under a
+stub harness; extend that pattern instead of refactoring app.js into modules.
+- Add `tools/renderer.test.js` using Node's built-in `node:test`:
+  - Load `app.js` with the same DOM/`window.vll` stubs smoke.js uses.
+  - Unit-test pure functions on a realistic catalog fixture: percentile
+    scoring (ties, unjudged/null entries), `visibleColumns` (data-driven vs
+    locked, persistence), `browseMatches` filters, `pricePerMillion` free
+    handling, `domSlotToIndex` reversal correctness.
+- Add npm script `"test": "node --test tools/*.test.js"`.
+**Verify:** `npm test` green; `npm run smoke` still green.
+
+### 2.3 Version single-source-of-truth check (CI)
+**Finding:** version lives in three places (Cargo.toml, tauri.conf.json,
+package.json); `release.yml` only cross-checks the tag against tauri.conf.
+**Fix:** add a small script `tools/check-version.js` that reads all three and
+exits non-zero on mismatch; wire it into `ci.yml` (and the release job's
+pre-flight) so drift fails CI instead of shipping.
+**Verify:** `node tools/check-version.js` passes on a matched tree; fails when
+one file is bumped alone.
+
+### 2.4 (Optional, low priority) Preview e2e with Playwright
+**Finding:** no end-to-end path exists; only smoke + manual `tools/preview.js`.
+**Add (only if CI budget allows):** a small Playwright suite (devDependency)
+that opens the preview HTML and asserts: vault populates from fixture, a sort
+header click reorders, gallery opens, a synthetic incident produces a toast.
+Mark the suite `local-only` if the user wants to keep CI lean — the engine
+cannot be exercised headlessly without a full Tauri run, so keep this to the
+renderer/preview seam.
+**Verify:** `npx playwright test` locally passes.
+
+---
+
+## Phase 3 — Ranked feature ideas (after Phase 1+2 land)
+
+Build in this order; each builds on data the engine already emits.
+
+### 3.1 Per-lane failure budgets / auto-park
+**Context:** incidents ring (200) already stores per-lane failures with kinds;
+the renderer already renders a "parked" chip and a park toggle. The gap is
+automation: nothing parks a lane when it fails repeatedly.
+**Design:** for each lane, track recent failures (kinds: `midstream_error`,
+`rate_limited`, `out_of_credit`, `timeout`, not `skipped_by_catalog`) in a
+rolling window (default: 5 in 10 min). When the budget is hit, automatically
+set the lane's parked flag, record an incident `auto_parked`, and let the user
+unpark (which resets the budget). Make budget/window configurable per lane
+(lanes.json schema extension). Surface an "auto" badge on the parked chip and
+show "parked after N failures" as the incident detail. This directly supports
+ROADMAP principle 1 (routing should be visible) and 3 (fallback must be
+honest).
+**Files:** `src-tauri/src/server.rs` (failure classification + park decision),
+`src-tauri/src/lanes.rs` (schema), `src-tauri/src/incidents.rs` (kind),
+`renderer/app.js` (badge/detail).
+**Verify:** pure-function unit test for the budget decision; server test that N
+consecutive failures park the lane and an unpark resets it.
+
+### 3.2 Request replay in the notification center
+**Context:** incidents carry evidence text but not a structured request
+snapshot, so a failed request cannot be retried from the UI.
+**Design:** extend the incident record with an optional `replay` field
+(captured method/path/body, capped, local-only, never shown to the webview in
+full unless the user clicks "Replay"). Add a "Replay" action in the
+notification center that re-POSTs through the lane and shows the resulting
+trail. Replaying spends money — require a confirmation click.
+**Files:** `src-tauri/src/server.rs` (capture + replay command),
+`src-tauri/src/incidents.rs` (schema), `renderer/app.js` (action + confirm).
+**Verify:** server test that replay re-enters the lane and records a new
+incident/trail; manual confirmation-gate test.
+
+### 3.3 Lane cloning
+**Design:** duplicate a lane (new slug, name "X copy"), copying members,
+params, and criteria in-app. Do **not** auto-write the editor integration for
+the clone (integration stays a deliberate per-lane action).
+**Files:** renderer-only (`app.js` + `index.html` action).
+**Verify:** `npm run smoke`; manual: clone preserves member order/dials.
+
+### 3.4 Usage/credit line (24h / 7d per-lane counters)
+**Context:** `server.rs` already tracks per-lane traffic counters and the
+activity feed exists; nothing aggregates spend/volume for the user.
+**Design:** persist per-lane rolling counters (requests, failures, approximate
+tokens if measurable) in the state file. Render a small line on the lane or in
+the plinth/statusbar: "today 42 req · 3 fail · 7d 310 req". Read-only display;
+no thresholds in this cycle (budgets are 3.1).
+**Files:** `src-tauri/src/state.rs` (counters), `src-tauri/src/server.rs`
+(increment), `renderer/app.js` (display).
+**Verify:** unit test for counter rollover across the window boundary.
+
+---
+
+## Definition of Done (run for the whole tree before committing anything)
+
+```
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+npm run smoke
+npm test                       # after 2.2
+node tools/check-version.js    # after 2.3
+node tools/preview.js          # + open the output once for the touched UI
+```
+
+Then update `ROADMAP.md` (check off finished items, add new workstreams for the
+phases above) and `RELEASE_ROADMAP.md` (macOS note from 1.5, feature timeline
+from Phase 3). Commit on `ide-integration` in small, reviewable pieces; the
+release guard compares tags to tauri.conf.json only.
+
+---
+
+## Session handoff note
+If this is a fresh session: read `README.md` for the product pitch, `handoff.md`
+for operational state, and this plan. The codebase review (which produced all
+findings above) was delivered against `5f404c7`; if HEAD has moved since,
+re-verify each referenced line before editing. The `graphify-out/` knowledge
+graph is stale (built Aug 3) — refresh it before relying on it for structure.

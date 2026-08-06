@@ -7,6 +7,15 @@
 
 ---
 
+## Read this first: implementation plan
+
+**`docs/IMPLEMENTATION_PLAN.md`** is the pickup document for the next session.
+It contains a full codebase review summary (confirmed issues, real gaps,
+feature ideas) plus phased, step-by-step work with exact file/line references
+and a Definition of Done. Read it before starting any code change.
+
+---
+
 ## What this project is
 
 VisualLLM is a Linux-first Tauri 2.x desktop app for designing LLM fallback lanes by hand. A user adds providers, browses catalogs, selects models into a pool, then drags models into ordered lanes. Each lane becomes a local OpenAI-compatible endpoint.
@@ -186,6 +195,10 @@ ab192b1  UX: silence capability-skip alerts, surface trail/served-by, undo, z-or
 ---
 
 ## Known issues / next work
+
+> The current, ordered work plan is `docs/IMPLEMENTATION_PLAN.md` — Phase 1
+> (confirmed issues), Phase 2 (trust/testability gaps), Phase 3 (ranked
+> features). Below is the older roadmap tracking for historical context.
 
 These are the remaining items from `ROADMAP.md`:
 
