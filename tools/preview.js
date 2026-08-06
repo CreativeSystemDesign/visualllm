@@ -136,7 +136,10 @@ const html = indexHtml
         incidentsRead: () => ok(data.incidents),
         vscodeIntegrateLane: (slug, name) => {
           console.log('[preview] vscodeIntegrateLane', { slug, name })
-          return ok()
+          return ok([
+            { editor: 'VS Code (preview)', path: '/preview/Code/User/chatLanguageModels.json', written: true, error: null },
+            { editor: 'VS Code Insiders (preview)', path: '/preview/Code - Insiders/User/chatLanguageModels.json', written: true, error: null },
+          ])
         },
         stateExport: () => ok('/tmp/preview-export.json'),
         stateImport: () => ok('/tmp/preview-export.json'),

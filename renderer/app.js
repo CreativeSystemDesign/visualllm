@@ -1730,9 +1730,20 @@ document.addEventListener('click', async (event) => {
     }
     try {
       console.log('[vscode] calling api.vscodeIntegrateLane', { slug, name: hall.name })
-      await api.vscodeIntegrateLane(slug, hall.name)
-      console.log('[vscode] success')
-      toast(`Added "${hall.name}" to the VS Code model picker`, 'Reload the editor window (Ctrl+R) to see it')
+      const results = await api.vscodeIntegrateLane(slug, hall.name)
+      const written = results.filter(r => r.written)
+      const failed = results.filter(r => !r.written)
+      console.log('[vscode] results', results)
+      if (failed.length === 0) {
+        const editors = written.map(r => r.editor).join(' and ')
+        toast(`Added "${hall.name}" to the ${editors} model picker`, 'Reload the editor windows (Ctrl+R) to see it')
+      } else if (written.length > 0) {
+        const ok = written.map(r => r.editor).join(', ')
+        const bad = failed.map(r => `${r.editor}: ${r.error}`).join('; ')
+        toast(`Added to ${ok}; failed in ${bad}`)
+      } else {
+        toast(`Failed: ${failed.map(r => r.error).filter(Boolean).join('; ')}`)
+      }
     } catch (error) {
       console.error('[vscode] failed', error)
       toast(`Failed: ${error.message}`)

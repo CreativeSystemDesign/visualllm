@@ -90,108 +90,100 @@ struct VscodeProviderEntry {
 /// The full chatLanguageModels.json structure (array of providers).
 type VscodeChatModels = Vec<VscodeProviderEntry>;
 
-/// Path to the editor's chatLanguageModels.json.
+/// What one editor's integration attempt did, for the UI to report honestly.
+#[derive(Serialize)]
+struct VscodeIntegrationResult {
+    editor: String,
+    path: String,
+    written: bool,
+    error: Option<String>,
+}
+
+/// Paths to every supported editor's chatLanguageModels.json, with the editor
+/// name each one belongs to.
 ///
-/// Both VS Code and VS Code Insiders are supported; the old code named
-/// Insiders unconditionally, so stable users wrote a config file for an
-/// editor they did not have and saw the model never appear. A config that
-/// already exists wins (we extend what is there rather than seed a parallel
-/// one); otherwise Insiders is preferred only when its directory exists, and
-/// stable is the default — a new file lands where the commonest editor reads.
-fn vscode_chat_models_path() -> Result<PathBuf, String> {
+/// The lane lands in BOTH stable VS Code and VS Code Insiders, always. The old
+/// "first existing file wins" heuristic wrote to whichever config appeared
+/// first — stable, once its file existed — so Insiders never saw the lanes.
+/// Writing every target explicitly makes the editor a property of the write,
+/// not an accident of file history.
+fn vscode_chat_models_paths() -> Result<[(PathBuf, &'static str); 2], String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
     let config = PathBuf::from(home).join(".config");
-    let candidates = [
-        config
-            .join("Code")
-            .join("User")
-            .join("chatLanguageModels.json"),
-        config
-            .join("Code - Insiders")
-            .join("User")
-            .join("chatLanguageModels.json"),
-    ];
-    if let Some(existing) = candidates.iter().find(|p| p.exists()) {
-        return Ok(existing.clone());
-    }
-    // Neither file exists yet: prefer the editor whose config directory does.
-    let insiders_dir = config.join("Code - Insiders");
-    let chosen = if insiders_dir.is_dir() {
-        &candidates[1]
-    } else {
-        &candidates[0]
-    };
-    Ok(chosen.clone())
+    Ok([
+        (
+            config
+                .join("Code")
+                .join("User")
+                .join("chatLanguageModels.json"),
+            "VS Code",
+        ),
+        (
+            config
+                .join("Code - Insiders")
+                .join("User")
+                .join("chatLanguageModels.json"),
+            "VS Code Insiders",
+        ),
+    ])
 }
 
-/// Read the existing chatLanguageModels.json.
-#[allow(dead_code)]
-fn vscode_read_models() -> Result<VscodeChatModels, String> {
-    let path = vscode_chat_models_path()?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let models: VscodeChatModels = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(models)
-}
-
-/// Write the updated chatLanguageModels.json.
-fn vscode_write_models(models: &VscodeChatModels) -> Result<(), String> {
-    let path = vscode_chat_models_path()?;
+/// Write the updated chatLanguageModels.json to one specific editor's file.
+fn vscode_write_models_at(path: &std::path::Path, models: &VscodeChatModels) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(models).map_err(|e| e.to_string())?;
     let temp = path.with_extension("json.tmp");
     std::fs::write(&temp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&temp, &path).map_err(|e| e.to_string())?;
+    std::fs::rename(&temp, path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Add or update a VisualLLM lane entry in VS Code's model picker.
+/// Add or update one lane inside an already-parsed chatLanguageModels.json.
+///
+/// Re-running an integration updates the existing entry by slug rather than
+/// duplicating it, and preserves every provider the user already configured.
+fn vscode_merge_lane(config: &mut VscodeChatModels, entry: &VscodeModelEntry) {
+    let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
+    if let Some(idx) = visualllm_idx {
+        let provider = &mut config[idx];
+        provider.models.retain(|m| m.id != entry.id);
+        provider.models.insert(0, entry.clone());
+    } else {
+        config.push(VscodeProviderEntry {
+            name: "visualllm".to_string(),
+            vendor: "customendpoint".to_string(),
+            api_key: Some("placeholder".to_string()),
+            api_type: Some("chat-completions".to_string()),
+            models: vec![entry.clone()],
+        });
+    }
+}
+
+/// Add or update a VisualLLM lane in every supported editor's model picker.
+///
+/// Each editor keeps its own chatLanguageModels.json, so the lane is merged
+/// into each one separately. A failure in one editor is reported without
+/// stopping the others — the user asked for all of them, and one editor's
+/// broken config must not silently strand the rest.
 #[tauri::command]
-fn vscode_integrate_lane(app: tauri::AppHandle, slug: String, name: String) -> Result<(), String> {
+fn vscode_integrate_lane(
+    app: tauri::AppHandle,
+    slug: String,
+    name: String,
+) -> Result<Vec<VscodeIntegrationResult>, String> {
     eprintln!(
         "[vscode_integrate_lane] called with slug={}, name={}",
         slug, name
     );
 
-    // Get store directory
-    let store_path = store_dir(&app).map_err(|e| {
-        let err_msg = format!("Failed to get app data dir: {}", e);
-        eprintln!("[vscode_integrate_lane] {}", err_msg);
-        err_msg
-    })?;
-    eprintln!("[vscode_integrate_lane] store_path: {:?}", store_path);
-
+    let store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
     let port = port_load(&store_path);
-    eprintln!("[vscode_integrate_lane] port: {}", port);
     let base_url = format!("http://127.0.0.1:{port}/lane/{slug}/v1");
-    eprintln!("[vscode_integrate_lane] base_url: {}", base_url);
+    eprintln!("[vscode_integrate_lane] base_url: {base_url}");
 
-    // Read the file as text
-    let path = vscode_chat_models_path()?;
-    let text = if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
-    } else {
-        "[]".to_string()
-    };
-    eprintln!("[vscode_integrate_lane] Read file, length: {}", text.len());
-
-    // Parse to find existing visualllm provider and other providers
-    let mut config: VscodeChatModels = serde_json::from_str(&text).map_err(|e| {
-        let err_msg = format!("Failed to parse VS Code models: {}", e);
-        eprintln!("[vscode_integrate_lane] {}", err_msg);
-        err_msg
-    })?;
-    eprintln!(
-        "[vscode_integrate_lane] Parsed {} existing provider entries",
-        config.len()
-    );
-
-    // Build the model entry for this lane
-    let model_entry = VscodeModelEntry {
+    let entry = VscodeModelEntry {
         id: slug.clone(),
         name: format!("visualllm: {name}"),
         url: base_url,
@@ -200,53 +192,42 @@ fn vscode_integrate_lane(app: tauri::AppHandle, slug: String, name: String) -> R
         max_input_tokens: 250144,
         max_output_tokens: 8000,
     };
-    eprintln!(
-        "[vscode_integrate_lane] Created model entry: id={}, name={}",
-        model_entry.id, model_entry.name
-    );
 
-    // Find or create the "visualllm" provider entry
-    let visualllm_idx = config.iter().position(|p| p.name == "visualllm");
-    eprintln!(
-        "[vscode_integrate_lane] Found visualllm provider at index: {:?}",
-        visualllm_idx
-    );
-
-    if let Some(idx) = visualllm_idx {
-        // Update existing visualllm provider
-        eprintln!(
-            "[vscode_integrate_lane] Updating existing visualllm provider at index {}",
-            idx
-        );
-        let provider = &mut config[idx];
-        // Remove any existing model with the same slug
-        provider.models.retain(|m| m.id != slug);
-        // Add the new model at the front
-        provider.models.insert(0, model_entry);
-    } else {
-        // Create new visualllm provider entry
-        eprintln!("[vscode_integrate_lane] Creating new visualllm provider");
-        let provider = VscodeProviderEntry {
-            name: "visualllm".to_string(),
-            vendor: "customendpoint".to_string(),
-            api_key: Some("placeholder".to_string()),
-            api_type: Some("chat-completions".to_string()),
-            models: vec![model_entry],
-        };
-        config.push(provider);
+    let mut results = Vec::new();
+    for (path, editor) in vscode_chat_models_paths()? {
+        let outcome: Result<(), String> = (|| {
+            let text = if path.exists() {
+                std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+            } else {
+                "[]".to_string()
+            };
+            let mut config: VscodeChatModels = serde_json::from_str(&text)
+                .map_err(|e| format!("could not parse existing config: {e}"))?;
+            vscode_merge_lane(&mut config, &entry);
+            vscode_write_models_at(&path, &config)
+        })();
+        match outcome {
+            Ok(()) => {
+                eprintln!("[vscode_integrate_lane] {editor}: wrote {}", path.display());
+                results.push(VscodeIntegrationResult {
+                    editor: editor.to_string(),
+                    path: path.display().to_string(),
+                    written: true,
+                    error: None,
+                });
+            }
+            Err(error) => {
+                eprintln!("[vscode_integrate_lane] {editor}: {error}");
+                results.push(VscodeIntegrationResult {
+                    editor: editor.to_string(),
+                    path: path.display().to_string(),
+                    written: false,
+                    error: Some(error),
+                });
+            }
+        }
     }
-
-    eprintln!(
-        "[vscode_integrate_lane] Writing {} providers to config",
-        config.len()
-    );
-    vscode_write_models(&config).map_err(|e| {
-        let err_msg = format!("Failed to write VS Code models: {}", e);
-        eprintln!("[vscode_integrate_lane] {}", err_msg);
-        err_msg
-    })?;
-    eprintln!("[vscode_integrate_lane] Success!");
-    Ok(())
+    Ok(results)
 }
 
 /// Where the old Python gateway lives.
@@ -1047,7 +1028,7 @@ fn main() {
                     }
                     gtk_window.connect_realize(shape_to_allocation);
                     gtk_window.connect_size_allocate(|win, _| shape_to_allocation(win));
-                    
+
                     // Set window icon for taskbar/dock
                     if let Ok(pixbuf) = gdk_pixbuf::Pixbuf::from_file("icons/icon.png") {
                         gtk_window.set_icon(Some(&pixbuf));
@@ -1140,6 +1121,85 @@ mod port_tests {
         let dir = temp_dir();
         fs::write(dir.join("port.json"), "not json").unwrap();
         assert_eq!(port_load(&dir), DEFAULT_PORT);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod vscode_tests {
+    use super::{vscode_merge_lane, vscode_write_models_at, VscodeChatModels, VscodeModelEntry};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn entry(id: &str) -> VscodeModelEntry {
+        VscodeModelEntry {
+            id: id.to_string(),
+            name: format!("visualllm: {id}"),
+            url: format!("http://127.0.0.1:4100/lane/{id}/v1"),
+            tool_calling: true,
+            vision: false,
+            max_input_tokens: 250144,
+            max_output_tokens: 8000,
+        }
+    }
+
+    fn temp_dir() -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("visualllm-vscode-test-{stamp}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn merge_creates_the_visualllm_provider_when_absent() {
+        let mut config: VscodeChatModels = serde_json::from_str(
+            r#"[{"name":"Mistral","vendor":"customendpoint","models":[{"id":"m","name":"M","url":"u","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000}]}]"#,
+        )
+        .unwrap();
+        vscode_merge_lane(&mut config, &entry("lane-a"));
+
+        assert_eq!(config.len(), 2);
+        let visualllm = config.iter().find(|p| p.name == "visualllm").unwrap();
+        assert_eq!(visualllm.models.len(), 1);
+        assert_eq!(visualllm.models[0].id, "lane-a");
+    }
+
+    #[test]
+    fn merge_updates_by_slug_instead_of_duplicating() {
+        let mut config: VscodeChatModels = serde_json::from_str(
+            r#"[{"name":"visualllm","vendor":"customendpoint","models":[
+                {"id":"old-lane","name":"Old","url":"u1","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000},
+                {"id":"lane-a","name":"LaneA","url":"u0","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000}
+            ]}]"#,
+        )
+        .unwrap();
+        vscode_merge_lane(&mut config, &entry("lane-a"));
+
+        let visualllm = config.iter().find(|p| p.name == "visualllm").unwrap();
+        let ids: Vec<&str> = visualllm.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["lane-a", "old-lane"]);
+        assert_eq!(
+            visualllm.models[0].url,
+            "http://127.0.0.1:4100/lane/lane-a/v1"
+        );
+    }
+
+    #[test]
+    fn write_round_trips_a_readable_config() {
+        let dir = temp_dir();
+        let path = dir.join("chatLanguageModels.json");
+        let mut config: VscodeChatModels = Vec::new();
+        vscode_merge_lane(&mut config, &entry("lane-a"));
+        vscode_write_models_at(&path, &config).unwrap();
+
+        let back: VscodeChatModels =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(back[0].models[0].id, "lane-a");
+        // No stale temp file left behind.
+        assert!(!dir.join("chatLanguageModels.json.tmp").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 }
