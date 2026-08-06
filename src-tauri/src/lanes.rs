@@ -175,6 +175,17 @@ pub struct Lane {
     /// announced in an `x-visualllm-unstuck` header rather than done quietly.
     #[serde(default)]
     pub unstick: bool,
+    /// Whether this lane is integrated into editor model pickers.
+    ///
+    /// When true, VisualLLM adds the lane as a model entry in each
+    /// editor's `chatLanguageModels.json`. When the app closes,
+    /// all integrated lanes are removed from the editor configs so
+    /// stale endpoints don't linger after the gateway stops.
+    ///
+    /// `#[serde(default)]` so lanes saved before this field existed
+    /// load with integration off — the safe default.
+    #[serde(default)]
+    pub vscode_integrated: bool,
 }
 
 const STATE_SCHEMA_VERSION: u32 = 1;
@@ -238,6 +249,7 @@ pub fn save(dir: &PathBuf, lanes: &[Lane]) -> Result<(), String> {
 // ============================================================================
 // THE POOL
 // ============================================================================
+
 
 /// The models the user has chosen to keep, as (provider, id) pairs.
 ///
