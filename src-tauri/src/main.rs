@@ -154,7 +154,7 @@ fn vscode_merge_lane(config: &mut VscodeChatModels, entry: &VscodeModelEntry) {
         config.push(VscodeProviderEntry {
             name: "visualllm".to_string(),
             vendor: "customendpoint".to_string(),
-            api_key: Some("placeholder".to_string()),
+            api_key: None,
             api_type: Some("chat-completions".to_string()),
             models: vec![entry.clone()],
         });
