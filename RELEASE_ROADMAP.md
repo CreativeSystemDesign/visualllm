@@ -117,13 +117,13 @@ Zed does not use `chatLanguageModels.json`. Global model picker config (the "ass
 
 The button currently says "VS Code" but it now targets multiple editors. The label should reflect this.
 
-**Files to change:** `renderer/app.js` — button title and toast messages; `renderer/style.css` — any button-specific styles
+**Files to change:** `renderer/app.js` — button title and toast messages; `renderer/egl.css` — any button-specific styles
 
 ### 3.2 Show integration status per lane
 
 Add a small indicator on each lane header showing which editors the lane is integrated with (e.g., a VS Code icon, a Cursor icon, etc.). Clicking the indicator could open a sub-menu with "Integrate" and "Remove" options per editor.
 
-**Files to change:** `renderer/app.js` — lane header rendering; `renderer/style.css` — indicator styles
+**Files to change:** `renderer/app.js` — lane header rendering; `renderer/egl.css` — indicator styles
 
 ### 3.3 Add a "Re-integrate" action
 
@@ -211,9 +211,26 @@ Create a `docs/editor-integration.md` file that explains:
 
 ---
 
-## 7. Timeline estimate
+## 7. macOS distribution status (deferred)
 
-| Task | Effort | Priority |
+The `macos` / `macos-sign` release jobs currently code-sign only the DMG and
+do **not** notarize the `.app` bundle. Tauri's auto-updater on macOS requires a
+signed **and** notarized app, so macOS "auto-update" would be broken if
+shipped as-is.
+
+**Decision (2026-08-06):** macOS distribution is deferred until there is a real
+macOS user base. It is not worth an Apple Developer account (and the
+notarization pipeline) before then. The macOS jobs remain in `release.yml`
+for manual/on-demand runs, but macOS is **not** part of the supported update
+channel. Linux (deb + AppImage) and Windows (NSIS) are the supported matrix.
+
+To re-enable properly later: sign the `.app` bundle (not just the DMG),
+notarize it via `xcrun notarytool`, staple, and confirm the updater on a clean
+macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
+
+---
+
+## 8. Timeline estimate
 |------|--------|----------|
 | 1.1 Derive capabilities from lane members | 2 days | High |
 | 1.2 Remove/fix `api_key` field | 0.5 days | High |
@@ -239,7 +256,24 @@ Create a `docs/editor-integration.md` file that explains:
 
 ---
 
-## 8. Open questions
+## 9. Post-1.0 feature candidates (Phase 3, ranked)
+
+Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Not committed work;
+each builds on data the engine already emits. Re-confirm priority with the user
+before starting.
+
+1. **Per-lane failure budgets / auto-park** — park a lane automatically after N
+   failures in a rolling window (5 in 10 min default), with an "auto" badge.
+2. **Request replay in the notification center** — retry a failed request from
+   the incident record (confirmation-gated; replay spends money).
+3. **Lane cloning** — duplicate a lane with members/params/criteria; no
+   auto-write of the editor integration.
+4. **Usage/credit line** — rolling 24h / 7d per-lane request/failure counters
+   in the UI (read-only; thresholds are budget work).
+
+---
+
+## 10. Open questions
 
 1. ~~**Zed's configuration format**~~ — Resolved 2026-08-06: not a `chatLanguageModels.json` consumer; top-level `settings.json` "assistant" block (see §2.5).
 2. ~~**Anti-Gravity's config path**~~ — Resolved 2026-08-06 (empirical): config dir is `<root>/Antigravity IDE/User/`, but the 2.1.1 build has the `chatLanguageModels.json` feature stripped (see §2.4).

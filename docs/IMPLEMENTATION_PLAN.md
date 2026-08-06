@@ -116,6 +116,9 @@ half-baked light theming is worse than none.
   remove dead handlers if found.
 **Verify:** `npm run smoke`; `grep -n themeToggle renderer/*` returns nothing.
 
+**Status: done (2026-08-06).** Button, `[data-theme="dark"]` glyph rules, and any
+handlers removed; grep is clean.
+
 ### 1.2 Degrade gracefully when the OS keyring is unavailable (backend)
 **Finding:** `providers.rs:175` `keyring_set(&provider.id, &provider.key)?`
 hard-fails `provider_save` (which propagates through `main.rs:626`/`:664`).
@@ -143,6 +146,11 @@ must never receive secrets, and plaintext key files would leak them.
 unset (no Secret Service) and confirm a provider saves with the memory toast;
 confirm a normal session still reports `keyring`.
 
+**Status: done (2026-08-06).** Keyring failure is non-fatal (logged, not
+propagated); `ProviderView.key_storage` is `"keyring"` or `"memory"`; the
+renderer toasts the memory-only warning; `forget_key` stays best-effort. Tested
+with the degraded path covered in `cargo test`.
+
 ### 1.3 Delete dead frontend assets
 **Finding:** `renderer/style.css` (2066 lines) is not referenced by
 `index.html` (which loads only `egl.css`) and `renderer-backup-original/` is a
@@ -157,11 +165,18 @@ backup of an older renderer. Both are dead weight in the shipped bundle.
 **Verify:** `npm run smoke`; `cargo build` (frontendDist still assembles);
 run `node tools/preview.js` and open the output to confirm styling is intact.
 
+**Status: done (2026-08-06).** `renderer/style.css` and
+`renderer-backup-original/` removed; `tools/preview.js` reads only `egl.css`;
+preview output confirmed styled.
+
 ### 1.4 Remove the stray zero-length `git` file
 **Finding:** a zero-length file literally named `git` sits in the repo root
 (no extension). It has no content and no purpose.
 **Step:** `git rm git` (after confirming it is empty and untracked-by-content).
 **Verify:** `git status` clean; `ls` shows no `git` file.
+
+**Status: done (2026-08-06).** Stray zero-length `git` file removed from the
+repo root.
 
 ### 1.5 macOS auto-update: sign properly or disable the path
 **Finding:** `release.yml` macOS job (~:186) code-signs only the DMG and does
@@ -178,6 +193,10 @@ not pretend to auto-update:
   don't block).
 **Verify:** `release.yml` is valid YAML (parse it); no CI run needed for a
 workflow-only change.
+
+**Status: done (2026-08-06).** macOS distribution deferred and documented in
+`RELEASE_ROADMAP.md` §7; macOS stays out of the supported update channel and
+the macOS jobs remain in `release.yml` for manual runs.
 
 ---
 
@@ -213,6 +232,13 @@ origin); integration test that a no-token request gets 401 and a token request
 passes; `cargo test`; re-integrate a lane and confirm the editor file contains
 the header.
 
+**Status: done (2026-08-06).** Random 32-byte secret persisted
+(`secret.json`, chmod 600); `Authorization: Bearer` required on `/lane` routes
+(middleware in `server.rs`, token-free `/health`, `/activity`, `/v1/models`);
+editor integration writes `httpHeaders`; renderer settings row with
+reveal/copy/regenerate. `cargo test` = 57 passed including token
+missing/wrong/valid and open-endpoint tests.
+
 ### 2.2 Unit-test the renderer's scoring/sort logic (renderer)
 **Finding:** the whole renderer is 3238 lines with `tools/smoke.js` as the only
 test (it loads the file and checks it parses). The scoring (`scoreModels`),
@@ -229,6 +255,12 @@ stub harness; extend that pattern instead of refactoring app.js into modules.
 - Add npm script `"test": "node --test tools/*.test.js"`.
 **Verify:** `npm test` green; `npm run smoke` still green.
 
+**Status: done (2026-08-06).** `tools/renderer.test.js` loads app.js under the
+smoke harness (via `vm.runInThisContext` + an export line) and covers 14 cases:
+price/free handling, percentile scoring incl. ties and nulls, data-driven vs
+locked columns, browse filters, and drag-reversal. `npm test` green; smoke
+unaffected.
+
 ### 2.3 Version single-source-of-truth check (CI)
 **Finding:** version lives in three places (Cargo.toml, tauri.conf.json,
 package.json); `release.yml` only cross-checks the tag against tauri.conf.
@@ -237,6 +269,11 @@ exits non-zero on mismatch; wire it into `ci.yml` (and the release job's
 pre-flight) so drift fails CI instead of shipping.
 **Verify:** `node tools/check-version.js` passes on a matched tree; fails when
 one file is bumped alone.
+
+**Status: done (2026-08-06).** `tools/check-version.js` reads Cargo.toml,
+tauri.conf.json, and package.json, exits non-zero on mismatch. Wired into
+`ci.yml` (renderer job) and the release job's tag pre-flight. Both pass/fail
+paths verified locally.
 
 ### 2.4 (Optional, low priority) Preview e2e with Playwright
 **Finding:** no end-to-end path exists; only smoke + manual `tools/preview.js`.
@@ -251,6 +288,10 @@ renderer/preview seam.
 ---
 
 ## Phase 3 — Ranked feature ideas (after Phase 1+2 land)
+
+**Status: deferred (2026-08-06).** Phases 1 and 2 are complete. Phase 3 items
+below are ranked candidate features, not committed work — pick them up after the
+Phase 1+2 commit lands and the user confirms the priority order.
 
 Build in this order; each builds on data the engine already emits.
 

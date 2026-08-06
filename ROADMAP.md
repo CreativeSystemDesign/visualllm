@@ -183,6 +183,35 @@ public users.
 - [x] Add issue labels and a small triage process; invite users to test
   provider setup, lane creation, and fallback behavior. See `CONTRIBUTING.md`.
 
+### 11. Code-review hardening (2026-08-06 review findings)
+
+**Done when:** the confirmed review findings are fixed, the renderer's core
+logic is under test, and version drift fails CI instead of shipping.
+
+- [x] **Loopback engine auth.** The gateway now requires
+  `Authorization: Bearer <token>` on lane routes (random 32-byte secret,
+  persisted next to `port.json`, chmod 600). Editor integration writes the
+  header into `chatLanguageModels.json`; the renderer has a reveal/copy/
+  regenerate settings row. `/health`, `/activity`, and `/v1/models` stay open.
+- [x] **Keyring failure degrades, never blocks.** A provider saves even when the
+  OS keychain is unavailable — keys are held in memory for the session and the
+  UI says so instead of hard-failing "add provider".
+- [x] **Dead assets removed.** The unused `renderer/style.css` (old neumorphic
+  skin) and the `renderer-backup-original/` directory no longer ship; only
+  `egl.css` is loaded and inlined.
+- [x] **Renderer logic is unit-tested.** `npm test` runs `tools/renderer.test.js`
+  (node:test) over the pure scoring/sort/price/drag functions — percentile
+  scoring with ties and nulls, data-driven columns, browse filters, price/free
+  handling, display reversal — on top of the existing smoke test.
+- [x] **Version is a single source of truth.** `tools/check-version.js` fails on
+  any mismatch between Cargo.toml, tauri.conf.json, and package.json; wired into
+  CI and the release tag pre-flight.
+- [x] **macOS auto-update not pretended.** Documented in `RELEASE_ROADMAP.md`
+  §7: macOS distribution deferred (needs Apple Developer ID + notarization);
+  Linux + Windows remain the supported update matrix.
+- [x] **Frontend hygiene.** The dead theme toggle is gone; the active skin is
+  dark-first by construction, no half-baked light path.
+
 ## Release criteria
 
 A first public release should meet all of these conditions:
