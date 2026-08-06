@@ -50,6 +50,7 @@ jobs:
       - name: Verify tag matches source version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          node tools/check-version.js
           TAG="${GITHUB_REF#refs/tags/}"
           VER="$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
           if [ "${TAG#v}" != "$VER" ]; then
@@ -69,6 +70,7 @@ jobs:
             librsvg2-dev
 
       - run: npm run smoke
+      - run: npm test
 
       - name: Build (signed for auto-update)
         run: npm run build

@@ -17,6 +17,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node tools/smoke.js
+      - run: npm test
+      - run: node tools/check-version.js
 
   rust:
     name: Rust checks
