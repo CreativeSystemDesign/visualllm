@@ -973,10 +973,6 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .frame-btn:hover { color: var(--ink); border-color: var(--glass-edge-hi); }
 .frame-btn.frame-close:hover { color: var(--signal); border-color: rgba(255, 95, 86, 0.3); }
 
-.frame-btn .glyph-dark { display: none; }
-[data-theme="dark"] .frame-btn .glyph-light { display: none; }
-[data-theme="dark"] .frame-btn .glyph-dark { display: block; }
-
 /* ============================================================================
    OVERLAYS — the panels float nearest the eye, deepest acrylic.
    ============================================================================ */
