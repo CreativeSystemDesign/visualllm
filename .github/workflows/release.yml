@@ -94,11 +94,6 @@ jobs:
           # WebView2 is usually present on Windows 10/11, but we ensure the bootstrapper is available
           # The MSI installer will handle WebView2 installation automatically
 
-      - name: Install GTK and dependencies
-        run: |
-          choco install gtk-runtime -y --version 3.24.38
-          refreshenv
-
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli
 
@@ -134,10 +129,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-
-      - name: Install GTK and dependencies
-        run: |
-          brew install gtk+3 glib pango cairo gdk-pixbuf atk
 
       - name: Install Tauri CLI
         run: npm install -g @tauri-apps/cli

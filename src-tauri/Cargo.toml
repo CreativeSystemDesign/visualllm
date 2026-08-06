@@ -26,9 +26,11 @@ axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 futures-util = "0.3"
 keyring = { version = "3", default-features = false, features = ["linux-native"] }
-gtk = { version = "=0.18.2", features = ["v3_24"] }
-cairo-rs = { version = "0.18" }
-gdk-pixbuf = { version = "0.18" }
+
+# Linux-only dependencies for window shaping and icon
+gtk = { version = "=0.18.2", features = ["v3_24"], target = "cfg(target_os = \"linux\")" }
+cairo-rs = { version = "0.18", target = "cfg(target_os = \"linux\")" }
+gdk-pixbuf = { version = "0.18", target = "cfg(target_os = \"linux\")" }
 
 [dev-dependencies]
 tempfile = "3"
