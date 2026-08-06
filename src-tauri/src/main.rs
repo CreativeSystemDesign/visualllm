@@ -636,7 +636,7 @@ fn provider_save(app: tauri::AppHandle, input: ProviderInput) -> Result<Provider
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| providers::default_base_url(&input.kind));
 
-    let saved = match input.id.and_then(|id| all.iter().position(|p| p.id == id)) {
+    let mut saved = match input.id.and_then(|id| all.iter().position(|p| p.id == id)) {
         Some(at) => {
             let existing = &mut all[at];
             existing.name = input.name.trim().to_string();
@@ -661,7 +661,7 @@ fn provider_save(app: tauri::AppHandle, input: ProviderInput) -> Result<Provider
         }
     };
 
-    providers::save(&dir, &all)?;
+    saved.key_storage = providers::save(&dir, &all)?;
     Ok(saved)
 }
 
@@ -671,9 +671,10 @@ fn provider_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let mut all = providers::load(&dir);
     // Remove the credential before dropping the provider record. Otherwise a
     // deleted provider leaves a usable secret behind under its old id.
-    providers::forget_key(&id)?;
+    providers::forget_key(&id);
     all.retain(|p| p.id != id);
-    providers::save(&dir, &all)
+    providers::save(&dir, &all)?;
+    Ok(())
 }
 
 // ------------------------------------------------------------------ portability

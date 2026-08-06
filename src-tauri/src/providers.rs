@@ -55,6 +55,16 @@ pub struct Provider {
     pub key: String,
 }
 
+/// Where a provider's key lives after a save. `Keyring` is the normal path.
+/// `Memory` means the OS keychain was unavailable, so the secret exists only
+/// for the current process and must be re-entered on the next launch.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyStorage {
+    Keyring,
+    Memory,
+}
+
 #[derive(Serialize)]
 pub struct ProviderView {
     pub id: String,
@@ -64,6 +74,9 @@ pub struct ProviderView {
     /// Enough to recognise which key is in place, never enough to use it.
     pub key_hint: String,
     pub has_key: bool,
+    /// Where this provider's key ended up after the last save. Fresh views
+    /// (lists, edits without a key change) default to `Keyring`.
+    pub key_storage: KeyStorage,
 }
 
 impl From<&Provider> for ProviderView {
@@ -82,6 +95,7 @@ impl From<&Provider> for ProviderView {
             base_url: p.base_url.clone(),
             key_hint: hint,
             has_key: !p.key.is_empty(),
+            key_storage: KeyStorage::Keyring,
         }
     }
 }
@@ -153,7 +167,7 @@ pub fn load(dir: &std::path::Path) -> Vec<Provider> {
     providers
 }
 
-pub fn save(dir: &std::path::Path, providers: &[Provider]) -> Result<(), String> {
+pub fn save(dir: &std::path::Path, providers: &[Provider]) -> Result<KeyStorage, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = store_path(dir);
 
@@ -169,12 +183,23 @@ pub fn save(dir: &std::path::Path, providers: &[Provider]) -> Result<(), String>
         .collect();
     write_state(path, &safe)?;
 
+    // A keychain that is missing or locked must not make saving a provider
+    // impossible — that is the most basic flow there is. When it fails, the
+    // key simply stays in memory for this process and the caller is told so
+    // the UI can warn the user to re-enter it after a restart.
+    let mut storage = KeyStorage::Keyring;
     for provider in providers {
         // Set empty values too: clearing a provider in the UI must remove the
         // old credential rather than leaving an orphaned secret in the keychain.
-        keyring_set(&provider.id, &provider.key)?;
+        if let Err(error) = keyring_set(&provider.id, &provider.key) {
+            eprintln!(
+                "providers: keychain unavailable for {}; keeping key in memory only: {error}",
+                provider.id
+            );
+            storage = KeyStorage::Memory;
+        }
     }
-    Ok(())
+    Ok(storage)
 }
 
 /// The last catalog seen, kept on disk so the engine can answer "does this
@@ -736,8 +761,13 @@ fn keyring_set(provider_id: &str, key: &str) -> Result<(), String> {
     }
 }
 
-pub fn forget_key(provider_id: &str) -> Result<(), String> {
-    keyring_set(provider_id, "")
+/// Best-effort removal of a provider's keychain credential. Deleting a
+/// provider must never be blocked by a missing keychain, so failures are
+/// logged and swallowed.
+pub fn forget_key(provider_id: &str) {
+    if let Err(error) = keyring_set(provider_id, "") {
+        eprintln!("providers: could not remove key for {provider_id} from the keychain: {error}");
+    }
 }
 
 fn hydrate_keys(providers: &mut [Provider]) {
@@ -745,5 +775,67 @@ fn hydrate_keys(providers: &mut [Provider]) {
         if let Some(key) = keyring_get(&provider.id) {
             provider.key = key;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("vll-providers-{}-{}", label, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn provider(key: &str) -> Provider {
+        Provider {
+            id: "test-provider".into(),
+            name: "Test".into(),
+            kind: "generic".into(),
+            base_url: "https://example.com/v1".into(),
+            key: key.into(),
+        }
+    }
+
+    #[test]
+    fn save_always_succeeds_and_never_writes_the_secret() {
+        let dir = temp_dir("save");
+        // Keychain availability varies by machine; the contract is that a save
+        // always succeeds and the on-disk file never carries the secret.
+        let result = save(&dir, &[provider("sk-test-secret-123")]);
+        assert!(
+            result.is_ok(),
+            "save must degrade gracefully, got {result:?}"
+        );
+        let raw = std::fs::read_to_string(store_path(&dir)).unwrap();
+        let stored: Value = serde_json::from_str(&raw).unwrap();
+        assert!(
+            !raw.contains("sk-test-secret-123"),
+            "providers.json must not contain the key"
+        );
+        assert_eq!(stored["data"][0]["key"], "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_a_key_is_best_effort() {
+        let dir = temp_dir("delete");
+        save(&dir, &[provider("sk-test-secret-123")]).unwrap();
+        // Must not panic or error even when the keychain cannot remove it.
+        forget_key("test-provider");
+        let raw = std::fs::read_to_string(store_path(&dir)).unwrap();
+        assert!(!raw.contains("sk-test-secret-123"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn views_carry_the_key_storage_whereabouts() {
+        let view = ProviderView::from(&provider("sk-1234567890abcdef"));
+        assert_eq!(view.key_storage, KeyStorage::Keyring);
+        assert!(view.has_key);
+        assert_eq!(view.key_hint, "sk-12…cdef");
     }
 }

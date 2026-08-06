@@ -2312,6 +2312,9 @@ $('providerForm').addEventListener('submit', async (event) => {
     await loadProviders()
     resetForm()
     note('saved', 'ok')
+    if (saved.key_storage === 'memory') {
+      toast('Key stored in memory only', 'OS keychain unavailable — re-enter this key after restarting')
+    }
     // Straight into browsing what THIS provider brought: the person who just
     // added Groq wants Groq's models, not Groq shuffled into 337 other rows.
     await loadCatalog()
