@@ -355,7 +355,8 @@ VisualLLM follows a strict security architecture:
 visualllm/
 ├── renderer/               # Frontend (HTML/CSS/JS)
 │   ├── index.html          # Main window
-│   ├── style.css           # Styles
+│   ├── egl.css             # Active skin
+│   ├── egl.js              # Field background
 │   └── app.js              # All UI logic
 ├── src-tauri/               # Backend (Rust)
 │   ├── src/

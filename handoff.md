@@ -70,7 +70,7 @@ cd /home/shane/visualllm/src-tauri && ~/.cargo/bin/cargo run
 | Path | Responsibility |
 |---|---|
 | `renderer/index.html` | UI structure |
-| `renderer/style.css` | Neumorphic design system |
+| `renderer/egl.css` | Active skin (EGL) |
 | `renderer/app.js` | All renderer logic: state, rendering, drag-drop, bridge calls |
 | `src-tauri/src/main.rs` | Tauri shell and every command the UI may invoke |
 | `src-tauri/src/server.rs` | Axum engine, fallback routing, `/activity` feed |
@@ -231,7 +231,7 @@ Findings:
 | Task | Files |
 |---|---|
 | Change how lanes render | `renderer/app.js` (`laneEl`, `renderTrack`, `laneLights`, `laneFoot`) |
-| Change lane styling | `renderer/style.css` (`.lane`, `.lane-head`, `.lane-lights`, `.lane-foot`, `.chip`) |
+| Change lane styling | `renderer/egl.css` (`.lane`, `.lane-head`, `.lane-lights`, `.lane-foot`, `.chip`) |
 | Change engine routing | `src-tauri/src/server.rs` |
 | Change lane persistence schema | `src-tauri/src/lanes.rs` |
 | Change provider/catalog behavior | `src-tauri/src/providers.rs` |
@@ -425,7 +425,7 @@ Important files:
 - `src-tauri/src/incidents.rs` — evidence-backed failure records.
 - `renderer/app.js` — UI state, rendering, drag/drop, provider flow, notifications.
 - `renderer/index.html` — UI structure.
-- `renderer/style.css` — visual design.
+- `renderer/egl.css` — active skin.
 - `tools/preview.js` — browser preview harness using real persisted data without exposing API keys.
 - `tools/smoke.js` — renderer load/wiring validation.
 
