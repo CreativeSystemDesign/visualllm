@@ -223,19 +223,21 @@ jobs:
           merge-multiple: true
 
       - name: Show downloaded files
-        run: find artifacts -type f -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "*.dmg" -o -name "SHA256SUMS*" | sort
+        run: |
+          find artifacts -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "*.dmg" -o -name "SHA256SUMS*" \) | sort
+          ls -la artifacts/
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            artifacts/*.deb
-            artifacts/*.AppImage
-            artifacts/*.msi
-            artifacts/*.exe
-            artifacts/*.dmg
-            artifacts/SHA256SUMS*
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.dmg
+            artifacts/**/SHA256SUMS*
 
   # Create tar.gz for Homebrew/AUR/Flatpak
   create-tarball:
