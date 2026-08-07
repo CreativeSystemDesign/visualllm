@@ -45,6 +45,7 @@ const api = T
       editorList: () => T.core.invoke('editor_list'),
       editorIntegrateLane: (slug, name, editor) => T.core.invoke('editor_integrate_lane', { slug, name, editor }),
       editorRemoveLane: (slug, editor) => T.core.invoke('editor_remove_lane', { slug, editor }),
+      editorReapplyToken: () => T.core.invoke('editor_reapply_token'),
     }
   : window.vll
 
@@ -72,10 +73,12 @@ Object.keys(api).forEach((k) => {
 const state = {
   connected: false,
   error: null,
-  models: [],
+  laneCount: 0,          // status-bar scalars, from the engine's /health
+  modelsTotal: 0,
+  requests24: 0,
+  failures24: 0,
   lanes: [],
   editors: [],         // editors a lane can be integrated into, from the backend
-  traffic: { requests: 0, failures: 0 },
   gateway: '',
   updatedAt: null,
   search: '',
@@ -155,12 +158,11 @@ const hasParams = (ref) => Object.values(ref.params || {}).some((v) => v != null
 const refMatches = (ref, model) =>
   ref.id === model.id && (!ref.provider || ref.provider === (model.provider_id || ''))
 
-/** Everything the sidebar can offer: what the gateway runs, plus every
- *  provider catalog. Gateway lanes win a name collision — they carry live
- *  health and measured throughput, which a catalog entry never will. */
+/** Everything the sidebar can offer: every provider catalog. The old Python
+ *  gateway's live lanes fed this list before the engine had its own; the
+ *  engine keeps no per-model health now, so the catalog is the full offer. */
 function allModels() {
-  const seen = new Set(state.models.map((m) => m.id))
-  return state.models.concat(state.catalog.filter((m) => !seen.has(m.id)))
+  return state.catalog
 }
 
 const modelByRef = (provider, id) => {
@@ -241,6 +243,7 @@ const ICON = {
   duplicate: '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.6"/><path d="M10.5 5.5V4.2A1.2 1.2 0 0 0 9.3 3H4.2A1.2 1.2 0 0 0 3 4.2v5.1A1.2 1.2 0 0 0 4.2 10.5h1.3"/></svg>',
   pause: '<svg viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>',
   check: '<svg viewBox="0 0 12 12"><path d="M2.5 6.5l2.5 2.5 4.5-5.5"/></svg>',
+  gauge: '<svg viewBox="0 0 16 16"><path d="M2.5 10a5.5 5.5 0 0 1 11 0M8 10l2.6-2.6"/></svg>',
 }
 
 // ------------------------------------------------------------------ rendering
@@ -453,8 +456,12 @@ function laneEndpoint(slug) {
   return `http://${engineHost()}/lane/${slug}/v1`
 }
 
-function laneCurlExample(slug) {
-  return `curl ${laneEndpoint(slug)}/chat/completions \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
+function laneCurlExample(slug, token = '') {
+  // The lane routes demand a Bearer token; an example without the header is a
+  // guaranteed 401. When no token is available (an empty string) the header is
+  // omitted rather than shipped with a broken placeholder.
+  const auth = token ? ` \\\n  -H 'Authorization: Bearer ${token}'` : ''
+  return `curl ${laneEndpoint(slug)}/chat/completions${auth} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
 }
 
 /** The live story for one hall, from the activity feed. `trying` is only
@@ -598,6 +605,11 @@ function laneEl(hall) {
       : ''}
     <button class="hall-act lane-test" title="Test this endpoint">Test</button>
     <button class="hall-act lane-copy-setup" title="Copy a curl setup example">Setup</button>
+    <button class="hall-act lane-budget${budgetIsStandard(hall) ? '' : ' is-on'}" title="${
+      budgetIsStandard(hall)
+        ? 'Auto-park budget: parks after 5 failures in 10 minutes. Click to tune.'
+        : 'Auto-park budget tuned — click to change.'
+    }">${ICON.gauge}</button>
 
     <button class="hall-toggle${hall.suppress_reasoning ? ' is-on' : ''}" data-toggle="think" title="${
       hall.suppress_reasoning
@@ -673,30 +685,35 @@ function updateScrollFade(procession) {
 }
 
 function renderStatusBar() {
-  const models = state.models
-  const healthy = models.filter((m) => m.healthy && m.available).length
   const host = (state.gateway || '').replace(/^https?:\/\//, '')
 
   $('barDot').className = `dot ${state.connected ? 'ok' : 'bad'}`
   $('barGateway').textContent = state.connected ? host : state.error || 'gateway offline'
 
-  $('statModels').innerHTML = models.length
-    ? `<b>${models.length}</b> <span class="unit">models</span> · <b>${healthy}</b> <span class="unit">healthy</span>`
-    : '<span class="unit">no models</span>'
+  // The engine owns the ledger: `/health` reports the live lane/model counts
+  // and the trailing-24h traffic, and this bar is their readout.
+  const lanes = state.laneCount || 0
+  const members = state.modelsTotal || 0
+  $('statModels').innerHTML = lanes
+    ? `<b>${lanes}</b> <span class="unit">endpoints</span> · <b>${members}</b> <span class="unit">models</span>`
+    : '<span class="unit">no endpoints</span>'
 
   // Fastest is worth a slot because it is the number that decides routing —
-  // and it is measured here, not advertised by anyone.
-  const fastest = models
-    .filter((m) => m.tps != null && m.available)
-    .sort((a, b) => b.tps - a.tps)[0]
+  // and it is measured here, not advertised by anyone. The engine reports no
+  // per-model speed, so the measured catalog speeds (from the stats cache)
+  // stand in: same number, its source.
+  const fastest = state.catalog
+    .filter((m) => m.throughput != null)
+    .sort((a, b) => b.throughput - a.throughput)[0]
   $('statFastest').innerHTML = fastest
-    ? `<span class="unit">fastest</span> <b>${fastest.id}</b> ${fmtTps(fastest.tps)}`
+    ? `<span class="unit">fastest</span> <b>${fastest.id}</b> ${fmtTps(fastest.throughput)}`
     : '<span class="unit">no throughput measured yet</span>'
 
-  const { requests = 0, failures = 0 } = state.traffic || {}
+  const requests = state.requests24 || 0
+  const failures = state.failures24 || 0
   const rate = requests ? ((failures / requests) * 100).toFixed(1) : '0.0'
   $('statTraffic').innerHTML = requests
-    ? `<b>${requests.toLocaleString()}</b> <span class="unit">requests</span> · <b>${failures}</b> <span class="unit">failed (${rate}%)</span>`
+    ? `<b>${requests.toLocaleString()}</b> <span class="unit">requests 24h</span> · <b>${failures}</b> <span class="unit">failed (${rate}%)</span>`
     : '<span class="unit">no traffic yet</span>'
   $('statPort').textContent = `engine ${engineHost()}`
 }
@@ -1055,9 +1072,18 @@ function notifPersist() {
  *  its job — announcing them trained users to ignore alerts entirely. */
 const SILENT_KINDS = new Set(['skipped_by_catalog'])
 
+/** Mutes are per-(lane, kind): silencing a kind on lane A must not quiet lane
+ *  B too. The key is `hall::kind`; a bare `kind` entry is the legacy pre-lane
+ *  format and matches ANY lane, so mutes saved before this change keep
+ *  working. The engine keeps writing the incident either way — the bell and
+ *  the toasts just stop announcing it. */
+function notifMuted(kind, hall) {
+  return notif.muted.has(kind) || (hall ? notif.muted.has(`${hall}::${kind}`) : false)
+}
+
 const unreadIncidents = () =>
   windowedIncidents().filter(
-    (i) => !SILENT_KINDS.has(i.kind) && !notif.read.has(incidentKey(i)) && !notif.muted.has(i.kind)
+    (i) => !SILENT_KINDS.has(i.kind) && !notif.read.has(incidentKey(i)) && !notifMuted(i.kind, i.hall)
   )
 
 function renderBell() {
@@ -1077,7 +1103,7 @@ function processIncidents() {
     if (notif.toasted.has(key)) continue
     notif.toasted.add(key)
     if (SILENT_KINDS.has(incident.kind)) continue
-    if (notif.muted.has(incident.kind)) continue
+    if (notifMuted(incident.kind, incident.hall)) continue
     if (notif.read.has(key)) continue
     showNotifToast(incident)
   }
@@ -1099,6 +1125,10 @@ function showNotifToast(incident) {
     <button class="notif-toast-close" title="Dismiss">${ICON.close}</button>
   `
   const stack = $('notifStack')
+  // A failure burst must not bury the screen under cards: keep the newest few
+  // and drop the oldest. A dropped card fades unclicked, exactly like a timer
+  // expiry — it simply was not read in time.
+  while (stack.children.length >= 3) stack.firstChild.remove()
   stack.appendChild(card)
 
   const key = incidentKey(incident)
@@ -1186,7 +1216,7 @@ function renderNotifCenter() {
     .map(({ count, latest }) => {
       const d = DIAGNOSIS[latest.kind] || DIAGNOSIS.unattributed
       const hall = state.lanes.find((l) => l.slug === latest.hall)
-      const muted = notif.muted.has(latest.kind)
+      const muted = notifMuted(latest.kind, latest.hall)
       const fix = !muted && hall && d.fix && d.fix(latest, hall)
       return `
       <article class="issue${muted ? ' is-muted' : ''}">
@@ -1203,8 +1233,8 @@ function renderNotifCenter() {
           ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-hall="${attr(latest.hall)}">Turn on “no thinking” for this endpoint</button>` : ''}
           ${fix === 'unpark' ? `<button class="btn-ghost issue-fix" data-fix="unpark" data-hall="${attr(latest.hall)}">Unpark this endpoint</button>` : ''}
           ${latest.replayable && latest.id ? `<button class="btn-ghost issue-replay${replayArmedId === latest.id ? ' is-armed' : ''}" data-replay="${attr(latest.id)}">${replayArmedId === latest.id ? 'Click again to confirm — it can spend money' : 'Replay this request'}</button>` : ''}
-          <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}">${
-            muted ? 'Ignored — click to restore' : 'Ignore this type'
+          <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}" data-mute-hall="${attr(latest.hall)}">${
+            muted ? 'Ignored on this lane — click to restore' : 'Ignore this type on this lane'
           }</button>
         </div>
       </article>`
@@ -1428,13 +1458,15 @@ $('notifScrim').addEventListener('click', async (event) => {
     return
   }
 
-  // Muting silences a TYPE, not the record: the engine keeps writing these,
-  // the bell and toasts just stop announcing them. Reversible in place.
+  // Muting silences this TYPE on this LANE, not the record: the engine keeps
+  // writing these, the bell and toasts just stop announcing them. Reversible
+  // in place.
   const mute = event.target.closest('.issue-mute')
   if (mute) {
     const kind = mute.dataset.mute
-    if (notif.muted.has(kind)) notif.muted.delete(kind)
-    else notif.muted.add(kind)
+    const key = `${mute.dataset.muteHall}::${kind}`
+    if (notif.muted.has(key)) notif.muted.delete(key)
+    else notif.muted.add(key)
     notifPersist()
     renderNotifCenter()
     renderBell()
@@ -1535,6 +1567,89 @@ $('memberPop').addEventListener('change', (event) => {
   }
   saveLanes()
 })
+
+// ------------------------------------------------------------ lane budget
+//
+// The gauge in a hall's header opens the auto-park budget: how many budgetable
+// failures park the endpoint, and over what window. The engine owns the
+// bookkeeping; the UI only writes the numbers, saved on every change like the
+// member dials. Blank a field and the standard budget (5 failures in 10
+// minutes) returns.
+
+/** The engine's standard budget; anything else counts as "tuned" on the gauge. */
+const BUDGET_DEFAULTS = { failures: 5, window_secs: 600 }
+
+function budgetIsStandard(hall) {
+  const b = hall.budget || {}
+  return (b.failures == null || b.failures === BUDGET_DEFAULTS.failures) &&
+    (b.window_secs == null || b.window_secs === BUDGET_DEFAULTS.window_secs)
+}
+
+/** Which hall the open popover is editing, by identity — never by element,
+ *  because a re-render replaces every element under the popover. */
+const budgetTarget = { hall: null }
+
+function budgetHall() {
+  return state.lanes.find((l) => l.slug === budgetTarget.hall) || null
+}
+
+function openLaneBudget(button) {
+  const hall = state.lanes.find((l) => l.slug === button.closest('.hall').dataset.hall)
+  if (!hall) return
+  budgetTarget.hall = hall.slug
+  const b = hall.budget || BUDGET_DEFAULTS
+  document.querySelector('#lanePop [data-budget="failures"]').value =
+    b.failures == null ? '' : b.failures
+  document.querySelector('#lanePop [data-budget="window_min"]').value =
+    b.window_secs == null ? '' : Math.round(b.window_secs / 60)
+
+  const pop = $('lanePop')
+  pop.hidden = false
+  // Beside the gauge, clamped to the window. Measured after unhiding, because
+  // a hidden element has no size to measure.
+  const at = button.getBoundingClientRect()
+  const niche = pop.getBoundingClientRect()
+  const left = Math.max(8, Math.min(at.left - niche.width / 2, window.innerWidth - niche.width - 8))
+  const below = at.bottom + 10
+  const top = below + niche.height > window.innerHeight - 8 ? at.top - niche.height - 10 : below
+  pop.style.left = `${left}px`
+  pop.style.top = `${Math.max(8, top)}px`
+}
+
+/** Hide the popover. Re-rendering is the caller's choice, like the member
+ *  dials: closing by starting a drag must NOT rebuild the DOM under it. */
+function closeLaneBudget({ rerender = true } = {}) {
+  const pop = $('lanePop')
+  if (pop.hidden) return
+  pop.hidden = true
+  budgetTarget.hall = null
+  // The gauge's "tuned" light may have changed while the popover was open.
+  if (rerender) renderLanes()
+}
+
+$('lanePop').addEventListener('change', (event) => {
+  const input = event.target.closest('[data-budget]')
+  const hall = input && budgetHall()
+  if (!input || !hall) return
+  hall.budget = hall.budget || {}
+  if (input.dataset.budget === 'failures') {
+    const value = Number(input.value)
+    hall.budget.failures = Number.isFinite(value) && value >= 1
+      ? Math.min(9999, Math.round(value))
+      : BUDGET_DEFAULTS.failures
+  } else {
+    // The field reads minutes; the schema is seconds. Blank or an unparseable
+    // entry restores the standard 10 minutes.
+    const value = Number(input.value)
+    hall.budget.window_secs =
+      Number.isFinite(value) && value >= 1
+        ? Math.min(1440, Math.round(value)) * 60
+        : BUDGET_DEFAULTS.window_secs
+  }
+  saveLanes()
+})
+
+$('lanePopClose').addEventListener('click', () => closeLaneBudget())
 
 // ------------------------------------------------------------- relic menu
 //
@@ -1789,6 +1904,9 @@ document.addEventListener('pointerdown', (event) => {
   if (!$('memberPop').hidden && !event.target.closest('#memberPop')) {
     closeMemberPop({ rerender: false })
   }
+  if (!$('lanePop').hidden && !event.target.closest('#lanePop')) {
+    closeLaneBudget({ rerender: false })
+  }
 
   // The same for the IDE menu. A press inside it must pass through so the
   // item's own click can act; anything else folds it.
@@ -1908,11 +2026,21 @@ document.addEventListener('click', async (event) => {
     return
   }
 
+  const budget = event.target.closest('.lane-budget')
+  if (budget) {
+    openLaneBudget(budget)
+    return
+  }
+
   const setup = event.target.closest('.lane-copy-setup')
   if (setup) {
     const slug = setup.closest('.hall').dataset.hall
     try {
-      await api.copy(laneCurlExample(slug))
+      // The lane endpoints authenticate; the copied example must too. Failing
+      // to read the token means no copy — a headerless example 401s and is
+      // worse than nothing.
+      const token = (await api.gatewayToken(true)).token
+      await api.copy(laneCurlExample(slug, token))
       toast('Curl setup copied')
     } catch (error) {
       toast(`Could not copy the curl setup: ${error.message}`)
@@ -2267,6 +2395,33 @@ $('tokenCopy').addEventListener('click', async () => {
   }
 })
 let regenArmed = false
+/** Re-apply the current token (and port) to every lane already integrated into
+ *  every editor, in one pass. Used from the token panel and offered as the
+ *  post-regeneration action. Each editor reports its own outcome. */
+async function applyTokenToEditors() {
+  try {
+    const results = await api.editorReapplyToken()
+    const failed = results.filter((r) => r.error != null)
+    if (failed.length) {
+      toast(`Could not re-apply the token to ${failed.length} editor${failed.length === 1 ? '' : 's'}`, failed.map((r) => `${r.editor}: ${r.error}`).join(' · '))
+      return
+    }
+    const updated = results.filter((r) => r.written).length
+    if (!updated) {
+      toast('No lanes integrated — nothing to re-apply')
+      return
+    }
+    toast(
+      `Token re-applied in ${updated} editor${updated === 1 ? '' : 's'}`,
+      results.map((r) => `${r.editor}: ${r.written ? 'updated' : 'no lanes'}`).join(' · ')
+    )
+  } catch (error) {
+    toast(`Could not re-apply the token: ${error.message}`)
+  }
+}
+
+$('applyToken').addEventListener('click', applyTokenToEditors)
+
 $('tokenRegen').addEventListener('click', async () => {
   if (!regenArmed) {
     regenArmed = true
@@ -2284,7 +2439,10 @@ $('tokenRegen').addEventListener('click', async () => {
     tokenVisible = true
     $('gatewayToken').value = info.token
     $('tokenReveal').textContent = 'Mask'
-    toast('New gateway token created — applies to engine starts; re-integrate editors')
+    toast('New gateway token created — applies to engine starts', 'every saved editor integration is now stale', {
+      label: 'Apply to editors',
+      fn: applyTokenToEditors,
+    })
   } catch (error) {
     toast(`Could not rotate token: ${error.message}`)
   }
@@ -2415,6 +2573,7 @@ $('scrim').addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('scrim').hidden) closePanel()
   if (event.key === 'Escape') closeMemberPop()
+  if (event.key === 'Escape') closeLaneBudget()
 })
 
 /**
@@ -3227,6 +3386,9 @@ async function loadEditors() {
 
 async function refresh() {
   if (drag.active) return
+  // A hidden window is nobody's eyes: skip the whole poll and catch up the
+  // moment it becomes visible again (see the visibilitychange listener).
+  if (document.hidden) return
   // The engine's incident file rides along on the same tick — it is a small
   // local read, and issues appearing on the canvas within seconds of
   // happening is what makes them trustworthy.
@@ -3238,9 +3400,13 @@ async function refresh() {
   const data = await api.readGateway()
   state.connected = data.connected
   state.error = data.error || null
-  state.models = (data.models || []).map((m) => ({ ...m, source: 'gateway' }))
-  state.traffic = data.traffic || { requests: 0, failures: 0 }
   state.gateway = data.gateway || ''
+  // The engine's `/health` reports its own state now: live lane/model counts
+  // and the trailing-24h ledger, which the status bar reads directly.
+  state.laneCount = data.lanes || 0
+  state.modelsTotal = data.models_total || 0
+  state.requests24 = data.requests_24h || 0
+  state.failures24 = data.failures_24h || 0
   state.updatedAt = Date.now()
 
   // The live hall feed. Polled incrementally (only what is newer than the
@@ -3273,15 +3439,19 @@ async function refresh() {
   // caught by an automated click losing the race that a finger usually wins.
   //
   // The signature must not carry volatile fields. `updatedAt` is stamped
-  // fresh on every poll, and `traffic` ticks with every request — including
-  // the poll's own — so signing the raw `data` renders on every tick even
-  // when the engine has nothing to say. Only the parts that change WHAT is
-  // drawn belong in the comparison.
+  // fresh on every poll, and the status bar's readouts ride this poll's own
+  // data — so signing the raw `data` renders on every tick even when the
+  // engine has nothing to say. Only the parts that change WHAT is drawn belong
+  // in the comparison; the 24h ledger moves only when a request settles,
+  // which is exactly when the bar should repaint.
   const signature = JSON.stringify([
     data.connected,
     data.error || null,
     data.gateway || '',
-    (data.models || []).map((m) => [m.id, m.healthy, m.available, m.tps]),
+    data.lanes || 0,
+    data.models_total || 0,
+    data.requests_24h || 0,
+    data.failures_24h || 0,
     state.incidents.length,
   ])
 
@@ -3477,13 +3647,21 @@ function rippleFromActivity() {
 
 bootstrap()
 // The "updated Ns ago" clock ticks on its own; a repaint every second just to
-// age a label would throw away scroll positions for nothing.
-setInterval(renderUpdated, 1000)
+// age a label would throw away scroll positions for nothing. All three short
+// clocks skip while the window is hidden — time standing still for no one
+// watching is time not spent.
+setInterval(() => { if (!document.hidden) renderUpdated() }, 1000)
 // Live hall states decay: a "trying…" older than its freshness window, or an
 // "answered" past its linger, disappears on this beat even when no poll has
 // anything new to say. Cheap enough to ride the same one-second clock.
 setInterval(() => {
+  if (document.hidden) return
   if (state.activity.some((e) => e.at > Date.now() / 1000 - 50)) renderLanes()
 }, 1000)
 // The field's chemistry follows the work, on the same clock.
-setInterval(rippleFromActivity, 700)
+setInterval(() => { if (!document.hidden) rippleFromActivity() }, 700)
+// A window that comes back must not wait up to four seconds for the next poll:
+// the visible moment is the one that matters.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refresh()
+})

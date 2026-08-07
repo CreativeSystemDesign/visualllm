@@ -733,6 +733,16 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 }
 .hall-act.lane-parked svg { width: 10px; height: 10px; vertical-align: -1px; margin-right: 5px; }
 
+/* The auto-park budget gauge: an icon-only hall action. Amber when tuned away
+   from the standard budget, like the parked lane's amber. */
+.hall-act.lane-budget { padding: 4px 7px; line-height: 0; }
+.hall-act.lane-budget svg { width: 11px; height: 11px; }
+.hall-act.lane-budget.is-on {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.35);
+  background: rgba(255, 209, 102, 0.1);
+}
+
 .hall-toggle {
   flex-shrink: 0;
   width: 24px; height: 24px;
@@ -1476,6 +1486,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   box-shadow: 0 40px 90px -20px rgba(0, 0, 0, 0.85);
   animation: chamberIn 240ms var(--ease-mass);
 }
+/* The budget popover carries two fields and a line of explanation; a touch
+   wider than the member dials so "park after failures" fits on one line. */
+#lanePop { width: 290px; }
 .dials[hidden] { display: none; }
 
 .dials-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

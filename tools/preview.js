@@ -130,8 +130,9 @@ const html = indexHtml
       window.vll = {
         readGateway: () => ok({
           connected: false, gateway: 'preview — engine not connected',
-          error: 'preview harness', models: [], lanes: [],
-          traffic: { requests: 0, failures: 0 },
+          error: 'preview harness', lanes: data.lanes.length,
+          models_total: data.lanes.reduce((n, l) => n + (l.members || []).length, 0),
+          requests_24h: 0, failures_24h: 0,
         }),
         copy: (text) => { console.log('[preview] copy:', text); return ok() },
         minimize: () => ok(), toggleMaximize: () => ok(), close: () => ok(),
@@ -165,6 +166,14 @@ const html = indexHtml
         editorRemoveLane: (slug, editor) => {
           console.log('[preview] editorRemoveLane', { slug, editor })
           return ok({ editor, path: '/preview/' + editor + '/chatLanguageModels.json', written: true, error: null })
+        },
+        editorReapplyToken: () => {
+          console.log('[preview] editorReapplyToken')
+          return ok([
+            { editor: 'VS Code', path: '/preview/VS Code/chatLanguageModels.json', written: true, error: null },
+            { editor: 'VS Code Insiders', path: '/preview/VS Code Insiders/chatLanguageModels.json', written: true, error: null },
+            { editor: 'Windsurf', path: '/preview/Windsurf/chatLanguageModels.json', written: true, error: null },
+          ])
         },
         stateExport: () => ok('/tmp/preview-export.json'),
         stateImport: () => ok('/tmp/preview-export.json'),

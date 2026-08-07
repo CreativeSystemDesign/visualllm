@@ -105,6 +105,11 @@ globalThis.__t = {
   browseMatches,
   cloneLaneShape,
   usageCounts,
+  laneCurlExample,
+  budgetIsStandard,
+  BUDGET_DEFAULTS,
+  notif,
+  notifMuted,
 };`
 vm.runInThisContext(`${source}\n;${exportLine}`, { filename: 'app.js' })
 const t = globalThis.__t
@@ -446,4 +451,66 @@ test('usageCounts: the window boundary is strictly younger — exactly a window 
 test('usageCounts: a lane with no ledger reads as zeros, never errors', () => {
   const u = t.usageCounts({}, 1_000_000)
   assert.deepEqual(u, { req24: 0, fail24: 0, req7: 0 })
+})
+
+// --------------------------------------------------------------- curl setup
+// The copied setup example must arrive ready to run: lane routes demand a
+// Bearer token, so the header rides along. Without a token the header is
+// omitted (never a broken placeholder), and the endpoint stays exact.
+
+test('laneCurlExample: carries the Authorization header when a token is given', () => {
+  const curl = t.laneCurlExample('my-lane', 'abc123')
+  assert.ok(curl.includes("Authorization: Bearer abc123"))
+  assert.ok(curl.startsWith('curl http://127.0.0.1:4100/lane/my-lane/v1/chat/completions'))
+  assert.ok(curl.includes('"model":"my-lane"'))
+})
+
+test('laneCurlExample: omits the auth header when there is no token', () => {
+  const curl = t.laneCurlExample('my-lane')
+  assert.ok(!curl.includes('Authorization'))
+  assert.ok(!curl.includes('Bearer'))
+})
+
+// ------------------------------------------------------------- lane budget
+// The gauge lights only when the budget is tuned away from the engine's
+// standard; an absent or default budget is the quiet state.
+
+test('budgetIsStandard: absent and default budgets read as standard', () => {
+  assert.equal(t.budgetIsStandard({}), true)
+  assert.equal(t.budgetIsStandard({ budget: null }), true)
+  assert.equal(t.budgetIsStandard({ budget: { failures: 5, window_secs: 600 } }), true)
+})
+
+test('budgetIsStandard: a tuned budget lights the gauge', () => {
+  assert.equal(t.budgetIsStandard({ budget: { failures: 2, window_secs: 600 } }), false)
+  assert.equal(t.budgetIsStandard({ budget: { failures: 5, window_secs: 300 } }), false)
+})
+
+// ---------------------------------------------------------------------- mute
+// Mutes are per-(lane, kind): lane A's silence must not quiet lane B. Legacy
+// bare-kind entries match any lane so nothing already saved breaks.
+
+function withMuted(entries, fn) {
+  t.notif.muted = new Set(entries)
+  try {
+    fn()
+  } finally {
+    t.notif.muted = new Set()
+  }
+}
+
+test('notifMuted: a composite key mutes only its own lane', () => {
+  withMuted(['hall-a::reasoning_burn'], () => {
+    assert.equal(t.notifMuted('reasoning_burn', 'hall-a'), true)
+    assert.equal(t.notifMuted('reasoning_burn', 'hall-b'), false)
+    assert.equal(t.notifMuted('empty_response', 'hall-a'), false)
+  })
+})
+
+test('notifMuted: a legacy bare kind matches any lane', () => {
+  withMuted(['reasoning_burn'], () => {
+    assert.equal(t.notifMuted('reasoning_burn', 'hall-a'), true)
+    assert.equal(t.notifMuted('reasoning_burn', 'hall-b'), true)
+    assert.equal(t.notifMuted('empty_response', 'hall-a'), false)
+  })
 })

@@ -310,10 +310,13 @@
           <p class="form-note">Clients calling a lane must send
             <code>Authorization: Bearer &lt;token&gt;</code>. Without one, any local
             process (or a page that tries DNS rebinding) could call your lanes and
-            spend credits. Editor integrations carry the token automatically.</p>
+            spend credits. Editor integrations carry the token automatically —
+            after regenerating, use <strong>Apply to editors</strong> to refresh
+            every saved integration in one step.</p>
           <div class="form-actions">
             <span class="spacer"></span>
             <button type="button" class="btn-ghost" id="tokenRegen">Regenerate</button>
+            <button type="button" class="btn-ghost" id="applyToken">Apply to editors</button>
             <button type="button" class="btn-ghost" id="tokenCopy">Copy</button>
             <button type="button" class="btn-primary" id="tokenReveal">Reveal</button>
           </div>
@@ -341,6 +344,21 @@
     <label class="dial"><span>repetition penalty</span><input data-dial="repetition_penalty" type="number" step="0.05" min="0.5" max="2" placeholder="—" /></label>
     <label class="dial"><span>max output tokens</span><input data-dial="max_tokens" type="number" step="100" min="1" placeholder="—" /></label>
     <div class="dials-actions"><button class="btn-ghost" id="popClear" type="button">Clear all</button></div>
+  </div>
+
+  <!-- THE LANE BUDGET — auto-park tuning. Same floating family as the member
+       dials: the gauge in a hall's header opens it, and the numbers are saved
+       on every change. Blank a field to return to the standard budget. -->
+  <div class="dials" id="lanePop" hidden>
+    <div class="dials-head">
+      <span class="dials-title" id="lanePopTitle">endpoint budget</span>
+      <button class="frame-btn" id="lanePopClose" type="button" title="Close">
+        <svg viewBox="0 0 12 12"><path d="M3.5 3.5l5 5M8.5 3.5l-5 5"/></svg>
+      </button>
+    </div>
+    <p class="dials-sub">The engine parks this endpoint after this many budgetable failures inside the window, so a lane in trouble stops spending. Blank restores the standard 5 failures in 10 minutes.</p>
+    <label class="dial"><span>park after failures</span><input data-budget="failures" type="number" min="1" max="9999" step="1" placeholder="5" /></label>
+    <label class="dial"><span>within minutes</span><input data-budget="window_min" type="number" min="1" max="1440" step="1" placeholder="10" /></label>
   </div>
 
   <!-- THE RELIC MENU -->
