@@ -5,6 +5,19 @@ All notable changes to VisualLLM are documented here. The format follows
 policy in the README applies: MAJOR for contract breaks, MINOR for features,
 PATCH for fixes.
 
+## [0.5.1] — 2026-08-07
+
+Hotfix: regenerating the gateway token now takes effect immediately.
+
+### Fixed
+
+- **Token rotation applies live** — previously a regenerated token was
+  written to disk but the running engine kept the old one until restart, so
+  lane endpoints kept rejecting the new token and the editor re-apply could
+  not bring them back. The engine now follows rotations through a channel and
+  the lane middleware reads the token per request; `Regenerate` no longer
+  claims it only applies to the next engine start.
+
 ## [0.5.0] — 2026-08-06
 
 Post-review hardening batch: the status bar now reports the engine's own
