@@ -755,7 +755,11 @@ async fn state_export(app: tauri::AppHandle) -> Result<String, String> {
         return Err("export cancelled".into());
     };
 
-    let target: std::path::PathBuf = path.as_path().map(|p| p.to_path_buf()).unwrap();
+    // A dialog can hand back a non-filesystem path (a URL on some platforms);
+    // turning that into a silent panic would be a poor way to learn the fact.
+    let target = path
+        .into_path()
+        .map_err(|_| "the chosen save location is not a filesystem path".to_string())?;
     std::fs::create_dir_all(target.parent().unwrap_or(&target)).map_err(|e| e.to_string())?;
     let temp = target.with_extension("json.tmp");
     std::fs::write(&temp, text).map_err(|e| e.to_string())?;
@@ -783,7 +787,9 @@ async fn state_import(app: tauri::AppHandle, mode: Option<String>) -> Result<Str
         return Err("import cancelled".into());
     };
 
-    let path: std::path::PathBuf = path.as_path().map(|p| p.to_path_buf()).unwrap();
+    let path = path
+        .into_path()
+        .map_err(|_| "the chosen file is not a filesystem path".to_string())?;
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
     let snapshot: PortableState = serde_json::from_str(&text)
@@ -816,32 +822,24 @@ fn import_merge(dir: &std::path::Path, snapshot: PortableState) -> Result<(), St
     // Providers merge by id: an imported provider with the same id replaces
     // the local one, but keys are left empty so the existing keyring entry is
     // preserved unless the provider is genuinely new.
-    let mut provider_ids: std::collections::HashSet<String> =
-        providers.iter().map(|p| p.id.clone()).collect();
     for p in imported_providers {
-        if provider_ids.contains(&p.id) {
-            let pos = providers.iter().position(|x| x.id == p.id).unwrap();
-            // Keep the local key: the export never carries one, and wiping an
-            // existing key would force an unnecessary re-entry.
-            let local_key = providers[pos].key.clone();
-            providers[pos] = p;
-            providers[pos].key = local_key;
-        } else {
-            provider_ids.insert(p.id.clone());
-            providers.push(p);
+        match providers.iter().position(|x| x.id == p.id) {
+            Some(pos) => {
+                // Keep the local key: the export never carries one, and wiping an
+                // existing key would force an unnecessary re-entry.
+                let local_key = providers[pos].key.clone();
+                providers[pos] = p;
+                providers[pos].key = local_key;
+            }
+            None => providers.push(p),
         }
     }
 
     // Lanes merge by slug: same slug replaces, new slug appends.
-    let mut lane_slugs: std::collections::HashSet<String> =
-        lanes.iter().map(|l| l.slug.clone()).collect();
     for l in imported_lanes {
-        if lane_slugs.contains(&l.slug) {
-            let pos = lanes.iter().position(|x| x.slug == l.slug).unwrap();
-            lanes[pos] = l;
-        } else {
-            lane_slugs.insert(l.slug.clone());
-            lanes.push(l);
+        match lanes.iter().position(|x| x.slug == l.slug) {
+            Some(pos) => lanes[pos] = l,
+            None => lanes.push(l),
         }
     }
 
@@ -1301,11 +1299,23 @@ struct GatewayToken {
     masked: String,
 }
 
+/// A display-safe rendering of a token: the first 8 and last 4 characters
+/// around an ellipsis. Guarded so a hand-written secret file shorter than that
+/// (never ours — we generate 64 hex chars — but possible in the wild) shows a
+/// placeholder instead of panicking on a string slice.
+fn mask_token(token: &str) -> String {
+    if token.len() >= 12 {
+        format!("{}…{}", &token[..8], &token[token.len() - 4..])
+    } else {
+        "••••".to_string()
+    }
+}
+
 #[tauri::command]
 fn gateway_token(app: tauri::AppHandle, reveal: bool) -> Result<GatewayToken, String> {
     let dir = store_dir(&app)?;
     let token = secret_load(&dir)?;
-    let masked = format!("{}…{}", &token[..8], &token[token.len() - 4..]);
+    let masked = mask_token(&token);
     Ok(GatewayToken {
         has: true,
         token: if reveal { token } else { String::new() },
@@ -1321,7 +1331,7 @@ fn gateway_token_regenerate(app: tauri::AppHandle) -> Result<GatewayToken, Strin
     let dir = store_dir(&app)?;
     let token = secret_generate()?;
     secret_save(&dir, &token)?;
-    let masked = format!("{}…{}", &token[..8], &token[token.len() - 4..]);
+    let masked = mask_token(&token);
     Ok(GatewayToken {
         has: true,
         token,

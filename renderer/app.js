@@ -1415,10 +1415,16 @@ $('notifScrim').addEventListener('click', async (event) => {
       toast(`Replay could not run: ${err}`)
     }
     // A replay that failed was recorded as a new incident; a replay that
-    // succeeded left nothing. Either way, re-read and repaint.
-    state.incidents = (await api.incidentsRead()) || []
-    renderNotifCenter()
-    renderBell()
+    // succeeded left nothing. Either way, re-read and repaint. Best-effort:
+    // a re-read that fails must not leave stale evidence on screen with no
+    // one told.
+    try {
+      state.incidents = (await api.incidentsRead()) || []
+      renderNotifCenter()
+      renderBell()
+    } catch (err) {
+      toast(`Replay ran, but the record could not be re-read: ${err}`)
+    }
     return
   }
 
@@ -1872,8 +1878,12 @@ document.addEventListener('click', async (event) => {
   const url = event.target.closest('.hall-url')
   if (url) {
     const slug = url.closest('.hall').dataset.hall
-    await api.copy(`${laneEndpoint(slug)}/chat/completions`)
-    toast('Endpoint URL copied')
+    try {
+      await api.copy(`${laneEndpoint(slug)}/chat/completions`)
+      toast('Endpoint URL copied')
+    } catch (error) {
+      toast(`Could not copy the endpoint URL: ${error.message}`)
+    }
     return
   }
 
@@ -1901,8 +1911,12 @@ document.addEventListener('click', async (event) => {
   const setup = event.target.closest('.lane-copy-setup')
   if (setup) {
     const slug = setup.closest('.hall').dataset.hall
-    await api.copy(laneCurlExample(slug))
-    toast('Curl setup copied')
+    try {
+      await api.copy(laneCurlExample(slug))
+      toast('Curl setup copied')
+    } catch (error) {
+      toast(`Could not copy the curl setup: ${error.message}`)
+    }
     return
   }
 
@@ -3289,8 +3303,12 @@ async function refresh() {
 
 document.addEventListener('click', async (event) => {
   if (!event.target.closest('#statGateway')) return
-  await api.copy(state.gateway || '')
-  toast('Gateway address copied')
+  try {
+    await api.copy(state.gateway || '')
+    toast('Gateway address copied')
+  } catch (error) {
+    toast(`Could not copy the gateway address: ${error.message}`)
+  }
 })
 
 // Populated here rather than beside `renderProviders`, where it was: `PRESETS`
