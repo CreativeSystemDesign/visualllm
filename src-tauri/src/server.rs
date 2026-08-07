@@ -66,7 +66,7 @@
 //!    very next call — no reload, no restart.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 // `use` is just shorthand so we can write `Json` instead of `axum::Json`
 // everywhere. The braces group several imports from the same place.
@@ -325,14 +325,16 @@ fn member_label(member: &lanes::Member) -> String {
 ///
 /// `#[derive(Clone)]` asks the compiler to write the "make a copy" code for us.
 /// axum hands each request its own copy of this, which is cheap here because a
-/// `PathBuf` is just a path string. This is the *only* thing shared between
-/// requests, and it never changes — which is exactly why no locking is needed.
+/// `PathBuf` is just a path string and the token handle is a shared pointer.
+/// The token itself lives behind a lock so a rotation can swap it while the
+/// listener is running — that is the only thing here that ever changes.
 #[derive(Clone)]
 pub struct Engine {
     pub dir: PathBuf,
-    /// Bearer token the lane endpoints require, loaded once at listener build.
-    /// `None` (dev only) leaves the engine open, matching pre-token behaviour.
-    pub secret: Option<String>,
+    /// Bearer token the lane endpoints require, read per request so a rotation
+    /// takes effect without restarting the engine. `None` (dev only) leaves the
+    /// engine open, matching pre-token behaviour.
+    pub secret: Arc<RwLock<Option<String>>>,
 }
 
 // ============================================================================
@@ -1839,7 +1841,7 @@ async fn chat_inner(
 /// The lane routes are guarded by the gateway token; the read-only surface
 /// (`/health`, `/activity`, `/v1/models`) stays open so a user can probe the
 /// engine without a credential.
-pub fn router(dir: PathBuf, secret: Option<String>) -> Router {
+pub fn router(dir: PathBuf, secret: Arc<RwLock<Option<String>>>) -> Router {
     let engine = Engine { dir, secret };
     Router::new()
         .route("/lane/{slug}/v1/chat/completions", post(chat))
@@ -1869,26 +1871,34 @@ async fn require_token(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, axum::response::Response> {
-    let authorised = match engine.secret.as_deref() {
-        None => true,
-        Some(secret) => request
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|presented| {
-                let a = presented.as_bytes();
-                let b = secret.as_bytes();
-                if a.len() != b.len() {
-                    return false;
-                }
-                let mut diff = 0u8;
-                for (x, y) in a.iter().zip(b.iter()) {
-                    diff |= x ^ y;
-                }
-                diff == 0
-            })
-            .unwrap_or(false),
+    // Read the token under the lock and finish with a plain bool so the guard
+    // is dropped before `next` runs — the rotation task never waits on us.
+    let authorised = {
+        let secret = engine
+            .secret
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match secret.as_deref() {
+            None => true,
+            Some(secret) => request
+                .headers()
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(|presented| {
+                    let a = presented.as_bytes();
+                    let b = secret.as_bytes();
+                    if a.len() != b.len() {
+                        return false;
+                    }
+                    let mut diff = 0u8;
+                    for (x, y) in a.iter().zip(b.iter()) {
+                        diff |= x ^ y;
+                    }
+                    diff == 0
+                })
+                .unwrap_or(false),
+        }
     };
     if authorised {
         Ok(next.run(request).await)
@@ -1909,11 +1919,26 @@ async fn require_token(
 pub async fn serve(
     dir: PathBuf,
     port: u16,
-    secret: Option<String>,
+    mut secrets: watch::Receiver<Option<String>>,
     mut ports: watch::Receiver<u16>,
 ) -> Result<(), String> {
     let dir = Arc::new(dir);
-    let secret = Arc::new(secret);
+    let secret = Arc::new(RwLock::new((*secrets.borrow_and_update()).clone()));
+    // Token rotations arrive after startup; a background task applies them to
+    // the shared secret so the running listener demands the new token without
+    // rebinding (which is what the port channel below is for).
+    let apply = Arc::clone(&secret);
+    tokio::spawn(async move {
+        loop {
+            if secrets.changed().await.is_err() {
+                break;
+            }
+            let next = (*secrets.borrow_and_update()).clone();
+            *apply
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
+        }
+    });
     let listener = bind(port).await?;
     let (mut stop_tx, stop_rx) = oneshot::channel();
     let mut active = spawn(listener, Arc::clone(&dir), Arc::clone(&secret), stop_rx);
@@ -1965,11 +1990,11 @@ async fn bind(port: u16) -> Result<tokio::net::TcpListener, String> {
 fn spawn(
     listener: tokio::net::TcpListener,
     dir: Arc<PathBuf>,
-    secret: Arc<Option<String>>,
+    secret: Arc<RwLock<Option<String>>>,
     stop: oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
     tokio::spawn(async move {
-        axum::serve(listener, router((*dir).clone(), (*secret).clone()))
+        axum::serve(listener, router((*dir).clone(), secret))
             .with_graceful_shutdown(async {
                 let _ = stop.await;
             })
@@ -2473,7 +2498,7 @@ mod tests {
             "stream": stream,
             "max_tokens": 32,
         });
-        router(dir.to_path_buf(), None)
+        router(dir.to_path_buf(), secret_state(None))
             .oneshot(
                 axum::http::Request::builder()
                     .method("POST")
@@ -2573,13 +2598,19 @@ mod tests {
             .unwrap()
     }
 
+    /// The shared token state a `router()` takes; tests rotate it in place to
+    /// prove the middleware follows live changes.
+    fn secret_state(token: Option<&str>) -> Arc<RwLock<Option<String>>> {
+        Arc::new(RwLock::new(token.map(str::to_string)))
+    }
+
     #[tokio::test]
     async fn lane_endpoints_require_the_gateway_token() {
         let dir = tempdir().unwrap();
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (address, task) = start_fake_provider(calls.clone()).await;
         configure_test_files(dir.path(), address, &["primary", "fallback"]);
-        let app = router(dir.path().to_path_buf(), Some("secret-token".to_string()));
+        let app = router(dir.path().to_path_buf(), secret_state(Some("secret-token")));
 
         // No token: refused before any upstream call.
         let denied = app.clone().oneshot(lane_request(None)).await.unwrap();
@@ -2612,12 +2643,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rotating_the_secret_switches_the_token_without_restarting() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_test_files(dir.path(), address, &["primary", "fallback"]);
+        let secret = secret_state(Some("old-token"));
+        let app = router(dir.path().to_path_buf(), Arc::clone(&secret));
+
+        // The current token works before the rotation.
+        let before = app
+            .clone()
+            .oneshot(lane_request(Some("old-token")))
+            .await
+            .unwrap();
+        assert_eq!(before.status(), StatusCode::OK);
+        assert_eq!(calls.lock().unwrap().len(), 2);
+
+        // Rotate the shared state exactly as the serve() task does, and the
+        // running middleware must reject the old token and accept the new one.
+        *secret.write().unwrap() = Some("new-token".to_string());
+
+        let stale = app
+            .clone()
+            .oneshot(lane_request(Some("old-token")))
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            2,
+            "the stale token must not reach upstream"
+        );
+
+        let fresh = app
+            .clone()
+            .oneshot(lane_request(Some("new-token")))
+            .await
+            .unwrap();
+        assert_eq!(fresh.status(), StatusCode::OK);
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn health_and_models_stay_open_without_a_token() {
         let dir = tempdir().unwrap();
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (address, task) = start_fake_provider(calls.clone()).await;
         configure_test_files(dir.path(), address, &["primary"]);
-        let app = router(dir.path().to_path_buf(), Some("secret-token".to_string()));
+        let app = router(dir.path().to_path_buf(), secret_state(Some("secret-token")));
 
         let health = app
             .clone()
@@ -2744,7 +2818,7 @@ mod tests {
 
         // A request to a lane that does not exist answers 404 before the
         // ledger is touched — a mistyped slug must not spend a lane's meter.
-        let missing = router(dir.path().to_path_buf(), None)
+        let missing = router(dir.path().to_path_buf(), secret_state(None))
             .oneshot(
                 axum::http::Request::builder()
                     .method("POST")

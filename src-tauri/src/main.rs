@@ -416,8 +416,8 @@ fn editor_remove_lane(
 /// every VisualLLM entry in one editor's chatLanguageModels.json.
 ///
 /// This is the "re-integrate all" after a token rotation or a port move:
-/// `gateway_token_regenerate` writes a new secret, and the token this writes
-/// is read from the same file the running engine will use on its next start.
+/// `gateway_token_regenerate` writes a new secret that the running engine
+/// switches to immediately, and this rewrites the editor headers to match.
 /// Returns the number of lane entries rewritten; a missing file or a config
 /// with no visualllm provider is a success with 0 — there is nothing to fix.
 fn vscode_reapply_auth(path: &std::path::Path, token: &str, port: u16) -> Result<usize, String> {
@@ -1190,6 +1190,11 @@ const DEFAULT_PORT: u16 = 4100;
 
 static ENGINE_PORT_TX: OnceLock<watch::Sender<u16>> = OnceLock::new();
 
+/// Channel carrying token rotations from the settings command to the running
+/// engine, so a regenerate takes effect immediately instead of on the next
+/// engine start. The sender is created in `setup` alongside the port channel.
+static ENGINE_SECRET_TX: OnceLock<watch::Sender<Option<String>>> = OnceLock::new();
+
 fn port_path(dir: &std::path::Path) -> PathBuf {
     dir.join("port.json")
 }
@@ -1302,14 +1307,20 @@ fn gateway_token(app: tauri::AppHandle, reveal: bool) -> Result<GatewayToken, St
     })
 }
 
-/// Rotate the token for the next engine start. The running listener keeps the
-/// current token until it is rebuilt (port change or restart), so the response
-/// carries the new value and the UI says when it takes effect.
+/// Rotate the gateway token. The new secret is written to disk (so it survives
+/// restarts) and pushed to the running engine over the secret channel, so the
+/// lane endpoints demand it immediately. The response carries the new value
+/// for the UI to show or re-apply to saved editor integrations.
 #[tauri::command]
 fn gateway_token_regenerate(app: tauri::AppHandle) -> Result<GatewayToken, String> {
     let dir = store_dir(&app)?;
     let token = secret_generate()?;
     secret_save(&dir, &token)?;
+    // Best effort: the file on disk is the source of truth, so if the engine
+    // channel is not up the new token is picked up on the next engine start.
+    if let Some(sender) = ENGINE_SECRET_TX.get() {
+        let _ = sender.send(Some(token.clone()));
+    }
     let masked = mask_token(&token);
     Ok(GatewayToken {
         has: true,
@@ -1374,10 +1385,12 @@ fn main() {
             // A token missing/corrupt on disk is regenerated here; the same
             // loader backs the settings UI, so both agree on the live secret.
             let secret = secret_load(&dir).ok();
+            let (secret_tx, secret_rx) = watch::channel(secret);
+            let _ = ENGINE_SECRET_TX.set(secret_tx);
             let (port_tx, port_rx) = watch::channel(server_port);
             let _ = ENGINE_PORT_TX.set(port_tx);
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = server::serve(dir, server_port, secret, port_rx).await {
+                if let Err(err) = server::serve(dir, server_port, secret_rx, port_rx).await {
                     eprintln!("engine: {err}");
                 }
             });

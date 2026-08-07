@@ -2439,7 +2439,7 @@ $('tokenRegen').addEventListener('click', async () => {
     tokenVisible = true
     $('gatewayToken').value = info.token
     $('tokenReveal').textContent = 'Mask'
-    toast('New gateway token created — applies to engine starts', 'every saved editor integration is now stale', {
+    toast('New gateway token created — the engine uses it now', 'every saved editor integration is now stale', {
       label: 'Apply to editors',
       fn: applyTokenToEditors,
     })
