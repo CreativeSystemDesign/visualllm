@@ -104,6 +104,7 @@ globalThis.__t = {
   visibleColumns,
   browseMatches,
   cloneLaneShape,
+  usageCounts,
 };`
 vm.runInThisContext(`${source}\n;${exportLine}`, { filename: 'app.js' })
 const t = globalThis.__t
@@ -407,4 +408,42 @@ test('cloneLaneShape: no editor integration and no live park state on the clone'
   assert.deepEqual(clone.integrated_editors, [], 'integration stays a deliberate per-lane act')
   assert.equal(clone.parked, undefined, 'the clone is not born parked')
   assert.equal(clone.budget_hits, undefined, 'failure history does not ride along')
+})
+
+// ------------------------------------------------------------------- usage
+// The credit meter reads off the engine's per-lane ledger. These cases pin
+// the window boundary and the "a failure is also a request" rule, so the
+// renderer can never show a negative or a wrong-side-of-the-window count.
+
+test('usageCounts: counts requests and failures inside their windows', () => {
+  const now = 1_000_000
+  const hall = {
+    usage_requests: [now - 10, now - 600, now - 80_000],
+    usage_failures: [now - 10],
+  }
+  const u = t.usageCounts(hall, now)
+  assert.equal(u.req24, 3)
+  assert.equal(u.fail24, 1)
+  assert.equal(u.req7, 3)
+})
+
+test('usageCounts: the window boundary is strictly younger — exactly a window old is expired', () => {
+  const now = 1_000_000
+  const hour = 3600
+  const hall = {
+    // One request exactly 24h old and one exactly 7d old are both expired and
+    // must not count. The request 24h+1s old is outside the 24h window but
+    // still inside the 7d one — the windows nest, and both edges matter.
+    usage_requests: [now - 24 * hour, now - 24 * hour - 1, now - 7 * 24 * hour],
+    usage_failures: [now - 24 * hour],
+  }
+  const u = t.usageCounts(hall, now)
+  assert.equal(u.req24, 0)
+  assert.equal(u.req7, 2)
+  assert.equal(u.fail24, 0)
+})
+
+test('usageCounts: a lane with no ledger reads as zeros, never errors', () => {
+  const u = t.usageCounts({}, 1_000_000)
+  assert.deepEqual(u, { req24: 0, fail24: 0, req7: 0 })
 })

@@ -258,7 +258,7 @@ macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
 
 ## 9. Post-1.0 feature candidates (Phase 3, ranked)
 
-Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Items 1–3 shipped
+Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Items 1–4 shipped
 2026-08-06; the rest are not committed work. Re-confirm priority with the user
 before starting.
 
@@ -283,8 +283,12 @@ before starting.
    beside the original with undo. The clone carries no editor integration, no
    `parked` flag and no failure history: a place to try a fix, not a copy of a
    parked lane.
-4. **Usage/credit line** — rolling 24h / 7d per-lane request/failure counters
-   in the UI (read-only; thresholds are budget work).
+4. **Usage/credit line** — **done (2026-08-06).** Every lane's footer shows a
+   read-only rolling meter — `24h 42 req · 3 fail · 7d 310 req` — driven by an
+   engine-owned ledger in `lanes.json` (one line per request, pruned to 7
+   days). UI saves can no longer reset it: `lanes_write` merges engine
+   bookkeeping onto renderer saves, which also fixed a latent bug where a save
+   dropped the auto-park failure history.
 
 ---
 

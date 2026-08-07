@@ -496,6 +496,24 @@ function shortMember(label) {
   return id.includes('/') ? id.split('/').slice(1).join('/') : id
 }
 
+/** Rolling usage for a lane: requests and failures inside the trailing 24h and
+ *  7d windows, read off the engine's ledger. The engine prunes the ledger to
+ *  7 days on every write and records a failed request in both lists, so this
+ *  just counts timestamps still inside the window — the boundary matches the
+ *  engine's (`age < window` counts; exactly a window old is expired). Pure, so
+ *  the tests can pin the rollover. */
+function usageCounts(hall, now = Math.round(Date.now() / 1000)) {
+  const requests = hall.usage_requests || []
+  const failures = hall.usage_failures || []
+  const within = (list, window) => list.filter((at) => now - at < window).length
+  const HOUR = 3600
+  return {
+    req24: within(requests, 24 * HOUR),
+    fail24: within(failures, 24 * HOUR),
+    req7: within(requests, 7 * 24 * HOUR),
+  }
+}
+
 /** The hall footer: a slim status line that carries the words the lights only
  *  hint at. Live activity first, then the skip warnings, then what the hall was
  *  built for. Clicking it opens the hall's trail. A quiet hall shows one faint
@@ -506,12 +524,17 @@ function laneFoot(hall) {
   const parked = hall.members.filter((ref) => ref.disabled).length
   const criteria = (hall.criteria || []).map(criterionWords).join(' + ')
   const issues = state.incidents.filter((i) => i.hall === hall.slug).length
+  const usage = usageCounts(hall)
 
   const parts = []
   if (live) parts.push(`<span class="foot-live is-${live.kind}">${live.text}</span>`)
   if (dead) parts.push(`<span class="foot-dead">${dead} member${dead === 1 ? '' : 's'} not in any catalog — skipped at request time</span>`)
   if (parked) parts.push(`<span class="foot-parked">${parked} parked</span>`)
   if (issues) parts.push(`<span class="foot-issues">${issues} issue${issues === 1 ? '' : 's'} in the last 24h</span>`)
+  // The credit meter: only when the lane has actually moved in the last week,
+  // so a quiet hall keeps the single faint "ready" line instead of a row of
+  // zeros. Failures ride inside the request count, so the read is at a glance.
+  if (usage.req7) parts.push(`<span class="foot-usage" title="Rolling usage: requests and failures in the last 24h and 7 days">24h ${usage.req24} req · ${usage.fail24} fail · 7d ${usage.req7} req</span>`)
   if (criteria) parts.push(`<span class="foot-criteria">${attr(criteria)}</span>`)
 
   const body = parts.length

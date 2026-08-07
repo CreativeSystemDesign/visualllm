@@ -14,9 +14,10 @@
 //!     POST /lane/{slug}/v1/chat/completions
 //!
 //! `{slug}` is a placeholder — a request to `/lane/fast/v1/chat/completions`
-//! calls `chat()` with `slug = "fast"`. That function looks the lane up, works
-//! out which of its models can serve this particular request, tries them in
-//! your order, and streams back whichever one answers.
+//! calls `chat()` with `slug = "fast"`. That function counts the request on the
+//! lane's usage ledger, then hands off to `chat_inner`, which looks the lane
+//! up, works out which of its models can serve this particular request, tries
+//! them in your order, and streams back whichever one answers.
 //!
 //! ============================================================================
 //! THREE IDEAS THAT SHAPE EVERYTHING BELOW
@@ -83,6 +84,17 @@ use tokio::sync::{oneshot, watch};
 // `crate::` means "from this program", as opposed to an external library.
 use crate::{incidents, lanes, loopwatch, providers};
 
+/// Now, as unix seconds. Every timestamp in this engine — incidents, activity,
+/// budget hits, the usage ledger — is wall-clock time, so a restart can never
+/// invent a duration. A clock that can't be read (the pre-epoch corner) is
+/// zero, which is fine: the engine mostly compares timestamps to each other.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// One line of live lane activity, for the canvas.
 ///
 /// Fallback is the product, and it was invisible while it happened: the UI
@@ -94,10 +106,7 @@ use crate::{incidents, lanes, loopwatch, providers};
 /// A plain text append, not a JSON document: it is written on the hot path,
 /// read by polling, and trimmed by size rather than parsed.
 fn note_activity(dir: &std::path::Path, lane: &str, member: &str, phase: &str, detail: &str) {
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let at = unix_now();
     // Sanitize for a single line: details can carry provider error text.
     let scrub = |s: &str| s.replace(['\n', '\r'], " ");
     let line = format!(
@@ -159,10 +168,7 @@ fn note_incident(
     tools: u64,
     replay: Option<incidents::Replay>,
 ) {
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let at = unix_now();
     let kind = incidents::kind_of(note).to_string();
     incidents::record(
         dir,
@@ -262,6 +268,34 @@ fn consider_auto_park(dir: &std::path::Path, lane: &lanes::Lane, kind: &str, now
             replay: None,
         },
     );
+}
+
+/// Write one line of the per-lane usage ledger.
+///
+/// A request the lane accepts appends its timestamp to `usage_requests`; when
+/// that same request later ends in an error status, a separate call marks it
+/// in `usage_failures` — one line per REQUEST, never a failure counted as a
+/// second request. The lists are pruned to the 7-day window as they are
+/// written, so the file is bounded by a week of real traffic, not by anything
+/// a client can do. This is the same load-modify-save discipline
+/// `consider_auto_park` uses, with the same tolerated races: an atomic rename
+/// protects the file, and a lost update costs one count, not corruption.
+fn record_usage(dir: &std::path::Path, slug: &str, failed: bool, now: u64) {
+    let mut lanes = lanes::load(dir);
+    let Some(target) = lanes.iter_mut().find(|l| l.slug == slug) else {
+        return;
+    };
+    if failed {
+        target.usage_failures.push(now);
+    } else {
+        target.usage_requests.push(now);
+    }
+    lanes::prune_usage(&mut target.usage_requests, now);
+    lanes::prune_usage(&mut target.usage_failures, now);
+    // Best effort, like the activity feed: a failed write loses this one
+    // count and the next request carries the ledger on. The count is never
+    // worth failing a live request for.
+    let _ = lanes::save(dir, &lanes);
 }
 
 /// A member's catalog entry, honouring its provider when it has one.
@@ -1155,13 +1189,45 @@ async fn activity(
     Json(json!({ "activity": activity_read(&engine.dir, since) }))
 }
 
-/// `POST /lane/{slug}/v1/chat/completions` — the one that does the work.
+/// `POST /lane/{slug}/v1/chat/completions` — the counting wrapper around the
+/// work in `chat_inner`.
+///
+/// Usage is a per-lane ledger, not an incident: one line per REQUEST the lane
+/// accepted, so a request that burned through three members is one failure,
+/// not three. A request is counted once the lane exists — the 404 is answered
+/// before the ledger is touched, so a mistyped slug cannot spend a lane's
+/// meter — and it is counted as failed when the lane answered with an error
+/// status. The one thing this cannot see is a stream that dies AFTER the 200
+/// has been committed (the status is already out the door), and a coarse
+/// credit meter does not need that distinction.
+async fn chat(
+    State(engine): State<Engine>,
+    Path(slug): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let dir = engine.dir.clone();
+    let now = unix_now();
+    let known = lanes::load(&dir).iter().any(|l| l.slug == slug);
+    if known {
+        record_usage(&dir, &slug, false, now);
+    }
+    // The slug moves into the work; the ledger is already written for the
+    // request half, so only the failure half needs it again afterwards.
+    let response = chat_inner(State(engine), Path(slug.clone()), headers, Json(body)).await;
+    if known && !response.status().is_success() {
+        record_usage(&dir, &slug, true, now);
+    }
+    response
+}
+
+/// The work behind the lane endpoint.
 ///
 /// `async fn` means this function can pause partway through — at every `.await`
 /// below — and let other requests run while it waits on the network. That is
 /// how one process serves many simultaneous requests without a thread each.
 /// Unlike a PLC scan, execution here is genuinely interleaved.
-async fn chat(
+async fn chat_inner(
     State(engine): State<Engine>,
     Path(slug): Path<String>,
     headers: HeaderMap,
@@ -2310,6 +2376,8 @@ mod tests {
                 window_secs: 600,
             },
             budget_hits: Vec::new(),
+            usage_requests: Vec::new(),
+            usage_failures: Vec::new(),
         }
     }
 
@@ -2621,6 +2689,52 @@ mod tests {
         assert!(!lane.parked, "one failure after unparking must not re-park");
         assert_eq!(lane.budget_hits.len(), 1);
         assert_eq!(&*calls.lock().unwrap(), &["primary", "primary", "primary"]);
+        task.abort();
+    }
+
+    // --------------------------------------------------------------- usage
+
+    #[tokio::test]
+    async fn usage_ledger_counts_requests_and_failures_per_request() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+
+        // One successful request: `primary` fails, `fallback` answers. The
+        // ledger records the request, and because the LANE answered, no
+        // failure — a request that burned a member is not a failed request.
+        configure_test_files(dir.path(), address, &["primary", "fallback"]);
+        let ok = call_lane(dir.path(), false).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        let lane = &lanes::load(dir.path())[0];
+        assert_eq!(lane.usage_requests.len(), 1);
+        assert!(lane.usage_failures.is_empty());
+
+        // A request to a lane that does not exist answers 404 before the
+        // ledger is touched — a mistyped slug must not spend a lane's meter.
+        let missing = router(dir.path().to_path_buf(), None)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/lane/nope/v1/chat/completions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"x","messages":[]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let lane = &lanes::load(dir.path())[0];
+        assert_eq!(lane.usage_requests.len(), 1, "the 404 must not be counted");
+
+        // A lane with nothing but failure records the request AND the failure,
+        // still one line each. u32::MAX keeps the budget from parking it.
+        configure_park_test(dir.path(), address, u32::MAX);
+        let bad = call_lane(dir.path(), false).await;
+        assert_eq!(bad.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let lane = &lanes::load(dir.path())[0];
+        assert_eq!(lane.usage_requests.len(), 1);
+        assert_eq!(lane.usage_failures.len(), 1);
         task.abort();
     }
 }

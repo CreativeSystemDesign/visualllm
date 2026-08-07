@@ -231,7 +231,29 @@ pub struct Lane {
     /// inspectable in the file. Empty when running or parked.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub budget_hits: Vec<u64>,
+    /// Rolling request ledger: unix seconds of every client request this lane
+    /// accepted, newest last, pruned to `USAGE_WINDOW_SECS` on every write so
+    /// the file cannot grow without bound. One entry per REQUEST — a request
+    /// that burned through three members is one line, not three — and a failed
+    /// request also appears in `usage_failures`, so the two lists never need
+    /// cross-checking to read "24h 42 req · 3 fail".
+    ///
+    /// The engine owns this bookkeeping, exactly like `budget_hits`; the
+    /// renderer never writes it back (`lanes_write` merges engine-owned fields
+    /// onto whatever the UI saves). Kept on the lane so the meter survives
+    /// restarts and is inspectable in the file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usage_requests: Vec<u64>,
+    /// Timestamps of the requests above that failed — the lane answered with
+    /// an error status. Every entry here is also in `usage_requests`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usage_failures: Vec<u64>,
 }
+
+/// How far back the usage ledger reaches. Seven days, by design: a 24h meter
+/// reads straight off the tail, and a week of history is enough for a person
+/// to see a lane's rhythm without the file hoarding months of it.
+pub const USAGE_WINDOW_SECS: u64 = 7 * 86400;
 
 const STATE_SCHEMA_VERSION: u32 = 1;
 
@@ -291,6 +313,28 @@ pub fn save(dir: &std::path::Path, lanes: &[Lane]) -> Result<(), String> {
     write_state(store_path(dir), lanes)
 }
 
+/// Fold the engine's bookkeeping onto lanes coming back from the renderer.
+///
+/// The renderer sends only the fields it understands — it must never clobber
+/// the failure budget's history or the usage ledger, or any UI edit (a rename,
+/// a dial, a toggle) would silently reset the very counters this file is
+/// meant to persist. Matched by slug, so a lane the renderer created (a
+/// clone, say) simply starts its own empty ledger. Pure, so the merge is
+/// pinned by a test rather than left to the command layer.
+pub fn merge_engine_owned(prior: &[Lane], incoming: Vec<Lane>) -> Vec<Lane> {
+    incoming
+        .into_iter()
+        .map(|mut lane| {
+            if let Some(prior) = prior.iter().find(|l| l.slug == lane.slug) {
+                lane.budget_hits = prior.budget_hits.clone();
+                lane.usage_requests = prior.usage_requests.clone();
+                lane.usage_failures = prior.usage_failures.clone();
+            }
+            lane
+        })
+        .collect()
+}
+
 /// The budget decision itself, kept pure so it is unit-testable without a
 /// clock or a disk. `now` is unix seconds.
 ///
@@ -303,6 +347,14 @@ pub fn over_budget(budget: &LaneBudget, hits: &[u64], now: u64) -> bool {
         .filter(|hit| now.saturating_sub(**hit) < budget.window_secs)
         .count()
         >= budget.failures as usize
+}
+
+/// Trim a usage list to the 7-day rolling window. Anything whose age has
+/// reached the window is dead weight — it can never count again — and leaving
+/// it would only grow the file. The boundary matches `over_budget`: an entry
+/// exactly one window old is expired, strictly older means gone.
+pub fn prune_usage(hits: &mut Vec<u64>, now: u64) {
+    hits.retain(|at| now.saturating_sub(*at) < USAGE_WINDOW_SECS);
 }
 
 /// Park a lane in place: set the flag and stamp when. The members stay exactly
@@ -415,6 +467,8 @@ mod tests {
             parked_after: None,
             budget: LaneBudget::default(),
             budget_hits: Vec::new(),
+            usage_requests: Vec::new(),
+            usage_failures: Vec::new(),
         };
         save(dir.path(), std::slice::from_ref(&lane)).unwrap();
         let written = std::fs::read_to_string(store_path(dir.path())).unwrap();
@@ -462,6 +516,68 @@ mod tests {
     }
 
     #[test]
+    fn prune_usage_drops_entries_at_the_window_boundary_and_keeps_fresh_ones() {
+        // The ledger keeps everything inside the 7-day window; the 24h split
+        // is computed from this same list at read time. An entry exactly a
+        // week old is expired — the rollover that keeps the file bounded.
+        let now = 1_000_000;
+        let mut hits = vec![now, now - 604_799, now - 604_800, now - 604_801];
+        prune_usage(&mut hits, now);
+        assert_eq!(hits, vec![now, now - 604_799]);
+    }
+
+    #[test]
+    fn merge_engine_owned_preserves_bookkeeping_across_a_renderer_save() {
+        // What the engine wrote: a lane with budget and usage history. What
+        // the renderer sends back: the same lane with every engine-owned
+        // field absent (it whitelists its own fields). The merge must restore
+        // the history, or any UI edit would reset it.
+        let dir = tempfile::tempdir().unwrap();
+        let lane = Lane {
+            slug: "s".into(),
+            name: "N".into(),
+            members: Vec::new(),
+            criteria: Vec::new(),
+            suppress_reasoning: false,
+            unstick: false,
+            integrated_editors: Vec::new(),
+            parked: false,
+            parked_after: None,
+            budget: LaneBudget::default(),
+            budget_hits: vec![100, 200],
+            usage_requests: vec![1_000, 2_000],
+            usage_failures: vec![2_000],
+        };
+        save(dir.path(), std::slice::from_ref(&lane)).unwrap();
+
+        let prior = load(dir.path());
+        // The renderer's lane has no engine-owned fields at all.
+        let incoming = vec![Lane {
+            budget_hits: Vec::new(),
+            usage_requests: Vec::new(),
+            usage_failures: Vec::new(),
+            ..lane.clone()
+        }];
+        let merged = merge_engine_owned(&prior, incoming);
+        assert_eq!(merged[0].budget_hits, vec![100, 200]);
+        assert_eq!(merged[0].usage_requests, vec![1_000, 2_000]);
+        assert_eq!(merged[0].usage_failures, vec![2_000]);
+
+        // A lane the renderer created fresh (no prior) starts its own empty
+        // ledger instead of inheriting someone else's.
+        let fresh = Lane {
+            slug: "clone-copy".into(),
+            budget_hits: Vec::new(),
+            usage_requests: Vec::new(),
+            usage_failures: Vec::new(),
+            ..lane.clone()
+        };
+        let merged = merge_engine_owned(&prior, vec![fresh]);
+        assert!(merged[0].usage_requests.is_empty());
+        assert!(merged[0].budget_hits.is_empty());
+    }
+
+    #[test]
     fn park_and_unpark_round_trip_on_disk() {
         let dir = tempfile::tempdir().unwrap();
         let lane = Lane {
@@ -476,6 +592,8 @@ mod tests {
             parked_after: None,
             budget: LaneBudget::default(),
             budget_hits: vec![100, 200],
+            usage_requests: Vec::new(),
+            usage_failures: Vec::new(),
         };
         save(dir.path(), std::slice::from_ref(&lane)).unwrap();
 

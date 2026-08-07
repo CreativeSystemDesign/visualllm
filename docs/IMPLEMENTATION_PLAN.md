@@ -436,6 +436,43 @@ no thresholds in this cycle (budgets are 3.1).
 (increment), `renderer/app.js` (display).
 **Verify:** unit test for counter rollover across the window boundary.
 
+**Status: done (2026-08-06).** Implementation notes, where the plan and the
+shipped shape differ:
+- **No `state.rs` exists; the counters live on the `Lane`** in `lanes.rs`,
+  alongside `budget_hits` — the same "the engine owns this bookkeeping"
+  discipline, and the same file. `lanes_read` already serialises the full
+  `Lane`, so no new command is needed for the renderer to see them.
+- **One line per REQUEST, not per member attempt.** A request that burned
+  through three members is one failure, not three. `chat` (server.rs) is now
+  a thin counting wrapper around `chat_inner`: it records the request once
+  the lane exists (the 404 is answered before the ledger is touched), and
+  records the failure when the response status is not success. The one case
+  it cannot see — a stream dying after its 200 was committed — is exactly the
+  case a coarse credit meter does not need.
+- **The ledger is two timestamp lists** (`usage_requests`, `usage_failures`),
+  pruned to 7 days on every write (`lanes::prune_usage`), so the file is
+  bounded by a week of real traffic. A failed request's timestamp appears in
+  both lists; the renderer's pure `usageCounts` counts each window at read
+  time, so the "24h / 7d" numbers are never stale.
+- **`lanes_write` no longer lets the UI wipe engine bookkeeping.** The
+  renderer sends only the fields it understands; a renderer save used to drop
+  `budget_hits` (a latent bug this fixes), and would have dropped the ledger
+  too. `lanes::merge_engine_owned` now folds the prior file's engine-owned
+  fields onto the incoming lanes by slug. A clone (3.3) has no prior entry
+  and simply starts its own empty ledger.
+- **Display is a footer span, shown only when the lane has moved.** A quiet
+  hall keeps the single faint "ready" line instead of a row of zeros:
+  `24h 42 req · 3 fail · 7d 310 req`.
+- **Approximate tokens were dropped** as planned-if-measurable: streaming
+  responses make them unreliable without buffering, and the meter is about
+  volume, not spend.
+
+**Tests:** `prune_usage` boundary rollover and `merge_engine_owned` carry-over
+(lanes.rs); `usageCounts` window boundary + nesting, and the no-ledger case
+(renderer.test.js); a server integration test that a success counts one
+request, a 404 counts nothing, and an exhausted lane counts a request and a
+failure.
+
 ---
 
 ## Definition of Done (run for the whole tree before committing anything)

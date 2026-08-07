@@ -973,7 +973,12 @@ fn lanes_read(app: tauri::AppHandle) -> Result<Vec<lanes::Lane>, String> {
 
 #[tauri::command]
 fn lanes_write(app: tauri::AppHandle, lanes: Vec<lanes::Lane>) -> Result<(), String> {
-    lanes::save(&store_dir(&app)?, &lanes)
+    let dir = store_dir(&app)?;
+    // The renderer sends back only the fields it understands; the engine's
+    // bookkeeping rides back on the merge, so a UI edit can never reset the
+    // failure history or the usage ledger. See `lanes::merge_engine_owned`.
+    let prior = lanes::load(&dir);
+    lanes::save(&dir, &lanes::merge_engine_owned(&prior, lanes))
 }
 
 /// Lift an auto-parked lane back into rotation: clears the parked flag and

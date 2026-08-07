@@ -282,6 +282,30 @@ beside the original, without pulling in editor integration or live park state.
   order/dials preservation, deep-copy isolation, slug uniqueness, and the
   no-integration/no-park guarantees.
 
+### 15. Usage/credit line — rolling 24h / 7d counters (2026-08-06)
+
+**Done when:** each lane shows how much it has actually moved — requests and
+failures inside the trailing 24h and 7d — as a read-only line the engine
+owns, so no UI edit can ever reset it.
+
+- [x] **The engine keeps the ledger.** `Lane` carries two timestamp lists
+  (`usage_requests`, `usage_failures`) pruned to 7 days on every write. One
+  line per REQUEST, not per member attempt: `chat` counts the request once
+  the lane exists (the 404 answers before the ledger is touched) and marks
+  the failure when the response is not success. A stream that dies after its
+  200 is committed is the one thing the meter cannot see, and does not need.
+- [x] **UI edits can never reset the counters.** `lanes_write` folds the
+  prior file's engine-owned fields onto whatever the renderer saves
+  (`merge_engine_owned`), which also fixed a latent bug where a renderer save
+  dropped `budget_hits`. A clone starts its own empty ledger.
+- [x] **A quiet lane stays quiet.** The footer line appears only when the
+  lane has moved in the last week — `24h 42 req · 3 fail · 7d 310 req` —
+  never as a row of zeros on an idle hall.
+- [x] **The windows are pinned by tests.** Boundary rollover in Rust
+  (`prune_usage`), window nesting in the renderer (`usageCounts`), the
+  merge carry-over, and a server integration test for the request/failure/404
+  counting rules.
+
 ## Release criteria
 
 A first public release should meet all of these conditions:

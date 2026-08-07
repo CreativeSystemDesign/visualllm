@@ -866,6 +866,11 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 .hall-foot .foot-dead { color: var(--bad); }
 .hall-foot .foot-parked { color: var(--ink-dim); }
 .hall-foot .foot-issues { color: var(--warn); }
+/* The credit meter: a rolling count, not an alert — ink-dim so it stays out
+   of the way of the live story and the warnings, with a dot of colour only to
+   show it is a number worth reading, not a label. */
+.hall-foot .foot-usage { color: var(--ink-dim); }
+.hall-foot .foot-usage:hover { color: var(--ink); }
 .hall-foot .foot-criteria { color: var(--ink-faint); cursor: pointer; }
 .hall-foot .foot-criteria:hover { color: var(--signal); text-decoration: underline; }
 .hall-foot .foot-sep { color: var(--ink-faint); margin: 0 7px; }
