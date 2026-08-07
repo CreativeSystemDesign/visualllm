@@ -475,6 +475,213 @@ failure.
 
 ---
 
+## Phase 4 — Post-review hardening batch (second review round, 2026-08-06)
+
+Phases 0–3 above are DONE (~95% executed; marker commit `12808c1`, current
+`main` @ `da8f5fa`). A second full read of the codebase (all of `server.rs`
+2740 lines, `main.rs` 1668 lines, `renderer/app.js` 3489 lines, `lanes.rs`,
+`providers.rs`, `incidents.rs`, `index.html`) produced the seven gaps below.
+They are small and mostly independent. Recommended order: **4.1 → 4.3 → 4.2 →
+4.4 → 4.5 → 4.6 → 4.7**. Each section lists the finding, the design, the exact
+files/lines, the steps, and the tests. If HEAD has moved since `da8f5fa`,
+re-verify each referenced line before editing. After each fix run the global
+**Definition of Done** below and update `ROADMAP.md`.
+
+### 4.1 Status bar reads the engine, not the dead gateway scaffold (HIGH)
+
+**Finding.** `read_gateway` (main.rs:559-585) GETs `{gateway}/health` and parses
+it with `parse()` (main.rs:483-557) against the OLD Python gateway JSON shape
+(`raw["lanes"]`, `raw["routes"]`, `raw["telemetry"]`). The engine's `/health`
+(server.rs:1168-1175) returns only `{service, ok, lanes: count,
+models_cached: count}`. Result: `state.models` and `state.traffic` are always
+empty, so `renderStatusBar` (app.js:675-702) shows "no models" and "no traffic
+yet" forever. main.rs:415-422 marks `engine_url` as scaffolding "to be removed
+once the engine reports its own" — the engine now CAN via the per-lane ledger
+(`usage_requests`/`usage_failures`, pruned 7d; lanes.rs:224-250, 356).
+
+**Design.** The engine owns the ledger, so the engine reports the readouts:
+- Extend `/health` to also return `models_total` (sum of `lane.members.len()`
+  over all lanes) and the trailing-24h aggregates `requests_24h` /
+  `failures_24h` (a failed request appears in BOTH lists — lanes.rs:238-248 —
+  so `failures <= requests` always; reuse the same boundary as `usageCounts` in
+  app.js:508: `now - at < window` counts). Extract the aggregation into a pure
+  `fn usage_24h(lanes: &[Lane], now: u64) -> (u64, u64)` so it is unit-testable.
+- Rewrite `parse()` (main.rs:483-557) for the new shape; delete the dead
+  structs `Model` (main.rs:424-436), `Lane` (main.rs:438-446), `Traffic`
+  (main.rs:450-454) and the old branches. Change `State` (main.rs:456-464) to
+  `{ connected, gateway, error, lanes: u64, models_total: u64, requests_24h:
+  u64, failures_24h: u64 }`. Keep `connected/gateway/error` semantics — the
+  renderer's dot, host and offline text depend on them. Fix the stale
+  scaffolding comment at main.rs:415-422 (`engine_url` is still needed by
+  `read_gateway`; say so). Grep before deleting `as_u64` (main.rs:479-481) — it
+  may be used elsewhere.
+- `renderStatusBar` (app.js:675-702) reads the new fields:
+  - `statModels` → "`N` endpoints · `M` models" (N = `data.lanes`, M =
+    `data.models_total`).
+  - `statFastest` → the engine has no per-model tps, so compute it
+    **client-side** from `state.catalog` rows that carry a measured
+    `throughput` after `mergeStats` (the stats cache from
+    `providers::hydrate_stats`). Fall back to "no throughput measured yet".
+  - `statTraffic` → `data.requests_24h` / `data.failures_24h`, keeping the
+    failure-rate line.
+- The 4s repaint signature (app.js:3280-3286) currently omits traffic
+  deliberately (it ticks on every request). Now the status bar depends on the
+  aggregates, and they only change when a request settles — so add
+  `data.requests_24h`, `data.failures_24h`, `data.lanes`, `data.models_total`
+  to the signature. Also remap `refresh()` (app.js:3238-3244): stop copying
+  `data.models`/`data.traffic`; copy the new scalars into `state`.
+
+**Steps.** (1) server.rs: add `usage_24h` + extend `health`; unit-test the pure
+fn in the existing server test module. (2) main.rs: rewrite `State`/`parse`,
+delete dead structs, fix comment. (3) app.js: `refresh()` mapping + signature.
+(4) app.js: `renderStatusBar` rewrite. (5) index.html: no structural change
+needed (spans stay; only textContent changes).
+
+**Tests.** `cargo test` (new `usage_24h` cases: empty lanes → 0,0; hits inside
+and exactly-a-window-old; a failure counted in both lists). If a pure text
+helper emerges (e.g. `statusModelsText`), pin it in `renderer.test.js`. Manual:
+`cargo tauri dev` → real counts appear and `requests_24h` climbs after a curl.
+
+### 4.2 Setup curl example omits the auth header (401s) (HIGH)
+
+**Finding.** `laneCurlExample` (app.js:456-458) builds a curl with no
+`Authorization` header, but lane routes require `Bearer <token>`
+(server.rs:1831-1846, token checked at 1835-1870). Every copied example 401s.
+The renderer already can fetch the token via `api.gatewayToken(true)`
+(app.js:43) and the copy handler is at app.js:1911-1921.
+
+**Design.** Parameterize `laneCurlExample(slug, token)` to emit
+`-H 'Authorization: Bearer <token>'` when the token is non-empty. In the Setup
+handler, fetch the token first, then copy. On token error, toast and skip the
+copy — a headerless example is broken, not helpful. No new security surface:
+the renderer can already reveal the token on demand.
+
+**Steps.** (1) app.js:456-458 — add the token param and the header line.
+(2) app.js:1911-1921 — `const token = (await api.gatewayToken(true)).token`,
+pass to `laneCurlExample`. (3) Grep the repo for other copy-to-clipboard curl
+examples (settings note index.html:310-313 documents the header already;
+check any `docs/editor-integration.md` / README curl snippets) and fix any that
+omit it.
+
+**Tests.** `renderer.test.js`: `laneCurlExample` is pure — assert the header
+line appears with a token and is absent without. Manual via `preview.js`: copy
+from a lane, run the curl, expect a real chat response.
+
+### 4.3 (merged into 4.1 — status bar readouts, traffic, fastest)
+
+### 4.4 Auto-park budget is schema-only — surface it in the UI (MEDIUM)
+
+**Finding.** `Lane.budget` (`LaneBudget { failures: u32, window_secs: u64 }`,
+lanes.rs:137-150, default 5/600) is written by the renderer on clone
+(app.js:1767) and save (app.js:3178) and consumed by the engine
+(`consider_auto_park`, server.rs:215-263; `over_budget`, lanes.rs) — but there
+is no control anywhere in the UI. Phase 3.1's plan text said "surface it in the
+lane header" and it never landed.
+
+**Design.** A lane-scoped popover in the same family as `#memberPop`, opened
+from a small button in the hall header (app.js:589-613, between the Setup
+button and the toggles). Two number fields: "Auto-park after N failures" and
+"within M minutes". No OK button (same philosophy as the member dials,
+app.js:1455-1459): editing writes `hall.budget` and calls `saveLanes()`
+immediately. Blank a field → reset to the default (5 / 600); `LaneBudget` is a
+non-optional Copy struct, so there is deliberately NO "off" switch — that would
+be a schema change, out of scope (the budget is "deliberately coarse and
+lane-wide" by design, lanes.rs:135-136). Clamp in the renderer: failures
+1..9999, window_secs 60..86400 (mirror the `max_tokens` dial).
+
+**Steps.** (1) lanes.rs: verify `over_budget` no-ops only at
+`hits.len() < failures` — confirm blanking isn't needed; pin behavior with an
+existing/added unit test. (2) index.html: add `#lanePop` next to `#memberPop`
+(line ~329) with the two inputs. (3) app.js: add `lanePopTarget { slug }`,
+open/close logic mirroring `openMemberPop` (app.js:1476-1489) incl. Escape,
+close button and outside-press close; on input, clamp, write `hall.budget`,
+`saveLanes()`. (4) renderer/egl.css: mirror the `.dials` rules for the new
+popover (two fields, slightly wider). (5) The clone (app.js:1767) and save
+(app.js:3178) paths already carry `budget` — no change.
+
+**Tests.** `renderer.test.js`: a pure clamp helper (e.g. `clampBudget`) — test
+boundaries and blank→default. Manual: set failures=1/window=60s, hit the lane
+with a failing request, watch it auto-park; unpark via header or
+notification-center button.
+
+### 4.5 Mute is per-kind globally; ROADMAP claims per-(lane, kind) (MEDIUM)
+
+**Finding.** `notif.muted` is a `Set` of kind strings (app.js:1040,
+1434-1437), checked as `notif.muted.has(i.kind)` at app.js:1060 (bell), 1080
+(toasts) and 1189 (center), with the mute button carrying only `data-mute=kind`
+(app.js:1206). Muting a kind on one lane silences it on every lane. ROADMAP §9
+says per-(lane, kind) mute landed.
+
+**Design.** Key mutes as `"${hall}::${kind}"` and add a pure helper
+`notifMuted(kind, hall)` that returns true when the set holds the composite key
+OR a bare `kind` (legacy entries from before this change keep working). Switch
+all four call sites to `notifMuted(i.kind, i.hall)`. The mute button (app.js:1206)
+gains `data-mute-hall="${latest.hall}"` and text
+"Ignore this type on this lane" / "Ignored on this lane — click to restore";
+the handler (app.js:1433-1441) toggles the composite key. Persistence stays in
+localStorage key `notif.muted`; `notifPersist` (app.js:1043-1051) writes the set
+as-is (legacy bare keys are honored, never rewritten).
+
+**Steps.** (1) app.js: add `notifMuted`, update 1060 / 1080 / 1189 / 1206 /
+1433-1441. (2) ROADMAP.md §9 stays as-is (it becomes true).
+
+**Tests.** `renderer.test.js`: `notifMuted` — bare key matches any lane,
+composite matches only its lane, absent → false. Manual via `preview.js`: mute
+a kind on one lane; confirm another lane still badges/toasts.
+
+### 4.6 Re-integrate all editors after token rotation (MEDIUM)
+
+**Finding.** `gateway_token_regenerate` (main.rs:1330-1340) writes a new secret;
+the toast (app.js:2287) says "re-integrate editors" — but re-integration is
+manual per lane per editor (`editor_integrate_lane`, main.rs:281-350). After
+rotation every existing `chatLanguageModels.json` entry carries a dead token.
+
+**Design.** New command `editor_reapply_token(app)` that walks
+`editor_chat_models_paths` (main.rs:148-174) and, for each existing file,
+rewrites the `httpHeaders` of every model under a provider named `visualllm` to
+`{Authorization: Bearer <current secret>}` and refreshes each `url` to the
+current port (`port_load`, main.rs:1218) — port moves break entries the same
+way. Other providers and lane order untouched (same discipline as
+`vscode_merge_lane`, main.rs:205-220). Write atomically via
+`vscode_write_models_at` (main.rs:190-199). Return one `VscodeIntegrationResult`
+per editor (reuse main.rs:100) including a lanes-updated count; a missing file
+or no `visualllm` provider is a success (0), not an error. Factor the per-editor
+rewrite into `vscode_reapply_auth(path, token, port) -> Result<usize, String>`
+so the test module (main.rs:1591) can exercise it on temp dirs without touching
+real user config.
+
+**Steps.** (1) main.rs: `vscode_reapply_auth` + `editor_reapply_token`; register
+in the invoke handler list. (2) app.js: `editorReapplyToken` in the `api` bridge
+(app.js:46 area). (3) index.html token panel (314-319): add an "Apply to
+editors" button; handler calls it and toasts per-editor results. (4) The regen
+handler (app.js:2282-2290): keep regeneration non-destructive, but follow the
+"re-integrate editors" toast with an action button "Apply" (toast already
+supports actions, app.js:1686/1704-1712).
+
+**Tests.** `vscode_tests` (main.rs:1591): existing `visualllm` entry → headers +
+url rewritten; non-visualllm provider untouched; missing file → 0; unparseable
+file → Err; a stale-url entry → url refreshed. Manual: integrate a lane, rotate
+the token, Apply, open `chatLanguageModels.json`, confirm the new token + url.
+
+### 4.7 Minor: cap the toast stack and pause polling when hidden (LOW)
+
+**Finding.** Failure bursts stack unbounded notif toasts (`showNotifToast`,
+app.js:1090-1123). `refresh()` (app.js:3228) and the three 1s/700ms intervals
+(app.js:3481, 3485, 3489) keep running while the window is hidden.
+
+**Design.** (1) In `showNotifToast`, before appending, evict the oldest cards
+while `$('notifStack').children.length >= 3`. (2) At the top of `refresh()`:
+`if (document.hidden) return`; in `bootstrap()` add a `visibilitychange` listener
+that calls `refresh()` when the document becomes visible (catches up the 4s
+clock). Guard the three short intervals the same way.
+
+**Steps.** app.js only; no backend. Manual: minimize the window, confirm no
+polling in devtools network, restore → bar updates.
+
+**Tests.** Manual (above). Not unit-testable without DOM stubs — skip.
+
+---
+
 ## Definition of Done (run for the whole tree before committing anything)
 
 ```

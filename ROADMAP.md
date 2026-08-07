@@ -306,6 +306,36 @@ owns, so no UI edit can ever reset it.
   merge carry-over, and a server integration test for the request/failure/404
   counting rules.
 
+### 16. Post-review hardening batch — status bar, auth, budget, mute (2026-08-06, round 2)
+
+**Done when:** the status bar reads the engine's own ledger (not the dead
+Python-gateway scaffold), every copied example and doc snippet authenticates,
+the auto-park budget is tunable in the UI, mutes are per-(lane, kind) as
+advertised, and a token rotation can be re-applied to every editor in one step.
+
+- [x] **Status bar reads the engine.** `/health` now reports `models_total`
+  plus trailing-24h `requests_24h`/`failures_24h` aggregated from the engine's
+  usage ledger (`usage_24h`, unit-tested); `State::parse` and the dead
+  `Model`/`Lane`/`Traffic` gateway-scaffold structs in `main.rs` are gone. The
+  bar shows "N endpoints · M models", the fastest measured catalog speed, and
+  real 24h traffic.
+- [x] **Copied setup examples authenticate.** `laneCurlExample` carries
+  `Authorization: Bearer <token>` (fetched at copy time); README curl/API-key
+  notes updated to match the bearer-token requirement.
+- [x] **Auto-park budget is tunable.** The gauge in a hall's header opens the
+  lane budget popover (failures / window minutes), saved on every change, amber
+  when tuned away from the 5-in-10-minutes standard.
+- [x] **Mute is per-(lane, kind).** `notifMuted(kind, hall)` keys mutes as
+  `hall::kind`, honouring legacy bare-kind entries so nothing saved breaks —
+  this makes workstream 9's claim true rather than aspirational.
+- [x] **One-click re-apply after token rotation.** `editor_reapply_token`
+  rewrites every integrated editor's `Authorization` headers and URLs in place
+  (`vscode_reapply_auth`, tested), reachable from the settings token panel and
+  offered as an action on the regenerate toast.
+- [x] **Hidden-window + burst hygiene.** Polling and the short clocks pause
+  while the window is hidden (with a visibilitychange catch-up), and the toast
+  stack is capped at three so a failure burst cannot bury the screen.
+
 ## Release criteria
 
 A first public release should meet all of these conditions:
