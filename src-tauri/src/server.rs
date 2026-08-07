@@ -1164,13 +1164,45 @@ async fn models(State(engine): State<Engine>) -> Json<Value> {
     Json(json!({ "object": "list", "data": data }))
 }
 
-/// `GET /health` — a cheap "are you alive" for scripts and for us.
+/// Requests and budgetable failures across every lane inside the trailing 24h,
+/// read off the engine's ledger. A failed request is recorded in BOTH lists
+/// (lanes.rs), so `failures <= requests` always. The boundary matches the
+/// renderer's `usageCounts` and `over_budget`: `age < window` counts, exactly a
+/// window old is expired.
+fn usage_24h(lanes: &[lanes::Lane], now: u64) -> (u64, u64) {
+    const DAY: u64 = 24 * 3600;
+    let mut requests = 0u64;
+    let mut failures = 0u64;
+    for lane in lanes {
+        requests += lane
+            .usage_requests
+            .iter()
+            .filter(|&&at| now.saturating_sub(at) < DAY)
+            .count() as u64;
+        failures += lane
+            .usage_failures
+            .iter()
+            .filter(|&&at| now.saturating_sub(at) < DAY)
+            .count() as u64;
+    }
+    (requests, failures)
+}
+
+/// `GET /health` — a cheap "are you alive" for scripts and for us, and the
+/// status bar's numbers: the live lane/model counts and the trailing-24h
+/// request/failure ledger the renderer shows as traffic.
 async fn health(State(engine): State<Engine>) -> Json<Value> {
+    let lanes = lanes::load(&engine.dir);
+    let members: usize = lanes.iter().map(|lane| lane.members.len()).sum();
+    let (requests, failures) = usage_24h(&lanes, unix_now());
     Json(json!({
         "service": "VisualLLM",
         "ok": true,
-        "lanes": lanes::load(&engine.dir).len(),
+        "lanes": lanes.len(),
+        "models_total": members,
         "models_cached": providers::cache_read(&engine.dir).len(),
+        "requests_24h": requests,
+        "failures_24h": failures,
     }))
 }
 
@@ -2736,5 +2768,32 @@ mod tests {
         assert_eq!(lane.usage_requests.len(), 1);
         assert_eq!(lane.usage_failures.len(), 1);
         task.abort();
+    }
+
+    #[test]
+    fn usage_24h_counts_hits_inside_the_window_and_failures_once() {
+        let now = 1_000_000u64;
+        let lane = lanes::Lane {
+            slug: "l".into(),
+            name: "l".into(),
+            members: vec![],
+            criteria: vec![],
+            suppress_reasoning: false,
+            unstick: false,
+            parked: false,
+            parked_after: None,
+            integrated_editors: vec![],
+            budget: lanes::LaneBudget::default(),
+            budget_hits: vec![],
+            usage_requests: vec![now - 3600, now - 10, now - 24 * 3600, now + 5],
+            usage_failures: vec![now - 60, now - 24 * 3600],
+        };
+        // Three requests inside the window: the two fresh ones and the future
+        // timestamp (which saturates to age 0 — counted, matching the
+        // renderer's `now - at < window`), while the one exactly a window old
+        // is expired. One failure inside it; a failed request is in both
+        // lists, so the failure is counted once here too.
+        assert_eq!(usage_24h(&[lane], now), (3, 1));
+        assert_eq!(usage_24h(&[], now), (0, 0));
     }
 }

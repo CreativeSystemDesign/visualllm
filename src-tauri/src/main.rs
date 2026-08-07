@@ -412,55 +412,97 @@ fn editor_remove_lane(
     }
 }
 
-/// Where the old Python gateway lives.
+/// Refresh the bearer token (and the endpoint URL, which shares the port) on
+/// every VisualLLM entry in one editor's chatLanguageModels.json.
 ///
-/// SCAFFOLDING. This app read its lanes from that gateway before it had an
-/// engine of its own. All that remains is the status bar's live health and
-/// throughput readings, and it comes out once the engine reports its own.
+/// This is the "re-integrate all" after a token rotation or a port move:
+/// `gateway_token_regenerate` writes a new secret, and the token this writes
+/// is read from the same file the running engine will use on its next start.
+/// Returns the number of lane entries rewritten; a missing file or a config
+/// with no visualllm provider is a success with 0 — there is nothing to fix.
+fn vscode_reapply_auth(path: &std::path::Path, token: &str, port: u16) -> Result<usize, String> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let mut config: VscodeChatModels =
+        serde_json::from_str(&text).map_err(|e| format!("could not parse config: {e}"))?;
+
+    let mut rewritten = 0;
+    for provider in config.iter_mut() {
+        if provider.name != "visualllm" {
+            continue;
+        }
+        for model in provider.models.iter_mut() {
+            model.url = format!("http://127.0.0.1:{port}/lane/{}/v1", model.id);
+            model.http_headers =
+                Some(serde_json::json!({ "Authorization": format!("Bearer {token}") }));
+            rewritten += 1;
+        }
+    }
+    if rewritten > 0 {
+        vscode_write_models_at(path, &config)?;
+    }
+    Ok(rewritten)
+}
+
+/// Re-apply the current gateway token (and port) to every lane already
+/// integrated into every editor.
+///
+/// Rotating the token invalidates every `Authorization` header an editor
+/// saved; moving the port breaks the saved URLs the same way. This walks the
+/// same files integrate/remove touch and rewrites headers + URLs in place,
+/// leaving other providers and lane order alone. Each editor reports what it
+/// got, so the UI can name the failures instead of guessing.
+#[tauri::command]
+fn editor_reapply_token(app: tauri::AppHandle) -> Result<Vec<VscodeIntegrationResult>, String> {
+    let dir = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
+    let port = port_load(&dir);
+    let token = secret_load(&dir).map_err(|e| format!("could not read the gateway token: {e}"))?;
+
+    let mut results = Vec::new();
+    for (path, editor_name) in editor_chat_models_paths()? {
+        match vscode_reapply_auth(&path, &token, port) {
+            Ok(rewritten) => results.push(VscodeIntegrationResult {
+                editor: editor_name.to_string(),
+                path: path.display().to_string(),
+                written: rewritten > 0,
+                error: None,
+            }),
+            Err(error) => results.push(VscodeIntegrationResult {
+                editor: editor_name.to_string(),
+                path: path.display().to_string(),
+                written: false,
+                error: Some(error),
+            }),
+        }
+    }
+    Ok(results)
+}
+
+/// The loopback engine's base address. `read_gateway` reaches it for the
+/// status bar's live health and ledger numbers — the engine reports its own
+/// state now, no gateway sidecar involved.
 fn engine_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-#[derive(Serialize)]
-struct Model {
-    id: String,
-    klass: String,
-    healthy: bool,
-    available: bool,
-    reason: Option<String>,
-    context: u64,
-    tps: Option<f64>,
-    #[serde(rename = "tpsSource")]
-    tps_source: Option<String>,
-    ttfb: Option<f64>,
-}
-
-#[derive(Serialize)]
-struct Lane {
-    slug: String,
-    name: String,
-    members: Vec<String>,
-    kind: String,
-    desc: String,
-    computed: bool,
-}
-
-/// Lifetime totals across every lane. Health is a snapshot; this is the record
-/// of what the gateway has actually been asked to do.
-#[derive(Serialize, Default)]
-struct Traffic {
-    requests: u64,
-    failures: u64,
-}
-
+/// The status bar's live picture of the engine, as `/health` reports it. The
+/// engine owns the ledger — per-lane `usage_requests`/`usage_failures`, pruned
+/// to 7 days — so the counts and the trailing-24h traffic come from there,
+/// not from a gateway sidecar. A failed request is in both lists, so
+/// `failures_24h <= requests_24h` always.
 #[derive(Serialize)]
 struct State {
     connected: bool,
     gateway: String,
     error: Option<String>,
-    models: Vec<Model>,
-    lanes: Vec<Lane>,
-    traffic: Traffic,
+    lanes: u64,
+    models_total: u64,
+    #[serde(rename = "requests_24h")]
+    requests_24h: u64,
+    #[serde(rename = "failures_24h")]
+    failures_24h: u64,
 }
 
 impl State {
@@ -469,9 +511,10 @@ impl State {
             connected: false,
             gateway,
             error: Some(error.chars().take(200).collect()),
-            models: Vec::new(),
-            lanes: Vec::new(),
-            traffic: Traffic::default(),
+            lanes: 0,
+            models_total: 0,
+            requests_24h: 0,
+            failures_24h: 0,
         }
     }
 }
@@ -481,78 +524,14 @@ fn as_u64(value: Option<&Value>) -> u64 {
 }
 
 fn parse(raw: &Value, gateway: String) -> State {
-    let models: Vec<Model> = raw["lanes"]
-        .as_array()
-        .map(|lanes| {
-            lanes
-                .iter()
-                .map(|lane| Model {
-                    id: lane["id"].as_str().unwrap_or_default().to_string(),
-                    klass: lane["class"].as_str().unwrap_or("other").to_string(),
-                    healthy: lane["healthy"].as_bool().unwrap_or(false),
-                    available: lane["available"].as_bool().unwrap_or(false),
-                    reason: lane["unavailable_reason"].as_str().map(str::to_string),
-                    context: as_u64(lane.get("context")),
-                    tps: lane["tps"]["value"].as_f64(),
-                    tps_source: lane["tps"]["source"].as_str().map(str::to_string),
-                    ttfb: lane["median_ttfb_s"].as_f64(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let known: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
-
-    let lanes: Vec<Lane> = raw["routes"]
-        .as_object()
-        .map(|routes| {
-            routes
-                .iter()
-                .map(|(slug, route)| {
-                    let kind = route["kind"].as_str().unwrap_or("ladder").to_string();
-                    // `resolves_to` is a list only for ordered routes; the
-                    // computed ones report a sentence instead, and start empty.
-                    let members = route["resolves_to"]
-                        .as_array()
-                        .map(|ids| {
-                            ids.iter()
-                                .filter_map(Value::as_str)
-                                .filter(|id| known.contains(id))
-                                .map(str::to_string)
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    Lane {
-                        slug: slug.clone(),
-                        name: slug.clone(),
-                        members,
-                        computed: kind == "auto" || kind == "speed",
-                        kind,
-                        desc: route["desc"].as_str().unwrap_or_default().to_string(),
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let traffic = raw["telemetry"]
-        .as_object()
-        .map(|lanes| {
-            lanes.values().fold(Traffic::default(), |mut total, lane| {
-                total.requests += as_u64(lane.get("requests"));
-                total.failures += as_u64(lane.get("failures"));
-                total
-            })
-        })
-        .unwrap_or_default();
-
     State {
         connected: true,
         gateway,
         error: None,
-        models,
-        lanes,
-        traffic,
+        lanes: as_u64(raw.get("lanes")),
+        models_total: as_u64(raw.get("models_total")),
+        requests_24h: as_u64(raw.get("requests_24h")),
+        failures_24h: as_u64(raw.get("failures_24h")),
     }
 }
 
@@ -1522,6 +1501,7 @@ fn main() {
             editor_list,
             editor_integrate_lane,
             editor_remove_lane,
+            editor_reapply_token,
             state_export,
             state_import
         ])
@@ -1589,7 +1569,10 @@ mod port_tests {
 
 #[cfg(test)]
 mod vscode_tests {
-    use super::{vscode_merge_lane, vscode_write_models_at, VscodeChatModels, VscodeModelEntry};
+    use super::{
+        vscode_merge_lane, vscode_reapply_auth, vscode_write_models_at, VscodeChatModels,
+        VscodeModelEntry,
+    };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1663,6 +1646,77 @@ mod vscode_tests {
         assert_eq!(back[0].models[0].id, "lane-a");
         // No stale temp file left behind.
         assert!(!dir.join("chatLanguageModels.json.tmp").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reapply_rewrites_headers_and_urls_but_never_other_providers() {
+        let dir = temp_dir();
+        let path = dir.join("chatLanguageModels.json");
+        // Two visualllm lanes on a stale port/token, plus an unrelated provider
+        // with its own URL and a custom httpHeaders that must survive.
+        fs::write(
+            &path,
+            r#"[
+                {"name":"Mistral","vendor":"customendpoint","models":[
+                    {"id":"m","name":"M","url":"https://example.com/m","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000,"httpHeaders":{"Authorization":"Bearer keeper"}}
+                ]},
+                {"name":"visualllm","vendor":"customendpoint","models":[
+                    {"id":"lane-a","name":"A","url":"http://127.0.0.1:4100/lane/lane-a/v1","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000,"httpHeaders":{"Authorization":"Bearer dead"}},
+                    {"id":"lane-b","name":"B","url":"http://127.0.0.1:9999/lane/lane-b/v1","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000}
+                ]}
+            ]"#,
+        )
+        .unwrap();
+
+        let rewritten = vscode_reapply_auth(&path, "fresh", 4200).unwrap();
+        assert_eq!(rewritten, 2);
+
+        let back: VscodeChatModels =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let mistral = back.iter().find(|p| p.name == "Mistral").unwrap();
+        assert_eq!(mistral.models[0].url, "https://example.com/m");
+        assert_eq!(
+            mistral.models[0].http_headers,
+            Some(serde_json::json!({ "Authorization": "Bearer keeper" }))
+        );
+
+        let visualllm = back.iter().find(|p| p.name == "visualllm").unwrap();
+        assert_eq!(
+            visualllm.models[0].url,
+            "http://127.0.0.1:4200/lane/lane-a/v1"
+        );
+        assert_eq!(
+            visualllm.models[1].url,
+            "http://127.0.0.1:4200/lane/lane-b/v1"
+        );
+        for model in &visualllm.models {
+            assert_eq!(
+                model.http_headers,
+                Some(serde_json::json!({ "Authorization": "Bearer fresh" }))
+            );
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reapply_missing_file_is_a_success_with_nothing_to_do() {
+        let dir = temp_dir();
+        assert_eq!(
+            vscode_reapply_auth(&dir.join("nope.json"), "fresh", 4200).unwrap(),
+            0
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reapply_unparseable_config_is_an_error() {
+        let dir = temp_dir();
+        let path = dir.join("chatLanguageModels.json");
+        fs::write(&path, "{ not json").unwrap();
+        assert!(vscode_reapply_auth(&path, "fresh", 4200).is_err());
+        // A failed reapply never clobbers the file.
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
         fs::remove_dir_all(dir).unwrap();
     }
 }
