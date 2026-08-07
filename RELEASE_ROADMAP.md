@@ -258,7 +258,7 @@ macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
 
 ## 9. Post-1.0 feature candidates (Phase 3, ranked)
 
-Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Item 1 shipped
+Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Items 1–2 shipped
 2026-08-06; the rest are not committed work. Re-confirm priority with the user
 before starting.
 
@@ -269,8 +269,14 @@ before starting.
    unparks it, and records an `auto_parked` incident with the receipt. Header
    button + notification action both unpark and reset the budget. Budget is
    configurable per lane in `lanes.json`.
-2. **Request replay in the notification center** — retry a failed request from
-   the incident record (confirmation-gated; replay spends money).
+2. **Request replay in the notification center** — **done (2026-08-06).** Every
+   failed request is snapshotted (method/path/body, capped at 32 KiB) on the
+   incident; the notification center offers a two-step confirmed "Replay this
+   request" action that re-sends it through the lane and shows the resulting
+   trail. The captured request never reaches the webview — replay runs
+   server-side with the engine's own gateway token — and a replayed failure is
+   recorded as a fresh incident. Also fixed the Test button to send the gateway
+   token and repaired the renderer's `hall` read of incidents.
 3. **Lane cloning** — duplicate a lane with members/params/criteria; no
    auto-write of the editor integration.
 4. **Usage/credit line** — rolling 24h / 7d per-lane request/failure counters

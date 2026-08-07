@@ -1001,11 +1001,114 @@ async fn stats_refresh(app: tauri::AppHandle) -> Result<usize, String> {
     Ok(providers::hydrate_stats(&dir, &models, &configured).await)
 }
 
+/// What the webview may see of an incident. The renderer reads the lane as
+/// `hall` (the canvas's word) — the disk record calls it `lane`, and this view
+/// is where the two meet. The captured `replay` never crosses this boundary:
+/// the UI learns only whether a replay is available, and the actual retry runs
+/// in `lane_replay`, which re-applies the engine's own gateway token — so a
+/// credential a client put in its request can never reach the webview.
+#[derive(Serialize)]
+struct IncidentView {
+    at: u64,
+    hall: String,
+    member: String,
+    kind: String,
+    evidence: String,
+    no_think: bool,
+    loopwatch: bool,
+    tools: u64,
+    id: String,
+    replayable: bool,
+}
+
+impl From<incidents::Incident> for IncidentView {
+    fn from(i: incidents::Incident) -> Self {
+        IncidentView {
+            at: i.at,
+            hall: i.lane,
+            member: i.member,
+            kind: i.kind,
+            evidence: i.evidence,
+            no_think: i.no_think,
+            loopwatch: i.loopwatch,
+            tools: i.tools,
+            id: i.id,
+            replayable: i.replay.is_some(),
+        }
+    }
+}
+
 /// What went wrong lately, with receipts — the UI turns these into
 /// explanations on the canvas. Read-only; the engine is the only writer.
 #[tauri::command]
-fn incidents_read(app: tauri::AppHandle) -> Result<Vec<incidents::Incident>, String> {
-    Ok(incidents::load(&store_dir(&app)?))
+fn incidents_read(app: tauri::AppHandle) -> Result<Vec<IncidentView>, String> {
+    Ok(incidents::load(&store_dir(&app)?)
+        .into_iter()
+        .map(IncidentView::from)
+        .collect())
+}
+
+/// Retry a failed request from its incident record. The request snapshot was
+/// captured on the engine's disk, never shown to the webview; this command
+/// replays it server-side — through the lane's own endpoint, with the engine's
+/// gateway token — and reports status, trail, and a short message. Replaying
+/// contacts the provider again and can spend money; the UI gates it behind a
+/// confirmation.
+#[tauri::command]
+async fn lane_replay(app: tauri::AppHandle, id: String) -> Result<LaneTestResult, String> {
+    let dir = store_dir(&app)?;
+    let incident = incidents::load(&dir)
+        .into_iter()
+        .find(|i| i.id == id)
+        .ok_or_else(|| {
+            "no replay recorded for this incident — it may have aged out of the recent list"
+                .to_string()
+        })?;
+    let replay = incident
+        .replay
+        .ok_or_else(|| "this incident has no captured request to replay".to_string())?;
+    let port = port_load(&dir);
+    let token = secret_load(&dir)?;
+    let url = format!("http://127.0.0.1:{port}{}", replay.path);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .bearer_auth(&token)
+        .body(replay.body)
+        .send()
+        .await
+        .map_err(|e| format!("replay could not reach the engine: {e}"))?;
+    let status = response.status().as_u16();
+    let served_by = response
+        .headers()
+        .get("x-visualllm-served-by")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let trail = response
+        .headers()
+        .get("x-visualllm-trail")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body = response.text().await.unwrap_or_default();
+    let message = if status < 300 {
+        "the lane answered — see the trail for which member served it".to_string()
+    } else {
+        serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("the lane returned HTTP {status}"))
+    };
+    Ok(LaneTestResult {
+        ok: status < 300,
+        status,
+        served_by,
+        trail,
+        message,
+    })
 }
 
 #[tauri::command]
@@ -1044,7 +1147,11 @@ struct LaneTestResult {
 /// asks Rust for this result; it never receives general network access.
 #[tauri::command]
 async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult, String> {
-    let port = port_load(&store_dir(&app)?);
+    let dir = store_dir(&app)?;
+    let port = port_load(&dir);
+    // The lane endpoints demand the gateway token; a probe must present it or
+    // it measures the auth wall, not the lane.
+    let token = secret_load(&dir)?;
     let url = format!("http://127.0.0.1:{port}/lane/{slug}/v1/chat/completions");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -1052,6 +1159,7 @@ async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult
         .map_err(|e| e.to_string())?;
     let response = client
         .post(url)
+        .bearer_auth(&token)
         // A probe must exercise the same path a real request takes. Budgets
         // under 16 bypass the engine's commit gate (server.rs), so a tiny
         // probe would pass lanes that return empty or reasoning-only bodies —
@@ -1385,6 +1493,7 @@ fn main() {
             lanes_write,
             lane_unpark,
             incidents_read,
+            lane_replay,
             pool_read,
             pool_write,
             activity_read,

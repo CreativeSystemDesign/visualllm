@@ -31,6 +31,13 @@ const KEEP: usize = 200;
 
 const STATE_SCHEMA_VERSION: u32 = 1;
 
+/// The largest captured replay body worth keeping. A chat body can carry a
+/// whole conversation; past this the request is still recorded as an incident,
+/// just not a replayable one — a snapshot that had to be truncated to fit
+/// would replay a different request than the one that failed, which is worse
+/// than no replay at all.
+pub const REPLAY_BODY_CAP: usize = 32 * 1024;
+
 #[derive(Serialize, Deserialize)]
 struct VersionedState<T> {
     schema_version: u32,
@@ -47,6 +54,22 @@ where
         .filter(|state| state.schema_version <= STATE_SCHEMA_VERSION)
         .map(|state| state.data)
         .or_else(|| serde_json::from_str(&text).ok())
+}
+
+/// A captured client request, kept so the notification center can offer to
+/// retry it. Method and path are stored because the record is self-contained
+/// (an incident should still replay correctly if the caller's route ever
+/// changes); the body is the JSON the lane was asked to serve.
+///
+/// The body lives on disk with the incident and never reaches the webview:
+/// `incidents_read` returns only a `replayable` flag, and replay happens
+/// server-side, re-applying the engine's own gateway token rather than any
+/// credential a client may have put in its request.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Replay {
+    pub method: String,
+    pub path: String,
+    pub body: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -73,10 +96,31 @@ pub struct Incident {
     /// How demanding the request was, for context: tool count matters when
     /// explaining schema fumbles and loops.
     pub tools: u64,
+    /// Stable identity, assigned on record. Records written before this field
+    /// existed load with an empty id; they are not replayable anyway.
+    #[serde(default)]
+    pub id: String,
+    /// The request that failed, when it was small enough to keep faithfully.
+    /// `None` (or missing — older records) means no replay is offered.
+    #[serde(default)]
+    pub replay: Option<Replay>,
 }
 
 pub fn store_path(dir: &std::path::Path) -> PathBuf {
     dir.join("incidents.json")
+}
+
+/// A unique-enough id: the second it happened, plus 64 bits from the OS
+/// CSPRNG. Two failures in the same second must not share an id, because the
+/// replay action targets one specific incident. Collision odds across the
+/// ring are effectively zero without a counter to persist.
+fn fresh_id(at: u64) -> String {
+    let mut bytes = [0u8; 8];
+    let mut rand = 1u64;
+    if getrandom::getrandom(&mut bytes).is_ok() {
+        rand = u64::from_ne_bytes(bytes);
+    }
+    format!("{at}-{rand:016x}")
 }
 
 pub fn load(dir: &std::path::Path) -> Vec<Incident> {
@@ -95,9 +139,21 @@ pub fn load(dir: &std::path::Path) -> Vec<Incident> {
 /// Append one incident, trimming to the newest `KEEP`. Best-effort by
 /// design: evidence-keeping must never fail a request that is already
 /// having a bad day.
-pub fn record(dir: &std::path::Path, incident: Incident) {
+pub fn record(dir: &std::path::Path, mut incident: Incident) {
     if incident.evidence.trim().is_empty() {
         return; // no receipts, no record — the rule, mechanically enforced
+    }
+    // The id is assigned here so every path into the ring produces one, and
+    // the cap is enforced here so a caller can never grow the file unbounded.
+    if incident.id.is_empty() {
+        incident.id = fresh_id(incident.at);
+    }
+    if incident
+        .replay
+        .as_ref()
+        .is_some_and(|r| r.body.len() > REPLAY_BODY_CAP)
+    {
+        incident.replay = None;
     }
     let mut all = load(dir);
     all.push(incident);
@@ -202,6 +258,8 @@ mod tests {
             no_think: false,
             loopwatch: false,
             tools: 0,
+            id: String::new(),
+            replay: None,
         }
     }
 
@@ -296,6 +354,97 @@ mod tests {
             ),
             "loop_futile"
         );
+    }
+
+    #[test]
+    fn every_record_gets_a_unique_id_that_survives_reload() {
+        let dir = std::env::temp_dir().join(format!("vll-inc-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut a = incident("first");
+        let mut b = incident("second");
+        a.at = 7;
+        b.at = 7; // same second must not mean the same record
+        record(&dir, a);
+        record(&dir, b);
+        let all = load(&dir);
+        let ids: Vec<&str> = all.iter().map(|i| i.id.as_str()).collect();
+        assert!(!ids[0].is_empty() && !ids[1].is_empty());
+        assert_ne!(ids[0], ids[1], "same-second incidents must not share an id");
+        let reloaded = load(&dir);
+        assert_eq!(
+            reloaded.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            ids,
+            "the id is part of the record, not a session artifact"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replay_round_trips_and_oversized_bodies_are_dropped() {
+        let dir = std::env::temp_dir().join(format!("vll-inc-replay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut keep = incident("keep");
+        keep.replay = Some(Replay {
+            method: "POST".into(),
+            path: "/lane/fast/v1/chat/completions".into(),
+            body: r#"{"model":"fast"}"#.into(),
+        });
+        record(&dir, keep);
+        let stored = &load(&dir)[0];
+        let replay = stored.replay.as_ref().expect("the snapshot survives");
+        assert_eq!(replay.method, "POST");
+        assert_eq!(replay.path, "/lane/fast/v1/chat/completions");
+        assert_eq!(replay.body, r#"{"model":"fast"}"#);
+
+        let mut huge = incident("too big to keep faithfully");
+        huge.replay = Some(Replay {
+            method: "POST".into(),
+            path: "/lane/fast/v1/chat/completions".into(),
+            body: "x".repeat(REPLAY_BODY_CAP + 1),
+        });
+        record(&dir, huge);
+        let last = load(&dir).pop().unwrap();
+        assert!(
+            last.replay.is_none(),
+            "a body that had to be truncated must not be replayable"
+        );
+        assert!(
+            std::fs::read_to_string(store_path(&dir)).unwrap().len() < REPLAY_BODY_CAP * 2,
+            "the cap bounds the file even when callers forget"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn records_without_id_or_replay_still_load() {
+        // Older versions wrote incidents with neither field. They must read
+        // back (defaults) rather than break the whole ring.
+        let dir = std::env::temp_dir().join(format!("vll-inc-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = serde_json::json!({
+            "schema_version": 1,
+            "data": [{
+                "at": 1,
+                "lane": "legacy",
+                "member": "m@p",
+                "kind": "unattributed",
+                "evidence": "old receipts",
+                "no_think": false,
+                "loopwatch": false,
+                "tools": 0
+            }]
+        });
+        std::fs::write(store_path(&dir), serde_json::to_string(&old).unwrap()).unwrap();
+        let loaded = load(&dir);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].lane, "legacy");
+        assert_eq!(loaded[0].id, "", "missing id defaults to empty");
+        assert!(
+            loaded[0].replay.is_none(),
+            "missing replay defaults to none"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

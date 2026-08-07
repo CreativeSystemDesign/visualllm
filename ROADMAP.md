@@ -235,6 +235,31 @@ on the canvas.
 - [x] **Visible and reversible.** `DIAGNOSIS.auto_parked` explains the parking
   with the engine's receipt; the incident notifies like any other kind.
 
+### 13. Request replay in the notification center (2026-08-06)
+
+**Done when:** a failed request leaves a structured snapshot behind, and the
+notification center can retry it — confirmation-gated, without the captured
+request ever crossing to the webview.
+
+- [x] **Incidents carry a replayable snapshot.** `incidents.rs` records an
+  optional `replay` (method/path/body) alongside every failure, plus a stable
+  `id` assigned on record. The body is capped at 32 KiB; an oversized request
+  is still an incident, just not a replayable one.
+- [x] **The webview never sees the request.** `incidents_read` returns an
+  `IncidentView` — every field the renderer reads plus a `replayable` flag;
+  the captured body stays on the engine's disk. This view also maps the disk's
+  `lane` to the canvas's `hall`, fixing per-hall filtering that had silently
+  read an undefined field.
+- [x] **Replay runs server-side through the lane.** `lane_replay` (main.rs)
+  looks the incident up by id, re-POSTs the captured body through the lane's
+  own endpoint with the engine's gateway token, and reports status / served-by /
+  trail. A replayed failure is recorded as a fresh incident like any other.
+- [x] **Confirmation-gated in the UI.** The Replay action is two-step: first
+  click arms ("it can spend money"), second fires; the armed id survives
+  re-renders and the button disables while in flight.
+- [x] **Probes present the token.** `lane_test` sends the gateway bearer token,
+  so the Test button measures the lane, not the auth wall.
+
 ## Release criteria
 
 A first public release should meet all of these conditions:

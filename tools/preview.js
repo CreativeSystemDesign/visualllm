@@ -69,13 +69,30 @@ const providers = readJson('providers.json', []).map((p) => ({
   has_key: Boolean(p.key),
 }))
 
+// The incident view the real app receives: the disk record calls the lane
+// `lane`, the canvas reads `hall`, and the captured request never leaves the
+// backend — the UI sees only a `replayable` flag. Mapped here so the preview
+// shows exactly what the webview would see.
+const incidents = readJson('incidents.json', []).map((i) => ({
+  at: i.at,
+  hall: i.hall || i.lane || '',
+  member: i.member,
+  kind: i.kind,
+  evidence: i.evidence,
+  no_think: i.no_think,
+  loopwatch: i.loopwatch,
+  tools: i.tools,
+  id: i.id || '',
+  replayable: Boolean(i.replay && i.replay.body),
+}))
+
 const fixtures = {
   providers,
   lanes: readJson('lanes.json', []),
   pool: readJson('pool.json', []),
   catalog: readJson('catalog.json', []),
   stats: readJson('endpoint-stats.json', { fetched_at: 0, models: {} }),
-  incidents: readJson('incidents.json', []),
+  incidents,
 }
 
 // The real markup, restyled to absolute paths so the output can live
@@ -132,6 +149,14 @@ const html = indexHtml
         statsRead: () => ok(data.stats),
         statsRefresh: () => ok(0),
         incidentsRead: () => ok(data.incidents),
+        laneReplay: (id) => {
+          // The engine replays server-side; the preview just records a
+          // successful replay (and reports it) so the two-step flow can be
+          // driven. The replayed request itself is never simulated — no
+          // provider is contacted from a browser.
+          console.log('[preview] laneReplay', id)
+          return ok({ ok: true, status: 200, served_by: 'preview', trail: 'preview replay (no provider contacted)', message: 'the lane answered — see the trail for which member served it' })
+        },
         editorList: () => ok(['VS Code', 'VS Code Insiders', 'Windsurf']),
         editorIntegrateLane: (slug, name, editor) => {
           console.log('[preview] editorIntegrateLane', { slug, name, editor })
@@ -155,13 +180,15 @@ const html = indexHtml
       setTimeout(() => {
         data.incidents.push({
           at: Math.floor(Date.now() / 1000),
-          lane: (data.lanes[0] || {}).slug || 'preview',
+          id: 'synthetic-1',
+          hall: (data.lanes[0] || {}).slug || 'preview',
           member: 'preview/synthetic-member',
           kind: 'reasoning_burn',
           evidence: 'finish_reason: length — 379 of 600 tokens were hidden reasoning (synthetic preview event)',
           no_think: false,
           loopwatch: false,
           tools: 0,
+          replayable: true,
         })
       }, 10000)
     })()

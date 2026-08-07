@@ -36,6 +36,7 @@ const api = T
       statsRead: () => T.core.invoke('stats_read'),
       statsRefresh: () => T.core.invoke('stats_refresh'),
       laneTest: (slug) => T.core.invoke('lane_test', { slug }),
+      laneReplay: (id) => T.core.invoke('lane_replay', { id }),
       activityRead: (since) => T.core.invoke('activity_read', { since }),
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
@@ -1113,6 +1114,12 @@ function closeNotifications() {
  *  `null` is the whole system. */
 let notifLaneFilter = null
 
+/** Replay is a two-step action: the first click arms it ("this can spend
+ *  money"), the second fires. Arming lives here rather than on the button so
+ *  a re-render (the four-second poll, any other action) doesn't silently
+ *  disarm the confirmation a user already gave. */
+let replayArmedId = null
+
 function renderNotifCenter() {
   const list = $('notifList')
 
@@ -1167,6 +1174,7 @@ function renderNotifCenter() {
         <div class="issue-actions">
           ${fix === 'no-think' ? `<button class="btn-ghost issue-fix" data-fix="no-think" data-hall="${attr(latest.hall)}">Turn on “no thinking” for this endpoint</button>` : ''}
           ${fix === 'unpark' ? `<button class="btn-ghost issue-fix" data-fix="unpark" data-hall="${attr(latest.hall)}">Unpark this endpoint</button>` : ''}
+          ${latest.replayable && latest.id ? `<button class="btn-ghost issue-replay${replayArmedId === latest.id ? ' is-armed' : ''}" data-replay="${attr(latest.id)}">${replayArmedId === latest.id ? 'Click again to confirm — it can spend money' : 'Replay this request'}</button>` : ''}
           <button class="btn-ghost issue-mute" data-mute="${attr(latest.kind)}">${
             muted ? 'Ignored — click to restore' : 'Ignore this type'
           }</button>
@@ -1353,6 +1361,36 @@ $('notifScrim').addEventListener('click', async (event) => {
       await unparkLane(hall)
       renderNotifCenter()
     }
+    return
+  }
+
+  const replay = event.target.closest('.issue-replay')
+  if (replay) {
+    const id = replay.dataset.replay
+    // First click arms, second fires. The arm survives re-renders (replayArmedId),
+    // so a poll ticking over between the two clicks can't eat a confirmation.
+    if (replayArmedId !== id) {
+      replayArmedId = id
+      renderNotifCenter()
+      return
+    }
+    replayArmedId = null
+    replay.disabled = true
+    replay.textContent = 'Replaying…'
+    try {
+      const r = await api.laneReplay(id)
+      toast(
+        `Replay: HTTP ${r.status}${r.served_by ? ` · served by ${r.served_by}` : ''}`,
+        r.trail ? `trail: ${r.trail}` : r.message
+      )
+    } catch (err) {
+      toast(`Replay could not run: ${err}`)
+    }
+    // A replay that failed was recorded as a new incident; a replay that
+    // succeeded left nothing. Either way, re-read and repaint.
+    state.incidents = (await api.incidentsRead()) || []
+    renderNotifCenter()
+    renderBell()
     return
   }
 

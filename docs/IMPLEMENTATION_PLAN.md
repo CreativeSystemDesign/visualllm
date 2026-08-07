@@ -361,6 +361,42 @@ trail. Replaying spends money — require a confirmation click.
 **Verify:** server test that replay re-enters the lane and records a new
 incident/trail; manual confirmation-gate test.
 
+**Status: done (2026-08-06).** Implementation notes, where the plan and the
+shipped shape differ:
+- **The replay body never reaches the webview.** `incidents_read` now returns
+  an `IncidentView` (main.rs) carrying every field the renderer reads plus a
+  `replayable` flag — never the captured request. `lane_replay` runs entirely
+  server-side: it looks the incident up by its new `id`, re-POSTs the captured
+  body through the lane's own endpoint with the engine's gateway token, and
+  returns only status / served-by / trail / message. A credential a client put
+  in its request can never cross the bridge.
+- **Incidents gained an `id`** (assigned on record in `incidents.rs`, CSPRNG
+  suffix so same-second failures stay distinct) and an optional
+  `replay: {method, path, body}` — both `#[serde(default)]`, so older
+  incidents.json files load unchanged (and are simply not replayable).
+  `REPLAY_BODY_CAP` (32 KiB) bounds the file: an oversized body is still an
+  incident, just not a replayable one — enforced in `record()` so no caller
+  can grow the file unbounded.
+- **Pre-existing `hall` bug fixed.** Incidents serialize the lane as `lane`
+  but the renderer always read `incident.hall` — so per-hall filtering, toast
+  meta, and the no-think/unpark fixes were `undefined`. The `IncidentView`
+  maps `lane → hall`, which repairs every renderer read without touching the
+  disk format.
+- **`lane_test` now sends the gateway token.** The lane endpoints demand
+  `Bearer <token>` when a secret exists; the probe previously measured the
+  auth wall and would stack `401 Unauthorized`.
+- **Replay is a two-step action, not resend-on-click.** First click arms the
+  button ("Click again to confirm — it can spend money"), second fires; the
+  armed id lives in `replayArmedId` so a four-second poll can't disarm a
+  confirmation already given, and the button disables while in flight. A
+  failed replay is recorded as a new incident by the engine and the center
+  re-reads and repaints.
+
+**Tests:** incident `id` uniqueness + reload, replay round-trip + cap
+enforcement, and migration of records lacking `id`/`replay` (all in
+`incidents.rs`); server integration test that a failed member leaves a
+replayable snapshot (method/path/body verified).
+
 ### 3.3 Lane cloning
 **Design:** duplicate a lane (new slug, name "X copy"), copying members,
 params, and criteria in-app. Do **not** auto-write the editor integration for

@@ -148,8 +148,17 @@ pub fn activity_read(dir: &std::path::Path, since: u64) -> Vec<Value> {
 
 /// Record one failure with its receipts, so the canvas can explain it later.
 /// The note given here is the same text the trail and the log carry — one set
-/// of facts, three audiences.
-fn note_incident(dir: &std::path::Path, lane: &lanes::Lane, member: &str, note: &str, tools: u64) {
+/// of facts, three audiences. The optional `replay` is the client request that
+/// failed, captured once per request and kept so the notification center can
+/// offer to retry it.
+fn note_incident(
+    dir: &std::path::Path,
+    lane: &lanes::Lane,
+    member: &str,
+    note: &str,
+    tools: u64,
+    replay: Option<incidents::Replay>,
+) {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -166,9 +175,27 @@ fn note_incident(dir: &std::path::Path, lane: &lanes::Lane, member: &str, note: 
             no_think: lane.suppress_reasoning,
             loopwatch: lane.unstick,
             tools,
+            id: String::new(),
+            replay,
         },
     );
     consider_auto_park(dir, lane, &kind, at);
+}
+
+/// Snapshot a request for later replay, or `None` when the body is too big to
+/// keep faithfully. Only the bytes that can be re-sent are stored; the
+/// caller's Authorization header is not part of the body and never touches the
+/// record — `lane_replay` re-applies the engine's own gateway token.
+fn capture_replay(slug: &str, body: &Value) -> Option<incidents::Replay> {
+    let body = serde_json::to_string(body).ok()?;
+    if body.len() > incidents::REPLAY_BODY_CAP {
+        return None;
+    }
+    Some(incidents::Replay {
+        method: "POST".into(),
+        path: format!("/lane/{slug}/v1/chat/completions"),
+        body,
+    })
 }
 
 /// Give a lane a budget of transient failures before the engine parks it.
@@ -231,6 +258,8 @@ fn consider_auto_park(dir: &std::path::Path, lane: &lanes::Lane, kind: &str, now
             no_think: lane.suppress_reasoning,
             loopwatch: lane.unstick,
             tools: 0,
+            id: String::new(),
+            replay: None,
         },
     );
 }
@@ -1216,6 +1245,9 @@ async fn chat(
     // wrong guesses about live behaviour were made from TCP state alone the
     // night this went in.
     let tool_count = body["tools"].as_array().map(|t| t.len()).unwrap_or(0) as u64;
+    // The request as it stands right now, kept in case a member fails it — the
+    // notification center can then offer to retry exactly this.
+    let replay = capture_replay(&slug, &body);
     eprintln!(
         "engine: {} <- {} request: {} tools, budget {}, needs[vision={} tools={} ~{}tok], no-think={}",
         lane.slug,
@@ -1262,7 +1294,14 @@ async fn chat(
                         "; every call returned the identical result: {excerpt}"
                     ));
                 }
-                note_incident(&engine.dir, lane, &suspect, &receipts, tool_count);
+                note_incident(
+                    &engine.dir,
+                    lane,
+                    &suspect,
+                    &receipts,
+                    tool_count,
+                    replay.clone(),
+                );
                 body["messages"] = Value::Array(repaired);
                 unstuck = Some(broke);
             }
@@ -1442,10 +1481,10 @@ async fn chat(
                             let out =
                                 success_headers(&lane.slug, &served, &tried, unstuck.as_ref())
                                     .header("content-type", "text/event-stream");
-                            let replay = futures_util::stream::iter(
+                            let prelude_stream = futures_util::stream::iter(
                                 prelude.into_iter().map(Ok::<Bytes, reqwest::Error>),
                             );
-                            let joined = futures_util::StreamExt::chain(replay, rest);
+                            let joined = futures_util::StreamExt::chain(prelude_stream, rest);
                             let stream =
                                 futures_util::TryStreamExt::map_err(joined, std::io::Error::other);
                             // Build the response but handle any body-construction error
@@ -1456,7 +1495,14 @@ async fn chat(
                                 Err(err) => {
                                     let why = format!("failed to build streaming response: {err}");
                                     eprintln!("engine: {} respond error: {why}", lane.slug);
-                                    note_incident(&engine.dir, lane, &label, &why, tool_count);
+                                    note_incident(
+                                        &engine.dir,
+                                        lane,
+                                        &label,
+                                        &why,
+                                        tool_count,
+                                        replay.clone(),
+                                    );
                                     tried.push(Attempt::failed(&label, &why));
                                     return error(
                                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -1470,7 +1516,14 @@ async fn chat(
                         Gated::Dead(why) => {
                             eprintln!("engine: {}   {label} died in-stream: {why}", lane.slug);
                             note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
-                            note_incident(&engine.dir, lane, &label, &why, tool_count);
+                            note_incident(
+                                &engine.dir,
+                                lane,
+                                &label,
+                                &why,
+                                tool_count,
+                                replay.clone(),
+                            );
                             tried.push(Attempt::failed(&label, &why));
                             continue;
                         }
@@ -1486,7 +1539,14 @@ async fn chat(
                         Err(err) => {
                             let why = format!("failed to read upstream body: {err}");
                             eprintln!("engine: {}   {label} read error: {why}", lane.slug);
-                            note_incident(&engine.dir, lane, &label, &why, tool_count);
+                            note_incident(
+                                &engine.dir,
+                                lane,
+                                &label,
+                                &why,
+                                tool_count,
+                                replay.clone(),
+                            );
                             tried.push(Attempt::failed(&label, &why));
                             continue;
                         }
@@ -1517,7 +1577,14 @@ async fn chat(
                                 Err(err) => {
                                     let why = format!("failed to build blocking response: {err}");
                                     eprintln!("engine: {} respond error: {why}", lane.slug);
-                                    note_incident(&engine.dir, lane, &label, &why, tool_count);
+                                    note_incident(
+                                        &engine.dir,
+                                        lane,
+                                        &label,
+                                        &why,
+                                        tool_count,
+                                        replay.clone(),
+                                    );
                                     tried.push(Attempt::failed(&label, &why));
                                     return error(
                                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -1531,7 +1598,14 @@ async fn chat(
                         Err(why) => {
                             eprintln!("engine: {}   {label} unusable body: {why}", lane.slug);
                             note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
-                            note_incident(&engine.dir, lane, &label, &why, tool_count);
+                            note_incident(
+                                &engine.dir,
+                                lane,
+                                &label,
+                                &why,
+                                tool_count,
+                                replay.clone(),
+                            );
                             tried.push(Attempt::failed(&label, &why));
                             continue;
                         }
@@ -1560,7 +1634,7 @@ async fn chat(
                     Err(err) => {
                         let why = format!("failed to build response stream: {err}");
                         eprintln!("engine: {} respond error: {why}", lane.slug);
-                        note_incident(&engine.dir, lane, &label, &why, tool_count);
+                        note_incident(&engine.dir, lane, &label, &why, tool_count, replay.clone());
                         tried.push(Attempt::failed(&label, &why));
                         return error(
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1598,6 +1672,7 @@ async fn chat(
                                 status.as_u16()
                             ),
                             tool_count,
+                            replay.clone(),
                         );
                         tried.push(Attempt::failed(&label, "request rejected"));
                         return error(status, message, "upstream_rejected", tried);
@@ -1605,7 +1680,7 @@ async fn chat(
                     Verdict::TryNext(why) => {
                         eprintln!("engine: {}   {label} failed: {why}", lane.slug);
                         note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
-                        note_incident(&engine.dir, lane, &label, &why, tool_count);
+                        note_incident(&engine.dir, lane, &label, &why, tool_count, replay.clone());
                         tried.push(Attempt::failed(&label, &why));
                     }
                 }
@@ -1629,7 +1704,7 @@ async fn chat(
                 };
                 eprintln!("engine: {}   {label} unreachable: {why}", lane.slug);
                 note_activity(&engine.dir, &lane.slug, &label, "failed", &why);
-                note_incident(&engine.dir, lane, &label, &why, tool_count);
+                note_incident(&engine.dir, lane, &label, &why, tool_count, replay.clone());
                 tried.push(Attempt::failed(&label, &why));
             }
         }
@@ -2353,6 +2428,32 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("fallback"));
         assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_requests_are_captured_for_replay() {
+        let dir = tempdir().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (address, task) = start_fake_provider(calls.clone()).await;
+        configure_test_files(dir.path(), address, &["primary", "fallback"]);
+
+        // `primary` fails, `fallback` answers — so the request both failed a
+        // member and succeeded, and the failure must leave a replay snapshot.
+        let response = call_lane(dir.path(), false).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let incidents = incidents::load(dir.path());
+        let captured = incidents
+            .iter()
+            .find(|i| i.replay.is_some())
+            .expect("a failed member must leave a replayable request behind");
+        let replay = captured.replay.as_ref().unwrap();
+        assert_eq!(replay.method, "POST");
+        assert_eq!(replay.path, "/lane/fallback/v1/chat/completions");
+        let body: Value = serde_json::from_str(&replay.body).unwrap();
+        assert_eq!(body["model"], "fallback");
+        assert!(replay.body.contains("hello"));
         task.abort();
     }
 
