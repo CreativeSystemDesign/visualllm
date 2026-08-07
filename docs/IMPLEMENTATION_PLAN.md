@@ -404,6 +404,27 @@ the clone (integration stays a deliberate per-lane action).
 **Files:** renderer-only (`app.js` + `index.html` action).
 **Verify:** `npm run smoke`; manual: clone preserves member order/dials.
 
+**Status: done (2026-08-06).** Implementation notes:
+- **The Duplicate button lives in the lane footer**, beside Integrate — a
+  pill with its own icon and label, not another icon squeezed into the
+  header's already-full action row.
+- **A clone carries the whole definition:** member order, each member's
+  params and park state, criteria, `suppress_reasoning`/`unstick` toggles,
+  and the budget config (`failures`/`window_secs`). Dials and criteria are
+  deep copies, so tuning the clone never touches the original.
+- **A clone starts clean of everything live:** no `integrated_editors`, no
+  `parked`, no `budget_hits`. It is a place to try a fix, not a second copy
+  of a lane that is itself parked.
+- **Fresh slug generation** reuses the "suffix until unique" pattern
+  (`hallway-copy`, `hallway-copy-2`, …) from `newLane`, and the clone is
+  inserted right after the original.
+- **`cloneLaneShape` is pure** and exported to the test harness, so the
+  carry-over contract (order/dials preserved, deep-copied, no editor
+  integration, no park state) is pinned down by tests.
+
+**Tests:** four `cloneLaneShape` cases — definition/order/dials intact, deep
+copies not references, slug uniqueness, and no integration/park state carried.
+
 ### 3.4 Usage/credit line (24h / 7d per-lane counters)
 **Context:** `server.rs` already tracks per-lane traffic counters and the
 activity feed exists; nothing aggregates spend/volume for the user.

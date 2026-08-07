@@ -260,6 +260,28 @@ request ever crossing to the webview.
 - [x] **Probes present the token.** `lane_test` sends the gateway bearer token,
   so the Test button measures the lane, not the auth wall.
 
+### 14. Lane cloning (2026-08-06)
+
+**Done when:** one click duplicates a lane — the same members (order, dials and
+park state), criteria, toggles and budget — under a fresh slug and name,
+beside the original, without pulling in editor integration or live park state.
+
+- [x] **Duplicate button in the lane footer.** A labeled pill beside Integrate
+  (`Duplicate`), one click per lane, sharing the footer's management actions
+  rather than crowding the header's icon row.
+- [x] **A clone is a definition, not a state.** `cloneLaneShape` carries over
+  the whole lane definition (members and their params/criteria as deep copies,
+  `suppress_reasoning`, `unstick`, budget config) and deliberately omits
+  `integrated_editors`, `parked` and `budget_hits` — integrating a lane into an
+  editor stays an explicit act, and the clone is a place to try a fix.
+- [x] **Fresh slug, beside the original.** Unique-suffix generation
+  (`hallway-copy`, `hallway-copy-2`, …) matches `newLane`; the clone is spliced
+  right after its source with the same undo/toast as the other destructive
+  edits.
+- [x] **The carry-over contract is tested.** Four `cloneLaneShape` cases pin
+  order/dials preservation, deep-copy isolation, slug uniqueness, and the
+  no-integration/no-park guarantees.
+
 ## Release criteria
 
 A first public release should meet all of these conditions:

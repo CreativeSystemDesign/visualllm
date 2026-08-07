@@ -238,6 +238,7 @@ const ICON = {
   brain: '<svg viewBox="0 0 16 16"><path d="M8 2.5a2.6 2.6 0 0 0-2.6 2.6c-1.5.3-2.4 1.5-2.4 3 0 1 .5 1.9 1.2 2.4-.1.3-.2.7-.2 1 0 1.6 1.4 2.9 3 2.9.5 0 1-.1 1.4-.4.3.2.6.3 1 .3a2.9 2.9 0 0 0 2.9-2.9c0-.3 0-.7-.2-1 .8-.5 1.3-1.4 1.3-2.4 0-1.5-1-2.7-2.4-3A2.6 2.6 0 0 0 8 2.5z"/></svg>',
   loop: '<svg viewBox="0 0 16 16"><path d="M3 8a5 5 0 0 1 8.5-3.5M13 8a5 5 0 0 1-8.5 3.5M11.5 2v2.5H9M4.5 14v-2.5H7"/></svg>',
   plug: '<svg viewBox="0 0 16 16"><path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v1.5a3.5 3.5 0 0 1-3.5 3.5 3.5 3.5 0 0 1-3.5-3.5z"/></svg>',
+  duplicate: '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="7.5" height="7.5" rx="1.6"/><path d="M10.5 5.5V4.2A1.2 1.2 0 0 0 9.3 3H4.2A1.2 1.2 0 0 0 3 4.2v5.1A1.2 1.2 0 0 0 4.2 10.5h1.3"/></svg>',
   pause: '<svg viewBox="0 0 16 16"><path d="M5.5 3.5v9M10.5 3.5v9"/></svg>',
   check: '<svg viewBox="0 0 12 12"><path d="M2.5 6.5l2.5 2.5 4.5-5.5"/></svg>',
 }
@@ -594,7 +595,11 @@ function laneEl(hall) {
 
   const foot = document.createElement('div')
   foot.className = 'hall-foot'
-  foot.innerHTML = `${laneFoot(hall)}${laneIdeButton(hall)}`
+  // The Duplicate pill sits between the activity line and Integrate — two
+  // footer-level lane actions, one for copying a definition, one for pushing
+  // it into an editor. The clone stays editor-free, so the two buttons stay
+  // neighbours without implying they are one action.
+  foot.innerHTML = `${laneFoot(hall)}<button class="hall-act lane-clone" title="Duplicate this endpoint — same members, dials, criteria and toggles, no editor integration">${ICON.duplicate} Duplicate</button>${laneIdeButton(hall)}`
 
   el.append(head, procession, foot)
   return el
@@ -1706,6 +1711,45 @@ function mutateLanes(label, mutate) {
   })
 }
 
+/** The shape of a lane clone: the same members (order, dials and park state),
+ *  criteria, toggles and budget — the whole definition of the lane — under a
+ *  fresh slug and name. Deliberately NOT carried over: editor integration
+ *  (adding a lane to an editor stays an explicit per-lane act) and live state
+ *  like `parked` or the failure history (a clone is a place to try a fix, not
+ *  a second copy of a lane that is itself parked). Pure, so the tests can pin
+ *  down exactly what a clone carries. */
+function cloneLaneShape(source, takenSlugs) {
+  const base = `${source.slug}-copy`
+  let slug = base
+  let n = 2
+  while (takenSlugs.has(slug)) slug = `${base}-${n++}`
+  return {
+    slug,
+    name: `${source.name} copy`,
+    members: (source.members || []).map((m) => ({
+      provider: m.provider,
+      id: m.id,
+      params: { ...(m.params || {}) },
+      disabled: !!m.disabled,
+    })),
+    criteria: (source.criteria || []).map((c) => ({ ...c })),
+    suppress_reasoning: !!source.suppress_reasoning,
+    unstick: !!source.unstick,
+    budget: { ...(source.budget || { failures: 5, window_secs: 600 }) },
+    integrated_editors: [],
+  }
+}
+
+/** Duplicate a lane beside the original, with undo — the footer's Duplicate
+ *  button and anything else that wants a lane copied lands here. */
+function cloneLane(source) {
+  const index = state.lanes.indexOf(source)
+  const clone = cloneLaneShape(source, new Set(state.lanes.map((l) => l.slug)))
+  mutateLanes(`${source.name} duplicated`, () => {
+    state.lanes.splice(index + 1, 0, clone)
+  })
+}
+
 document.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return
   api.focus()
@@ -1836,6 +1880,21 @@ document.addEventListener('click', async (event) => {
     const slug = setup.closest('.hall').dataset.hall
     await api.copy(laneCurlExample(slug))
     toast('Curl setup copied')
+    return
+  }
+
+  const clone = event.target.closest('.lane-clone')
+  if (clone) {
+    try {
+      // cloneLane is synchronous but spans a full render plus an async write
+      // (saveLanes self-guards the disk side); a malformed lane state or a
+      // renderer hiccup must surface as a toast, not a silent halt.
+      const hall = state.lanes.find((l) => l.slug === clone.closest('.hall').dataset.hall)
+      if (hall) cloneLane(hall)
+    } catch (error) {
+      console.error('[lane-clone] failed', error)
+      toast(`Duplicate failed: ${error.message}`)
+    }
     return
   }
 

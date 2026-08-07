@@ -258,7 +258,7 @@ macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
 
 ## 9. Post-1.0 feature candidates (Phase 3, ranked)
 
-Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Items 1–2 shipped
+Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Items 1–3 shipped
 2026-08-06; the rest are not committed work. Re-confirm priority with the user
 before starting.
 
@@ -277,8 +277,12 @@ before starting.
    server-side with the engine's own gateway token — and a replayed failure is
    recorded as a fresh incident. Also fixed the Test button to send the gateway
    token and repaired the renderer's `hall` read of incidents.
-3. **Lane cloning** — duplicate a lane with members/params/criteria; no
-   auto-write of the editor integration.
+3. **Lane cloning** — **done (2026-08-06).** A Duplicate button in the lane
+   footer clones the whole definition — member order, dials and park state,
+   criteria, toggles, budget config — under a fresh slug and name, spliced
+   beside the original with undo. The clone carries no editor integration, no
+   `parked` flag and no failure history: a place to try a fix, not a copy of a
+   parked lane.
 4. **Usage/credit line** — rolling 24h / 7d per-lane request/failure counters
    in the UI (read-only; thresholds are budget work).
 

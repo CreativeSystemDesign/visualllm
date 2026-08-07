@@ -103,6 +103,7 @@ globalThis.__t = {
   scoreModels,
   visibleColumns,
   browseMatches,
+  cloneLaneShape,
 };`
 vm.runInThisContext(`${source}\n;${exportLine}`, { filename: 'app.js' })
 const t = globalThis.__t
@@ -347,4 +348,63 @@ test('every incident kind the engine writes has a diagnosis', () => {
   for (const kind of kinds) {
     assert.ok(t.DIAGNOSIS[kind], `DIAGNOSIS.${kind} is missing`)
   }
+})
+
+// --------------------------------------------------------------- lane cloning
+// The clone contract is the whole feature: what carries over (the definition)
+// and what deliberately does not (live state, editor integration). These four
+// cases pin both sides so a future tweak to cloneLaneShape cannot silently
+// start duplicating a parked flag or a credential-bearing member list.
+
+test('cloneLaneShape: a clone copies the definition, order and dials intact', () => {
+  const source = {
+    slug: 'hallway',
+    name: 'Hallway',
+    members: [
+      { provider: 'alpha', id: 'a-1', params: { temperature: 0.2 }, disabled: false },
+      { provider: 'beta', id: 'b-2', params: { max_tokens: 4000 }, disabled: true },
+    ],
+    criteria: [{ key: 'price', direction: 'min' }],
+    suppress_reasoning: true,
+    unstick: false,
+    budget: { failures: 10, window_secs: 3600 },
+  }
+  const clone = t.cloneLaneShape(source, new Set(['hallway']))
+
+  assert.equal(clone.slug, 'hallway-copy')
+  assert.equal(clone.name, 'Hallway copy')
+  assert.equal(clone.members.length, 2)
+  // Order is fallback order: the clone must read exactly like the original.
+  assert.deepEqual(clone.members[0], source.members[0])
+  assert.equal(clone.members[1].disabled, true, 'park state of each member rides along')
+  assert.deepEqual(clone.criteria, source.criteria)
+  assert.equal(clone.suppress_reasoning, true)
+  assert.deepEqual(clone.budget, { failures: 10, window_secs: 3600 })
+})
+
+test('cloneLaneShape: dials and criteria are deep copies, not references', () => {
+  const source = { slug: 's', name: 'S', members: [{ provider: 'a', id: '1', params: { t: 1 } }], criteria: [{ key: 'p' }] }
+  const clone = t.cloneLaneShape(source, new Set(['s']))
+  // Mutating the clone after the fact must never reach back into the source.
+  clone.members[0].params.t = 99
+  clone.criteria[0].key = 'mutated'
+  assert.equal(source.members[0].params.t, 1, 'turning a dial on the clone leaves the original alone')
+  assert.equal(source.criteria[0].key, 'p')
+})
+
+test('cloneLaneShape: fresh slug stays unique among the lanes it joins', () => {
+  const source = { slug: 'hallway', name: 'Hallway', members: [] }
+  assert.equal(t.cloneLaneShape(source, new Set(['hallway', 'hallway-copy'])).slug, 'hallway-copy-2')
+  assert.equal(t.cloneLaneShape(source, new Set(['hallway', 'hallway-copy', 'hallway-copy-2'])).slug, 'hallway-copy-3')
+})
+
+test('cloneLaneShape: no editor integration and no live park state on the clone', () => {
+  const source = {
+    slug: 'hallway', name: 'Hallway', members: [],
+    integrated_editors: ['codex', 'claude'], parked: true, budget_hits: 3,
+  }
+  const clone = t.cloneLaneShape(source, new Set(['hallway']))
+  assert.deepEqual(clone.integrated_editors, [], 'integration stays a deliberate per-lane act')
+  assert.equal(clone.parked, undefined, 'the clone is not born parked')
+  assert.equal(clone.budget_hits, undefined, 'failure history does not ride along')
 })

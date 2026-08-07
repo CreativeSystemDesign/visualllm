@@ -886,6 +886,19 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
 }
 .lane-ide svg { width: 10px; height: 10px; }
 
+/* The lane footer's Duplicate button: same pill as Integrate, sitting just
+   left of it. One click makes a sibling lane with the same definition; the
+   clone starts clean of editor integration and park state. */
+.lane-clone {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: 8.5px;
+}
+.lane-clone svg { width: 10px; height: 10px; }
+
 /* The IDE picker menu: the same glass plate as the relic menu, but each item
    carries a check that lights when the lane lives in that editor. The check
    is always drawn so the rows hold still; an unlit check reads as "not here". */
