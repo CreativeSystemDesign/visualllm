@@ -233,14 +233,12 @@ http://127.0.0.1:4100/lane/<lane-slug>/v1
 
 - **Base URL:** `http://127.0.0.1:4100/lane/<lane-slug>/v1`
 - **Model:** `<lane-slug>` (the same as your lane name)
-- **API Key:** your gateway token (see Engine settings → Gateway token). Every
-  lane requires `Authorization: Bearer <token>` — without it any local process
-  could call your lanes and spend credits.
+
+The engine listens only on loopback, so no API key is needed.
 
 **Direct cURL request:**
 ```bash
 curl http://127.0.0.1:4100/lane/my-lane/v1/chat/completions \
-  -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "my-lane",
@@ -248,8 +246,7 @@ curl http://127.0.0.1:4100/lane/my-lane/v1/chat/completions \
     "max_tokens": 50
   }'
 ```
-The lane's **Setup** button copies this example ready to run — with your token
-already filled in.
+The lane's **Setup** button copies this example ready to run.
 
 ### 5. Integrate a Lane into Your Editor
 

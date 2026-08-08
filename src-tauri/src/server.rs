@@ -66,7 +66,7 @@
 //!    very next call — no reload, no restart.
 
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 // `use` is just shorthand so we can write `Json` instead of `axum::Json`
 // everywhere. The braces group several imports from the same place.
@@ -325,16 +325,11 @@ fn member_label(member: &lanes::Member) -> String {
 ///
 /// `#[derive(Clone)]` asks the compiler to write the "make a copy" code for us.
 /// axum hands each request its own copy of this, which is cheap here because a
-/// `PathBuf` is just a path string and the token handle is a shared pointer.
-/// The token itself lives behind a lock so a rotation can swap it while the
-/// listener is running — that is the only thing here that ever changes.
+/// `PathBuf` is just a path string. This is the *only* thing shared between
+/// requests, and it never changes — which is exactly why no locking is needed.
 #[derive(Clone)]
 pub struct Engine {
     pub dir: PathBuf,
-    /// Bearer token the lane endpoints require, read per request so a rotation
-    /// takes effect without restarting the engine. `None` (dev only) leaves the
-    /// engine open, matching pre-token behaviour.
-    pub secret: Arc<RwLock<Option<String>>>,
 }
 
 // ============================================================================
@@ -1838,77 +1833,20 @@ async fn chat_inner(
 
 /// The URL table. `{slug}` is a placeholder captured into the `Path` parameter.
 ///
-/// The lane routes are guarded by the gateway token; the read-only surface
-/// (`/health`, `/activity`, `/v1/models`) stays open so a user can probe the
-/// engine without a credential.
-pub fn router(dir: PathBuf, secret: Arc<RwLock<Option<String>>>) -> Router {
-    let engine = Engine { dir, secret };
+/// Bound to loopback in `serve`, so the lanes are reachable only from this
+/// machine. `/health`, `/activity` and `/v1/models` are read-only and open.
+pub fn router(dir: PathBuf) -> Router {
+    let engine = Engine { dir };
     Router::new()
         .route("/lane/{slug}/v1/chat/completions", post(chat))
         // Some clients append `/v1/models` to whatever base URL you give them.
         // If someone configures a single lane as their base URL, this stops
         // discovery 404-ing on them.
         .route("/lane/{slug}/v1/models", get(models))
-        .route_layer(axum::middleware::from_fn_with_state(
-            engine.clone(),
-            require_token,
-        ))
         .route("/health", get(health))
         .route("/activity", get(activity))
         .route("/v1/models", get(models))
         .with_state(engine)
-}
-
-/// Enforce the gateway bearer token on the lane endpoints.
-///
-/// The lanes can spend the user's money, and they are reachable by any local
-/// process (or a DNS-rebinding website), so they demand `Authorization:
-/// Bearer <token>` matching the `secret` file. Compare in constant-ish time to
-/// avoid a trivial timing oracle over the loopback; the comparison is short,
-/// so the difference is a footgun only if someone measures over the network.
-async fn require_token(
-    axum::extract::State(engine): axum::extract::State<Engine>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Result<axum::response::Response, axum::response::Response> {
-    // Read the token under the lock and finish with a plain bool so the guard
-    // is dropped before `next` runs — the rotation task never waits on us.
-    let authorised = {
-        let secret = engine
-            .secret
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match secret.as_deref() {
-            None => true,
-            Some(secret) => request
-                .headers()
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-                .map(|presented| {
-                    let a = presented.as_bytes();
-                    let b = secret.as_bytes();
-                    if a.len() != b.len() {
-                        return false;
-                    }
-                    let mut diff = 0u8;
-                    for (x, y) in a.iter().zip(b.iter()) {
-                        diff |= x ^ y;
-                    }
-                    diff == 0
-                })
-                .unwrap_or(false),
-        }
-    };
-    if authorised {
-        Ok(next.run(request).await)
-    } else {
-        Err((
-            axum::http::StatusCode::UNAUTHORIZED,
-            "missing or invalid gateway token — see Engine settings in VisualLLM",
-        )
-            .into_response())
-    }
 }
 
 /// Start listening. Called once at startup from `main.rs`.
@@ -1916,32 +1854,11 @@ async fn require_token(
 /// Bound to `127.0.0.1` deliberately: that address is reachable only from this
 /// machine. Using `0.0.0.0` would expose an unauthenticated proxy holding the
 /// user's API keys to the entire local network.
-pub async fn serve(
-    dir: PathBuf,
-    port: u16,
-    mut secrets: watch::Receiver<Option<String>>,
-    mut ports: watch::Receiver<u16>,
-) -> Result<(), String> {
+pub async fn serve(dir: PathBuf, port: u16, mut ports: watch::Receiver<u16>) -> Result<(), String> {
     let dir = Arc::new(dir);
-    let secret = Arc::new(RwLock::new((*secrets.borrow_and_update()).clone()));
-    // Token rotations arrive after startup; a background task applies them to
-    // the shared secret so the running listener demands the new token without
-    // rebinding (which is what the port channel below is for).
-    let apply = Arc::clone(&secret);
-    tokio::spawn(async move {
-        loop {
-            if secrets.changed().await.is_err() {
-                break;
-            }
-            let next = (*secrets.borrow_and_update()).clone();
-            *apply
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = next;
-        }
-    });
     let listener = bind(port).await?;
     let (mut stop_tx, stop_rx) = oneshot::channel();
-    let mut active = spawn(listener, Arc::clone(&dir), Arc::clone(&secret), stop_rx);
+    let mut active = spawn(listener, Arc::clone(&dir), stop_rx);
     let mut current = port;
 
     loop {
@@ -1973,7 +1890,7 @@ pub async fn serve(
                 let _ = active.await;
                 let (next_stop_tx, next_stop_rx) = oneshot::channel();
                 stop_tx = next_stop_tx;
-                active = spawn(listener, Arc::clone(&dir), Arc::clone(&secret), next_stop_rx);
+                active = spawn(listener, Arc::clone(&dir), next_stop_rx);
                 current = next;
                 eprintln!("engine: now listening on 127.0.0.1:{current}");
             }
@@ -1990,11 +1907,10 @@ async fn bind(port: u16) -> Result<tokio::net::TcpListener, String> {
 fn spawn(
     listener: tokio::net::TcpListener,
     dir: Arc<PathBuf>,
-    secret: Arc<RwLock<Option<String>>>,
     stop: oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
     tokio::spawn(async move {
-        axum::serve(listener, router((*dir).clone(), secret))
+        axum::serve(listener, router((*dir).clone()))
             .with_graceful_shutdown(async {
                 let _ = stop.await;
             })
@@ -2498,7 +2414,7 @@ mod tests {
             "stream": stream,
             "max_tokens": 32,
         });
-        router(dir.to_path_buf(), secret_state(None))
+        router(dir.to_path_buf())
             .oneshot(
                 axum::http::Request::builder()
                     .method("POST")
@@ -2582,116 +2498,13 @@ mod tests {
         task.abort();
     }
 
-    fn lane_request(token: Option<&str>) -> axum::http::Request<Body> {
-        let mut builder = axum::http::Request::builder()
-            .method("POST")
-            .uri("/lane/fallback/v1/chat/completions")
-            .header("content-type", "application/json");
-        if let Some(token) = token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
-        }
-        builder
-            .body(Body::from(
-                json!({"model":"fallback","messages":[{"role":"user","content":"hello"}],"max_tokens":32})
-                    .to_string(),
-            ))
-            .unwrap()
-    }
-
-    /// The shared token state a `router()` takes; tests rotate it in place to
-    /// prove the middleware follows live changes.
-    fn secret_state(token: Option<&str>) -> Arc<RwLock<Option<String>>> {
-        Arc::new(RwLock::new(token.map(str::to_string)))
-    }
-
     #[tokio::test]
-    async fn lane_endpoints_require_the_gateway_token() {
-        let dir = tempdir().unwrap();
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (address, task) = start_fake_provider(calls.clone()).await;
-        configure_test_files(dir.path(), address, &["primary", "fallback"]);
-        let app = router(dir.path().to_path_buf(), secret_state(Some("secret-token")));
-
-        // No token: refused before any upstream call.
-        let denied = app.clone().oneshot(lane_request(None)).await.unwrap();
-        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
-        assert!(
-            calls.lock().unwrap().is_empty(),
-            "upstream must not be called"
-        );
-
-        // Wrong token: refused too.
-        let wrong = app
-            .clone()
-            .oneshot(lane_request(Some("wrong-token")))
-            .await
-            .unwrap();
-        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
-        assert!(
-            calls.lock().unwrap().is_empty(),
-            "upstream must not be called"
-        );
-
-        // Correct token: reaches the lane and answers.
-        let allowed = app
-            .oneshot(lane_request(Some("secret-token")))
-            .await
-            .unwrap();
-        assert_eq!(allowed.status(), StatusCode::OK);
-        assert_eq!(&*calls.lock().unwrap(), &["primary", "fallback"]);
-        task.abort();
-    }
-
-    #[tokio::test]
-    async fn rotating_the_secret_switches_the_token_without_restarting() {
-        let dir = tempdir().unwrap();
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (address, task) = start_fake_provider(calls.clone()).await;
-        configure_test_files(dir.path(), address, &["primary", "fallback"]);
-        let secret = secret_state(Some("old-token"));
-        let app = router(dir.path().to_path_buf(), Arc::clone(&secret));
-
-        // The current token works before the rotation.
-        let before = app
-            .clone()
-            .oneshot(lane_request(Some("old-token")))
-            .await
-            .unwrap();
-        assert_eq!(before.status(), StatusCode::OK);
-        assert_eq!(calls.lock().unwrap().len(), 2);
-
-        // Rotate the shared state exactly as the serve() task does, and the
-        // running middleware must reject the old token and accept the new one.
-        *secret.write().unwrap() = Some("new-token".to_string());
-
-        let stale = app
-            .clone()
-            .oneshot(lane_request(Some("old-token")))
-            .await
-            .unwrap();
-        assert_eq!(stale.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            calls.lock().unwrap().len(),
-            2,
-            "the stale token must not reach upstream"
-        );
-
-        let fresh = app
-            .clone()
-            .oneshot(lane_request(Some("new-token")))
-            .await
-            .unwrap();
-        assert_eq!(fresh.status(), StatusCode::OK);
-        task.abort();
-    }
-
-    #[tokio::test]
-    async fn health_and_models_stay_open_without_a_token() {
+    async fn health_and_models_are_open() {
         let dir = tempdir().unwrap();
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (address, task) = start_fake_provider(calls.clone()).await;
         configure_test_files(dir.path(), address, &["primary"]);
-        let app = router(dir.path().to_path_buf(), secret_state(Some("secret-token")));
+        let app = router(dir.path().to_path_buf());
 
         let health = app
             .clone()
@@ -2818,7 +2631,7 @@ mod tests {
 
         // A request to a lane that does not exist answers 404 before the
         // ledger is touched — a mistyped slug must not spend a lane's meter.
-        let missing = router(dir.path().to_path_buf(), secret_state(None))
+        let missing = router(dir.path().to_path_buf())
             .oneshot(
                 axum::http::Request::builder()
                     .method("POST")

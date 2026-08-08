@@ -73,10 +73,6 @@ struct VscodeModelEntry {
     max_input_tokens: u64,
     #[serde(rename = "maxOutputTokens")]
     max_output_tokens: u64,
-    /// The gateway bearer token, so the editor can call the lane now that the
-    /// engine requires it. VS Code reads this as request headers.
-    #[serde(rename = "httpHeaders", skip_serializing_if = "Option::is_none")]
-    http_headers: Option<serde_json::Value>,
 }
 
 /// A provider entry in chatLanguageModels.json (contains a models array).
@@ -231,7 +227,6 @@ fn vscode_model_entry(
     slug: &str,
     name: &str,
     port: u16,
-    token: Option<&str>,
     catalog: &[providers::CatalogModel],
     lane: &lanes::Lane,
 ) -> VscodeModelEntry {
@@ -267,7 +262,6 @@ fn vscode_model_entry(
         vision,
         max_input_tokens,
         max_output_tokens,
-        http_headers: token.map(|t| serde_json::json!({ "Authorization": format!("Bearer {t}") })),
     }
 }
 
@@ -286,14 +280,13 @@ fn editor_integrate_lane(
 ) -> Result<VscodeIntegrationResult, String> {
     let store_path = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
     let port = port_load(&store_path);
-    let token = secret_load(&store_path).ok();
 
     let catalog = providers::cache_read(&store_path);
     let lanes = lanes::load(&store_path);
     let lane = lanes.iter().find(|l| l.slug == slug);
 
     let entry = match lane {
-        Some(lane) => vscode_model_entry(&slug, &name, port, token.as_deref(), &catalog, lane),
+        Some(lane) => vscode_model_entry(&slug, &name, port, &catalog, lane),
         None => VscodeModelEntry {
             id: slug.clone(),
             name: format!("visualllm: {name}"),
@@ -302,8 +295,6 @@ fn editor_integrate_lane(
             vision: false,
             max_input_tokens: 250_144,
             max_output_tokens: 8000,
-            http_headers: token
-                .map(|t| serde_json::json!({ "Authorization": format!("Bearer {t}") })),
         },
     };
 
@@ -410,74 +401,6 @@ fn editor_remove_lane(
         }
         Err(error) => Err(error),
     }
-}
-
-/// Refresh the bearer token (and the endpoint URL, which shares the port) on
-/// every VisualLLM entry in one editor's chatLanguageModels.json.
-///
-/// This is the "re-integrate all" after a token rotation or a port move:
-/// `gateway_token_regenerate` writes a new secret that the running engine
-/// switches to immediately, and this rewrites the editor headers to match.
-/// Returns the number of lane entries rewritten; a missing file or a config
-/// with no visualllm provider is a success with 0 — there is nothing to fix.
-fn vscode_reapply_auth(path: &std::path::Path, token: &str, port: u16) -> Result<usize, String> {
-    if !path.exists() {
-        return Ok(0);
-    }
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut config: VscodeChatModels =
-        serde_json::from_str(&text).map_err(|e| format!("could not parse config: {e}"))?;
-
-    let mut rewritten = 0;
-    for provider in config.iter_mut() {
-        if provider.name != "visualllm" {
-            continue;
-        }
-        for model in provider.models.iter_mut() {
-            model.url = format!("http://127.0.0.1:{port}/lane/{}/v1", model.id);
-            model.http_headers =
-                Some(serde_json::json!({ "Authorization": format!("Bearer {token}") }));
-            rewritten += 1;
-        }
-    }
-    if rewritten > 0 {
-        vscode_write_models_at(path, &config)?;
-    }
-    Ok(rewritten)
-}
-
-/// Re-apply the current gateway token (and port) to every lane already
-/// integrated into every editor.
-///
-/// Rotating the token invalidates every `Authorization` header an editor
-/// saved; moving the port breaks the saved URLs the same way. This walks the
-/// same files integrate/remove touch and rewrites headers + URLs in place,
-/// leaving other providers and lane order alone. Each editor reports what it
-/// got, so the UI can name the failures instead of guessing.
-#[tauri::command]
-fn editor_reapply_token(app: tauri::AppHandle) -> Result<Vec<VscodeIntegrationResult>, String> {
-    let dir = store_dir(&app).map_err(|e| format!("failed to get app data dir: {e}"))?;
-    let port = port_load(&dir);
-    let token = secret_load(&dir).map_err(|e| format!("could not read the gateway token: {e}"))?;
-
-    let mut results = Vec::new();
-    for (path, editor_name) in editor_chat_models_paths()? {
-        match vscode_reapply_auth(&path, &token, port) {
-            Ok(rewritten) => results.push(VscodeIntegrationResult {
-                editor: editor_name.to_string(),
-                path: path.display().to_string(),
-                written: rewritten > 0,
-                error: None,
-            }),
-            Err(error) => results.push(VscodeIntegrationResult {
-                editor: editor_name.to_string(),
-                path: path.display().to_string(),
-                written: false,
-                error: Some(error),
-            }),
-        }
-    }
-    Ok(results)
 }
 
 /// The loopback engine's base address. `read_gateway` reaches it for the
@@ -987,8 +910,7 @@ async fn stats_refresh(app: tauri::AppHandle) -> Result<usize, String> {
 /// `hall` (the canvas's word) — the disk record calls it `lane`, and this view
 /// is where the two meet. The captured `replay` never crosses this boundary:
 /// the UI learns only whether a replay is available, and the actual retry runs
-/// in `lane_replay`, which re-applies the engine's own gateway token — so a
-/// credential a client put in its request can never reach the webview.
+/// in `lane_replay`.
 #[derive(Serialize)]
 struct IncidentView {
     at: u64,
@@ -1032,10 +954,9 @@ fn incidents_read(app: tauri::AppHandle) -> Result<Vec<IncidentView>, String> {
 
 /// Retry a failed request from its incident record. The request snapshot was
 /// captured on the engine's disk, never shown to the webview; this command
-/// replays it server-side — through the lane's own endpoint, with the engine's
-/// gateway token — and reports status, trail, and a short message. Replaying
-/// contacts the provider again and can spend money; the UI gates it behind a
-/// confirmation.
+/// replays it server-side — through the lane's own endpoint — and reports
+/// status, trail, and a short message. Replaying contacts the provider again
+/// and can spend money; the UI gates it behind a confirmation.
 #[tauri::command]
 async fn lane_replay(app: tauri::AppHandle, id: String) -> Result<LaneTestResult, String> {
     let dir = store_dir(&app)?;
@@ -1050,7 +971,6 @@ async fn lane_replay(app: tauri::AppHandle, id: String) -> Result<LaneTestResult
         .replay
         .ok_or_else(|| "this incident has no captured request to replay".to_string())?;
     let port = port_load(&dir);
-    let token = secret_load(&dir)?;
     let url = format!("http://127.0.0.1:{port}{}", replay.path);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -1059,7 +979,6 @@ async fn lane_replay(app: tauri::AppHandle, id: String) -> Result<LaneTestResult
     let response = client
         .post(&url)
         .header("content-type", "application/json")
-        .bearer_auth(&token)
         .body(replay.body)
         .send()
         .await
@@ -1131,9 +1050,6 @@ struct LaneTestResult {
 async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult, String> {
     let dir = store_dir(&app)?;
     let port = port_load(&dir);
-    // The lane endpoints demand the gateway token; a probe must present it or
-    // it measures the auth wall, not the lane.
-    let token = secret_load(&dir)?;
     let url = format!("http://127.0.0.1:{port}/lane/{slug}/v1/chat/completions");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -1141,7 +1057,6 @@ async fn lane_test(app: tauri::AppHandle, slug: String) -> Result<LaneTestResult
         .map_err(|e| e.to_string())?;
     let response = client
         .post(url)
-        .bearer_auth(&token)
         // A probe must exercise the same path a real request takes. Budgets
         // under 16 bypass the engine's commit gate (server.rs), so a tiny
         // probe would pass lanes that return empty or reasoning-only bodies —
@@ -1190,11 +1105,6 @@ const DEFAULT_PORT: u16 = 4100;
 
 static ENGINE_PORT_TX: OnceLock<watch::Sender<u16>> = OnceLock::new();
 
-/// Channel carrying token rotations from the settings command to the running
-/// engine, so a regenerate takes effect immediately instead of on the next
-/// engine start. The sender is created in `setup` alongside the port channel.
-static ENGINE_SECRET_TX: OnceLock<watch::Sender<Option<String>>> = OnceLock::new();
-
 fn port_path(dir: &std::path::Path) -> PathBuf {
     dir.join("port.json")
 }
@@ -1225,108 +1135,6 @@ fn port_save(dir: &std::path::Path, port: u16) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     std::fs::rename(tmp, path).map_err(|e| e.to_string())
-}
-
-/// Where the gateway bearer token lives. A plain file (not JSON) whose content
-/// is the token and nothing else; the file mode is 0600.
-fn secret_path(dir: &std::path::Path) -> PathBuf {
-    dir.join("secret")
-}
-
-/// The gateway bearer token, created on first use.
-///
-/// The loopback engine is reachable by any local process, and a web page can
-/// attempt DNS rebinding. A token that clients must present makes the lane
-/// endpoints — the ones that can spend money — callable only by the user's own
-/// configured clients. `/health` and `/activity` stay open: they leak nothing.
-fn secret_load(dir: &std::path::Path) -> Result<String, String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let path = secret_path(dir);
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        let text = text.trim();
-        if !text.is_empty() {
-            return Ok(text.to_string());
-        }
-    }
-    let secret = secret_generate()?;
-    secret_save(dir, &secret)?;
-    Ok(secret)
-}
-
-/// 64 hex characters from the operating system's CSPRNG.
-fn secret_generate() -> Result<String, String> {
-    let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes)
-        .map_err(|e| format!("could not generate the gateway token: {e}"))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
-fn secret_save(dir: &std::path::Path, secret: &str) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let tmp = dir.join("secret.tmp");
-    std::fs::write(&tmp, secret.as_bytes()).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| e.to_string())?;
-    }
-    std::fs::rename(tmp, secret_path(dir)).map_err(|e| e.to_string())
-}
-
-/// What the settings UI may show about the token. `token` is empty unless the
-/// user asked to reveal it; `masked` is always safe to display.
-#[derive(Serialize)]
-struct GatewayToken {
-    has: bool,
-    token: String,
-    masked: String,
-}
-
-/// A display-safe rendering of a token: the first 8 and last 4 characters
-/// around an ellipsis. Guarded so a hand-written secret file shorter than that
-/// (never ours — we generate 64 hex chars — but possible in the wild) shows a
-/// placeholder instead of panicking on a string slice.
-fn mask_token(token: &str) -> String {
-    if token.len() >= 12 {
-        format!("{}…{}", &token[..8], &token[token.len() - 4..])
-    } else {
-        "••••".to_string()
-    }
-}
-
-#[tauri::command]
-fn gateway_token(app: tauri::AppHandle, reveal: bool) -> Result<GatewayToken, String> {
-    let dir = store_dir(&app)?;
-    let token = secret_load(&dir)?;
-    let masked = mask_token(&token);
-    Ok(GatewayToken {
-        has: true,
-        token: if reveal { token } else { String::new() },
-        masked,
-    })
-}
-
-/// Rotate the gateway token. The new secret is written to disk (so it survives
-/// restarts) and pushed to the running engine over the secret channel, so the
-/// lane endpoints demand it immediately. The response carries the new value
-/// for the UI to show or re-apply to saved editor integrations.
-#[tauri::command]
-fn gateway_token_regenerate(app: tauri::AppHandle) -> Result<GatewayToken, String> {
-    let dir = store_dir(&app)?;
-    let token = secret_generate()?;
-    secret_save(&dir, &token)?;
-    // Best effort: the file on disk is the source of truth, so if the engine
-    // channel is not up the new token is picked up on the next engine start.
-    if let Some(sender) = ENGINE_SECRET_TX.get() {
-        let _ = sender.send(Some(token.clone()));
-    }
-    let masked = mask_token(&token);
-    Ok(GatewayToken {
-        has: true,
-        token,
-        masked,
-    })
 }
 
 #[tauri::command]
@@ -1382,15 +1190,10 @@ fn main() {
             // desktop app should have.
             let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
             let server_port = port_load(&dir);
-            // A token missing/corrupt on disk is regenerated here; the same
-            // loader backs the settings UI, so both agree on the live secret.
-            let secret = secret_load(&dir).ok();
-            let (secret_tx, secret_rx) = watch::channel(secret);
-            let _ = ENGINE_SECRET_TX.set(secret_tx);
             let (port_tx, port_rx) = watch::channel(server_port);
             let _ = ENGINE_PORT_TX.set(port_tx);
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = server::serve(dir, server_port, secret_rx, port_rx).await {
+                if let Err(err) = server::serve(dir, server_port, port_rx).await {
                     eprintln!("engine: {err}");
                 }
             });
@@ -1509,12 +1312,9 @@ fn main() {
             lane_test,
             port_get,
             port_set,
-            gateway_token,
-            gateway_token_regenerate,
             editor_list,
             editor_integrate_lane,
             editor_remove_lane,
-            editor_reapply_token,
             state_export,
             state_import
         ])
@@ -1582,10 +1382,7 @@ mod port_tests {
 
 #[cfg(test)]
 mod vscode_tests {
-    use super::{
-        vscode_merge_lane, vscode_reapply_auth, vscode_write_models_at, VscodeChatModels,
-        VscodeModelEntry,
-    };
+    use super::{vscode_merge_lane, vscode_write_models_at, VscodeChatModels, VscodeModelEntry};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1598,7 +1395,6 @@ mod vscode_tests {
             vision: false,
             max_input_tokens: 250144,
             max_output_tokens: 8000,
-            http_headers: None,
         }
     }
 
@@ -1659,77 +1455,6 @@ mod vscode_tests {
         assert_eq!(back[0].models[0].id, "lane-a");
         // No stale temp file left behind.
         assert!(!dir.join("chatLanguageModels.json.tmp").exists());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn reapply_rewrites_headers_and_urls_but_never_other_providers() {
-        let dir = temp_dir();
-        let path = dir.join("chatLanguageModels.json");
-        // Two visualllm lanes on a stale port/token, plus an unrelated provider
-        // with its own URL and a custom httpHeaders that must survive.
-        fs::write(
-            &path,
-            r#"[
-                {"name":"Mistral","vendor":"customendpoint","models":[
-                    {"id":"m","name":"M","url":"https://example.com/m","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000,"httpHeaders":{"Authorization":"Bearer keeper"}}
-                ]},
-                {"name":"visualllm","vendor":"customendpoint","models":[
-                    {"id":"lane-a","name":"A","url":"http://127.0.0.1:4100/lane/lane-a/v1","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000,"httpHeaders":{"Authorization":"Bearer dead"}},
-                    {"id":"lane-b","name":"B","url":"http://127.0.0.1:9999/lane/lane-b/v1","toolCalling":true,"vision":false,"maxInputTokens":1000,"maxOutputTokens":1000}
-                ]}
-            ]"#,
-        )
-        .unwrap();
-
-        let rewritten = vscode_reapply_auth(&path, "fresh", 4200).unwrap();
-        assert_eq!(rewritten, 2);
-
-        let back: VscodeChatModels =
-            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        let mistral = back.iter().find(|p| p.name == "Mistral").unwrap();
-        assert_eq!(mistral.models[0].url, "https://example.com/m");
-        assert_eq!(
-            mistral.models[0].http_headers,
-            Some(serde_json::json!({ "Authorization": "Bearer keeper" }))
-        );
-
-        let visualllm = back.iter().find(|p| p.name == "visualllm").unwrap();
-        assert_eq!(
-            visualllm.models[0].url,
-            "http://127.0.0.1:4200/lane/lane-a/v1"
-        );
-        assert_eq!(
-            visualllm.models[1].url,
-            "http://127.0.0.1:4200/lane/lane-b/v1"
-        );
-        for model in &visualllm.models {
-            assert_eq!(
-                model.http_headers,
-                Some(serde_json::json!({ "Authorization": "Bearer fresh" }))
-            );
-        }
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn reapply_missing_file_is_a_success_with_nothing_to_do() {
-        let dir = temp_dir();
-        assert_eq!(
-            vscode_reapply_auth(&dir.join("nope.json"), "fresh", 4200).unwrap(),
-            0
-        );
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn reapply_unparseable_config_is_an_error() {
-        let dir = temp_dir();
-        let path = dir.join("chatLanguageModels.json");
-        fs::write(&path, "{ not json").unwrap();
-        assert!(vscode_reapply_auth(&path, "fresh", 4200).is_err());
-        // A failed reapply never clobbers the file.
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
         fs::remove_dir_all(dir).unwrap();
     }
 }

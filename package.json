@@ -1,6 +1,6 @@
 {
   "name": "visualllm",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Design reliable OpenAI-compatible endpoints by arranging AI models visually",
   "main": "renderer/index.html",
   "scripts": {

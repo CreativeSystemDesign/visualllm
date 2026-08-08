@@ -273,10 +273,9 @@ before starting.
    failed request is snapshotted (method/path/body, capped at 32 KiB) on the
    incident; the notification center offers a two-step confirmed "Replay this
    request" action that re-sends it through the lane and shows the resulting
-   trail. The captured request never reaches the webview — replay runs
-   server-side with the engine's own gateway token — and a replayed failure is
-   recorded as a fresh incident. Also fixed the Test button to send the gateway
-   token and repaired the renderer's `hall` read of incidents.
+    trail. The captured request never reaches the webview — replay runs
+    server-side — and a replayed failure is recorded as a fresh incident.
+    (The gateway token mentioned by earlier entries was removed in 0.5.2.)
 3. **Lane cloning** — **done (2026-08-06).** A Duplicate button in the lane
    footer clones the whole definition — member order, dials and park state,
    criteria, toggles, budget config — under a fresh slug and name, spliced

@@ -167,14 +167,6 @@ const html = indexHtml
           console.log('[preview] editorRemoveLane', { slug, editor })
           return ok({ editor, path: '/preview/' + editor + '/chatLanguageModels.json', written: true, error: null })
         },
-        editorReapplyToken: () => {
-          console.log('[preview] editorReapplyToken')
-          return ok([
-            { editor: 'VS Code', path: '/preview/VS Code/chatLanguageModels.json', written: true, error: null },
-            { editor: 'VS Code Insiders', path: '/preview/VS Code Insiders/chatLanguageModels.json', written: true, error: null },
-            { editor: 'Windsurf', path: '/preview/Windsurf/chatLanguageModels.json', written: true, error: null },
-          ])
-        },
         stateExport: () => ok('/tmp/preview-export.json'),
         stateImport: () => ok('/tmp/preview-export.json'),
         portGet: () => ok(4100),

@@ -40,12 +40,9 @@ const api = T
       activityRead: (since) => T.core.invoke('activity_read', { since }),
       portGet: () => T.core.invoke('port_get'),
       portSet: (port) => T.core.invoke('port_set', { port }),
-      gatewayToken: (reveal) => T.core.invoke('gateway_token', { reveal }),
-      gatewayTokenRegenerate: () => T.core.invoke('gateway_token_regenerate'),
       editorList: () => T.core.invoke('editor_list'),
       editorIntegrateLane: (slug, name, editor) => T.core.invoke('editor_integrate_lane', { slug, name, editor }),
       editorRemoveLane: (slug, editor) => T.core.invoke('editor_remove_lane', { slug, editor }),
-      editorReapplyToken: () => T.core.invoke('editor_reapply_token'),
     }
   : window.vll
 
@@ -456,12 +453,8 @@ function laneEndpoint(slug) {
   return `http://${engineHost()}/lane/${slug}/v1`
 }
 
-function laneCurlExample(slug, token = '') {
-  // The lane routes demand a Bearer token; an example without the header is a
-  // guaranteed 401. When no token is available (an empty string) the header is
-  // omitted rather than shipped with a broken placeholder.
-  const auth = token ? ` \\\n  -H 'Authorization: Bearer ${token}'` : ''
-  return `curl ${laneEndpoint(slug)}/chat/completions${auth} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
+function laneCurlExample(slug) {
+  return `curl ${laneEndpoint(slug)}/chat/completions \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model":"${slug}","messages":[{"role":"user","content":"Hello"}]}'`
 }
 
 /** The live story for one hall, from the activity feed. `trying` is only
@@ -2036,11 +2029,7 @@ document.addEventListener('click', async (event) => {
   if (setup) {
     const slug = setup.closest('.hall').dataset.hall
     try {
-      // The lane endpoints authenticate; the copied example must too. Failing
-      // to read the token means no copy — a headerless example 401s and is
-      // worse than nothing.
-      const token = (await api.gatewayToken(true)).token
-      await api.copy(laneCurlExample(slug, token))
+      await api.copy(laneCurlExample(slug))
       toast('Curl setup copied')
     } catch (error) {
       toast(`Could not copy the curl setup: ${error.message}`)
@@ -2348,24 +2337,12 @@ async function loadPort() {
   }
 }
 
-let tokenVisible = false
-
-async function refreshTokenInput() {
-  const info = await api.gatewayToken(tokenVisible)
-  $('gatewayToken').value = tokenVisible ? info.token : info.masked
-}
-
 function openSettings() {
   $('enginePort').value = enginePort
   $('settingsScrim').hidden = false
-  refreshTokenInput().catch((error) => {
-    $('gatewayToken').value = `could not read token: ${error.message}`
-  })
 }
 
 function closeSettings() {
-  tokenVisible = false
-  $('tokenReveal').textContent = 'Reveal'
   $('settingsScrim').hidden = true
 }
 
@@ -2375,77 +2352,6 @@ $('closeSettings').addEventListener('click', closeSettings)
 $('cancelSettings').addEventListener('click', closeSettings)
 $('settingsScrim').addEventListener('click', (event) => {
   if (event.target === $('settingsScrim')) closeSettings()
-})
-$('tokenReveal').addEventListener('click', async () => {
-  tokenVisible = !tokenVisible
-  try {
-    await refreshTokenInput()
-    $('tokenReveal').textContent = tokenVisible ? 'Mask' : 'Reveal'
-  } catch (error) {
-    toast(`Could not read token: ${error.message}`)
-  }
-})
-$('tokenCopy').addEventListener('click', async () => {
-  try {
-    const info = await api.gatewayToken(true)
-    await api.copy(info.token)
-    toast('Gateway token copied — treat it like an API key')
-  } catch (error) {
-    toast(`Could not copy token: ${error.message}`)
-  }
-})
-let regenArmed = false
-/** Re-apply the current token (and port) to every lane already integrated into
- *  every editor, in one pass. Used from the token panel and offered as the
- *  post-regeneration action. Each editor reports its own outcome. */
-async function applyTokenToEditors() {
-  try {
-    const results = await api.editorReapplyToken()
-    const failed = results.filter((r) => r.error != null)
-    if (failed.length) {
-      toast(`Could not re-apply the token to ${failed.length} editor${failed.length === 1 ? '' : 's'}`, failed.map((r) => `${r.editor}: ${r.error}`).join(' · '))
-      return
-    }
-    const updated = results.filter((r) => r.written).length
-    if (!updated) {
-      toast('No lanes integrated — nothing to re-apply')
-      return
-    }
-    toast(
-      `Token re-applied in ${updated} editor${updated === 1 ? '' : 's'}`,
-      results.map((r) => `${r.editor}: ${r.written ? 'updated' : 'no lanes'}`).join(' · ')
-    )
-  } catch (error) {
-    toast(`Could not re-apply the token: ${error.message}`)
-  }
-}
-
-$('applyToken').addEventListener('click', applyTokenToEditors)
-
-$('tokenRegen').addEventListener('click', async () => {
-  if (!regenArmed) {
-    regenArmed = true
-    $('tokenRegen').textContent = 'Sure?'
-    setTimeout(() => {
-      regenArmed = false
-      $('tokenRegen').textContent = 'Regenerate'
-    }, 3000)
-    return
-  }
-  regenArmed = false
-  $('tokenRegen').textContent = 'Regenerate'
-  try {
-    const info = await api.gatewayTokenRegenerate()
-    tokenVisible = true
-    $('gatewayToken').value = info.token
-    $('tokenReveal').textContent = 'Mask'
-    toast('New gateway token created — the engine uses it now', 'every saved editor integration is now stale', {
-      label: 'Apply to editors',
-      fn: applyTokenToEditors,
-    })
-  } catch (error) {
-    toast(`Could not rotate token: ${error.message}`)
-  }
 })
 $('settingsForm').addEventListener('submit', async (event) => {
   event.preventDefault()

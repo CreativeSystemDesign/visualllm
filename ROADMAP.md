@@ -188,11 +188,13 @@ public users.
 **Done when:** the confirmed review findings are fixed, the renderer's core
 logic is under test, and version drift fails CI instead of shipping.
 
-- [x] **Loopback engine auth.** The gateway now requires
+- [x] **Loopback-only engine, no token.** The gateway previously required
   `Authorization: Bearer <token>` on lane routes (random 32-byte secret,
-  persisted next to `port.json`, chmod 600). Editor integration writes the
-  header into `chatLanguageModels.json`; the renderer has a reveal/copy/
-  regenerate settings row. `/health`, `/activity`, and `/v1/models` stay open.
+  persisted next to `port.json`, chmod 600) with a reveal/copy/regenerate
+  settings row and `httpHeaders` in editor integrations. It still did not
+  reliably let IDE clients call lanes, so the token requirement was removed
+  end-to-end (v0.5.2): the engine stays bound to loopback, and lane routes,
+  editor integrations, and copied examples work without a credential.
 - [x] **Keyring failure degrades, never blocks.** A provider saves even when the
   OS keychain is unavailable — keys are held in memory for the session and the
   UI says so instead of hard-failing "add provider".
@@ -252,13 +254,11 @@ request ever crossing to the webview.
   read an undefined field.
 - [x] **Replay runs server-side through the lane.** `lane_replay` (main.rs)
   looks the incident up by id, re-POSTs the captured body through the lane's
-  own endpoint with the engine's gateway token, and reports status / served-by /
-  trail. A replayed failure is recorded as a fresh incident like any other.
+  own endpoint, and reports status / served-by / trail. A replayed failure is
+  recorded as a fresh incident like any other.
 - [x] **Confirmation-gated in the UI.** The Replay action is two-step: first
   click arms ("it can spend money"), second fires; the armed id survives
   re-renders and the button disables while in flight.
-- [x] **Probes present the token.** `lane_test` sends the gateway bearer token,
-  so the Test button measures the lane, not the auth wall.
 
 ### 14. Lane cloning (2026-08-06)
 
@@ -309,9 +309,9 @@ owns, so no UI edit can ever reset it.
 ### 16. Post-review hardening batch — status bar, auth, budget, mute (2026-08-06, round 2)
 
 **Done when:** the status bar reads the engine's own ledger (not the dead
-Python-gateway scaffold), every copied example and doc snippet authenticates,
-the auto-park budget is tunable in the UI, mutes are per-(lane, kind) as
-advertised, and a token rotation can be re-applied to every editor in one step.
+Python-gateway scaffold), every copied example and doc snippet works against
+the lane endpoints, the auto-park budget is tunable in the UI, and mutes are
+per-(lane, kind) as advertised.
 
 - [x] **Status bar reads the engine.** `/health` now reports `models_total`
   plus trailing-24h `requests_24h`/`failures_24h` aggregated from the engine's
@@ -319,19 +319,15 @@ advertised, and a token rotation can be re-applied to every editor in one step.
   `Model`/`Lane`/`Traffic` gateway-scaffold structs in `main.rs` are gone. The
   bar shows "N endpoints · M models", the fastest measured catalog speed, and
   real 24h traffic.
-- [x] **Copied setup examples authenticate.** `laneCurlExample` carries
-  `Authorization: Bearer <token>` (fetched at copy time); README curl/API-key
-  notes updated to match the bearer-token requirement.
+- [x] **Copied setup examples are ready to run.** `laneCurlExample` emits the
+  exact command a client sends; README curl notes match. (Removed with the
+  token in v0.5.2 — the example no longer carries an auth header.)
 - [x] **Auto-park budget is tunable.** The gauge in a hall's header opens the
   lane budget popover (failures / window minutes), saved on every change, amber
   when tuned away from the 5-in-10-minutes standard.
 - [x] **Mute is per-(lane, kind).** `notifMuted(kind, hall)` keys mutes as
   `hall::kind`, honouring legacy bare-kind entries so nothing saved breaks —
   this makes workstream 9's claim true rather than aspirational.
-- [x] **One-click re-apply after token rotation.** `editor_reapply_token`
-  rewrites every integrated editor's `Authorization` headers and URLs in place
-  (`vscode_reapply_auth`, tested), reachable from the settings token panel and
-  offered as an action on the regenerate toast.
 - [x] **Hidden-window + burst hygiene.** Polling and the short clocks pause
   while the window is hidden (with a visibilitychange catch-up), and the toast
   stack is capped at three so a failure burst cannot bury the screen.

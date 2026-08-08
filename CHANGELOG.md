@@ -5,9 +5,33 @@ All notable changes to VisualLLM are documented here. The format follows
 policy in the README applies: MAJOR for contract breaks, MINOR for features,
 PATCH for fixes.
 
+## [0.5.2] — 2026-08-07
+
+Removed the gateway token requirement end-to-end: IDE clients could still not
+call lane endpoints with the bearer token, so the auth wall is gone and lanes
+are served with no credential (the engine stays loopback-only).
+
+### Changed
+
+- **No token required on lane endpoints.** The `Authorization: Bearer` check is
+  removed from `/lane/{slug}/…`; the engine still binds to `127.0.0.1`, so it
+  remains reachable only from this machine. Any OpenAI-compatible client now
+  calls a lane with just the base URL and model slug.
+- **Editor integrations carry no headers.** `httpHeaders` is gone from
+  `chatLanguageModels.json` entries; the port-only re-apply command was removed
+  with the token panel that used it.
+
+### Removed
+
+- Gateway token feature (secret file, `GatewayToken`, `mask_token`, the
+  `gateway_token` / `gateway_token_regenerate` / `editor_reapply_token`
+  commands, the live-rotation channel, and the settings token panel). Copied
+  curl setup examples no longer include an auth header.
+
 ## [0.5.1] — 2026-08-07
 
 Hotfix: regenerating the gateway token now takes effect immediately.
+(Removed in 0.5.2 — the token feature no longer exists.)
 
 ### Fixed
 

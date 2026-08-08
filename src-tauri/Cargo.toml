@@ -1,6 +1,6 @@
 [package]
 name = "visualllm"
-version = "0.5.1"
+version = "0.5.2"
 description = "Design reliable OpenAI-compatible endpoints by arranging AI models visually"
 edition = "2021"
 rust-version = "1.77"

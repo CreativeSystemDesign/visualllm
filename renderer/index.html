@@ -299,28 +299,6 @@
             <button type="submit" class="btn-primary">Save port</button>
           </div>
         </form>
-
-        <hr class="form-divider" />
-
-        <div class="token-panel">
-          <label class="field">
-            <span>Gateway token</span>
-            <input id="gatewayToken" type="text" readonly placeholder="loading…" spellcheck="false" />
-          </label>
-          <p class="form-note">Clients calling a lane must send
-            <code>Authorization: Bearer &lt;token&gt;</code>. Without one, any local
-            process (or a page that tries DNS rebinding) could call your lanes and
-            spend credits. Editor integrations carry the token automatically —
-            after regenerating, use <strong>Apply to editors</strong> to refresh
-            every saved integration in one step.</p>
-          <div class="form-actions">
-            <span class="spacer"></span>
-            <button type="button" class="btn-ghost" id="tokenRegen">Regenerate</button>
-            <button type="button" class="btn-ghost" id="applyToken">Apply to editors</button>
-            <button type="button" class="btn-ghost" id="tokenCopy">Copy</button>
-            <button type="button" class="btn-primary" id="tokenReveal">Reveal</button>
-          </div>
-        </div>
       </div>
     </section>
   </div>

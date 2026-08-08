@@ -454,19 +454,13 @@ test('usageCounts: a lane with no ledger reads as zeros, never errors', () => {
 })
 
 // --------------------------------------------------------------- curl setup
-// The copied setup example must arrive ready to run: lane routes demand a
-// Bearer token, so the header rides along. Without a token the header is
-// omitted (never a broken placeholder), and the endpoint stays exact.
+// The copied setup example must arrive ready to run: no auth is needed, so the
+// command is exactly what a client sends — and the endpoint stays exact.
 
-test('laneCurlExample: carries the Authorization header when a token is given', () => {
-  const curl = t.laneCurlExample('my-lane', 'abc123')
-  assert.ok(curl.includes("Authorization: Bearer abc123"))
+test('laneCurlExample: builds a ready-to-run curl with no auth header', () => {
+  const curl = t.laneCurlExample('my-lane')
   assert.ok(curl.startsWith('curl http://127.0.0.1:4100/lane/my-lane/v1/chat/completions'))
   assert.ok(curl.includes('"model":"my-lane"'))
-})
-
-test('laneCurlExample: omits the auth header when there is no token', () => {
-  const curl = t.laneCurlExample('my-lane')
   assert.ok(!curl.includes('Authorization'))
   assert.ok(!curl.includes('Bearer'))
 })
