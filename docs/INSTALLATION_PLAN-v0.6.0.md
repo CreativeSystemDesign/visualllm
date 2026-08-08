@@ -302,7 +302,6 @@ restart tests are explicitly deferred.
 the account is locked over a billing issue. This blocks hosted Linux
 verification, but it does not block local development or the revised release
 scope.
-**Working tree note:** `tools/create-demo-video.sh` was already untracked before
-this plan and must not be committed accidentally. See
-[`HANDOFF-v0.6.0.md`](HANDOFF-v0.6.0.md) for the complete uncommitted-file list
-and exact next-session instructions.
+**Working tree note:** The intended release changes are committed and pushed.
+See [`HANDOFF-v0.6.0.md`](HANDOFF-v0.6.0.md) for the exact next-session
+instructions.

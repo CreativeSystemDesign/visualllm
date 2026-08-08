@@ -100,9 +100,6 @@ The following intended changes exist locally and must be preserved:
 - `tools/verify-release.js` — local artifact, checksum, signature, architecture,
   and updater-manifest verification.
 
-`tools/create-demo-video.sh` was already untracked before this work. It is a
-local media-generation helper and must not be included accidentally.
-
 Repository-local Git identity is configured as:
 
 ```text
@@ -185,8 +182,8 @@ restart tests are explicitly deferred.
 failed every job within seconds, with no runner assigned and no step logs; the
 account billing lock blocks hosted Linux verification, but it does not block
 local development or the revised release scope.
-**Working tree note:** The intended uncommitted changes remain preserved;
-`tools/create-demo-video.sh` was already untracked and must not be committed.
+**Working tree note:** The intended release changes are committed and pushed;
+no unrelated local helper files remain in the working tree.
 
 ## End-of-session protocol
 
