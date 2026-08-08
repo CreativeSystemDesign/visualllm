@@ -6,9 +6,9 @@
 [![Rust 1.77+](https://img.shields.io/badge/rust-1.77%2B-orange.svg)](https://www.rust-lang.org/)
 [![Tauri 2.x](https://img.shields.io/badge/tauri-2.x-blue.svg)](https://tauri.app/)
 
-![VisualLLM demo — arrange models into visible fallback lanes](docs/demo/visuallm-demo.gif)
+![VisualLLM demo — arrange models into visible fallback lanes](docs/demo/visualllm-demo.gif)
 
-[Watch the full 24-second demo video](docs/demo/visuallm-demo.mp4) · [Download the latest release](https://github.com/CreativeSystemDesign/visuallm/releases)
+[Download the full 24-second demo video](https://raw.githubusercontent.com/CreativeSystemDesign/visualllm/main/docs/demo/visualllm-demo.mp4) · [Download the latest release](https://github.com/CreativeSystemDesign/visualllm/releases)
 
 ![VisualLLM — endpoints and the model vault](docs/screenshots/main-endpoints.png)
 
