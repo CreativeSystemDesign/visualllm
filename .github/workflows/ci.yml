@@ -35,6 +35,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libayatana-appindicator3-dev \
+            libdbus-1-dev \
             librsvg2-dev
       - uses: Swatinem/rust-cache@v2
         with:
@@ -60,6 +61,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libayatana-appindicator3-dev \
+            libdbus-1-dev \
             librsvg2-dev
       - run: npm ci
       # Validation build only — updater artifacts need signing keys we don't
@@ -68,6 +70,8 @@ jobs:
 
   windows:
     name: Windows build
+    # Deferred from v0.6.0 until the platform is intentionally resumed.
+    if: ${{ false }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,6 +89,8 @@ jobs:
 
   macos:
     name: macOS build
+    # Deferred from v0.6.0 until the platform is intentionally resumed.
+    if: ${{ false }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

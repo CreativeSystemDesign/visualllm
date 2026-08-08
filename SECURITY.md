@@ -27,12 +27,15 @@ VisualLLM is a local desktop application. The default engine binds to
 `127.0.0.1` and is not intended to be exposed to a network. Provider keys are
 owned by the Rust side of the application and are not returned to the webview.
 
-Provider keys are stored in the operating system keychain. The local
-`providers.json` configuration contains blank key fields, and the renderer
-receives only a masked hint (`has_key` plus a short non-secret marker). Existing
-legacy files that contain plaintext keys are read for migration compatibility;
-the next provider save rewrites the file without the key and imports the value
-into the keychain when available.
+Provider keys are stored in the native credential store for the platform:
+Secret Service on Linux, Windows Credential Manager, or macOS Keychain. The
+local `providers.json` configuration contains blank key fields, and the
+renderer receives only a masked hint (`has_key` plus a short non-secret marker).
+Existing legacy files that contain plaintext keys are read for migration
+compatibility; the next provider save rewrites the file without the key and
+imports the value into the native store when available. If the store is locked
+or unavailable, the save remains usable but the UI labels the key as memory-only
+and asks the user to re-enter it after restarting.
 
 The engine and the desktop UI are separate trust surfaces. The renderer has no
 general filesystem or network capability; provider requests, keychain access,

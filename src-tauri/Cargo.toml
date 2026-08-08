@@ -4,7 +4,7 @@ version = "0.5.2"
 description = "Design reliable OpenAI-compatible endpoints by arranging AI models visually"
 edition = "2021"
 rust-version = "1.77"
-authors = ["Shane Gross"]
+authors = ["Eric Shane Gross"]
 license = "MIT"
 repository = "https://github.com/CreativeSystemDesign/visualllm"
 homepage = "https://github.com/CreativeSystemDesign/visualllm"
@@ -26,14 +26,22 @@ tauri-plugin-updater = "2"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 futures-util = "0.3"
-keyring = { version = "3", default-features = false, features = ["linux-native"] }
 getrandom = "0.2"
 
 # Linux-only dependencies for window shaping and icon
 [target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["linux-native-sync-persistent"] }
 gtk = { version = "=0.18.2", features = ["v3_24"] }
 cairo-rs = { version = "0.18" }
 gdk-pixbuf = { version = "0.18" }
+
+# These target-specific features are intentional. A global keyring feature can
+# silently leave unsupported targets on keyring's in-memory mock backend.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
 [dev-dependencies]
 tempfile = "3"

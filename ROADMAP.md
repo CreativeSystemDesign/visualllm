@@ -24,6 +24,13 @@ front, then the concrete tasks.
 5. **Compatibility matters.** Existing lanes and OpenAI-compatible clients
    should keep working as the application evolves.
 
+## Current release focus
+
+The active v0.6.0 installation and distribution workstream is tracked in
+[`docs/INSTALLATION_PLAN-v0.6.0.md`](docs/INSTALLATION_PLAN-v0.6.0.md). That
+document contains the ordered checklist, acceptance evidence, certificate
+constraints, and handoff for the next session.
+
 ---
 
 ## Workstreams

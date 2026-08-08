@@ -15,6 +15,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos",)))]
+compile_error!("VisualLLM credential storage requires a Linux, Windows, or macOS native backend");
+
 const OPENROUTER: &str = "https://openrouter.ai/api/v1";
 const OPENAI: &str = "https://api.openai.com/v1";
 const ANTHROPIC: &str = "https://api.anthropic.com/v1";
@@ -75,7 +78,7 @@ pub struct ProviderView {
     pub key_hint: String,
     pub has_key: bool,
     /// Where this provider's key ended up after the last save. Fresh views
-    /// (lists, edits without a key change) default to `Keyring`.
+    /// report the configured backend's actual persistence.
     pub key_storage: KeyStorage,
 }
 
@@ -95,7 +98,11 @@ impl From<&Provider> for ProviderView {
             base_url: p.base_url.clone(),
             key_hint: hint,
             has_key: !p.key.is_empty(),
-            key_storage: KeyStorage::Keyring,
+            key_storage: if memory_get(&p.id).is_some() {
+                KeyStorage::Memory
+            } else {
+                configured_key_storage()
+            },
         }
     }
 }
@@ -187,7 +194,10 @@ pub fn save(dir: &std::path::Path, providers: &[Provider]) -> Result<KeyStorage,
     // impossible — that is the most basic flow there is. When it fails, the
     // key simply stays in memory for this process and the caller is told so
     // the UI can warn the user to re-enter it after a restart.
-    let mut storage = KeyStorage::Keyring;
+    // The crate's mock backend reports process-only persistence. Start from
+    // the backend's declared lifetime so a successful mock write can never be
+    // presented as an OS-keychain write.
+    let mut storage = configured_key_storage();
     for provider in providers {
         // Set empty values too: clearing a provider in the UI must remove the
         // old credential rather than leaving an orphaned secret in the keychain.
@@ -196,7 +206,12 @@ pub fn save(dir: &std::path::Path, providers: &[Provider]) -> Result<KeyStorage,
                 "providers: keychain unavailable for {}; keeping key in memory only: {error}",
                 provider.id
             );
+            memory_set(&provider.id, &provider.key);
             storage = KeyStorage::Memory;
+        } else {
+            // A later successful keychain write supersedes any old degraded
+            // value retained for this provider in the current process.
+            memory_set(&provider.id, "");
         }
     }
     Ok(storage)
@@ -737,6 +752,63 @@ where
 }
 
 const KEYRING_SERVICE: &str = "com.creativesystemdesign.visualllm";
+static MEMORY_KEYS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+/// Return the backend selected for this target. Referencing the target module
+/// directly makes an incorrectly configured Cargo feature fail at compile time
+/// instead of silently selecting keyring's mock backend.
+#[cfg(target_os = "linux")]
+fn configured_builder() -> Box<keyring::CredentialBuilder> {
+    keyring::keyutils_persistent::default_credential_builder()
+}
+
+#[cfg(target_os = "windows")]
+fn configured_builder() -> Box<keyring::CredentialBuilder> {
+    keyring::windows::default_credential_builder()
+}
+
+#[cfg(target_os = "macos")]
+fn configured_builder() -> Box<keyring::CredentialBuilder> {
+    keyring::macos::default_credential_builder()
+}
+
+fn key_storage_for_persistence(
+    persistence: keyring::credential::CredentialPersistence,
+) -> KeyStorage {
+    match persistence {
+        keyring::credential::CredentialPersistence::UntilDelete => KeyStorage::Keyring,
+        keyring::credential::CredentialPersistence::EntryOnly
+        | keyring::credential::CredentialPersistence::ProcessOnly
+        | keyring::credential::CredentialPersistence::UntilReboot => KeyStorage::Memory,
+        _ => KeyStorage::Memory,
+    }
+}
+
+fn configured_key_storage() -> KeyStorage {
+    key_storage_for_persistence(configured_builder().persistence())
+}
+
+fn memory_keys() -> &'static std::sync::Mutex<BTreeMap<String, String>> {
+    MEMORY_KEYS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
+}
+
+fn memory_get(provider_id: &str) -> Option<String> {
+    memory_keys()
+        .lock()
+        .ok()
+        .and_then(|keys| keys.get(provider_id).cloned())
+}
+
+fn memory_set(provider_id: &str, key: &str) {
+    if let Ok(mut keys) = memory_keys().lock() {
+        if key.is_empty() {
+            keys.remove(provider_id);
+        } else {
+            keys.insert(provider_id.to_string(), key.to_string());
+        }
+    }
+}
 
 fn keyring_account(provider_id: &str) -> String {
     format!("provider:{provider_id}")
@@ -765,6 +837,7 @@ fn keyring_set(provider_id: &str, key: &str) -> Result<(), String> {
 /// provider must never be blocked by a missing keychain, so failures are
 /// logged and swallowed.
 pub fn forget_key(provider_id: &str) {
+    memory_set(provider_id, "");
     if let Err(error) = keyring_set(provider_id, "") {
         eprintln!("providers: could not remove key for {provider_id} from the keychain: {error}");
     }
@@ -772,7 +845,7 @@ pub fn forget_key(provider_id: &str) {
 
 fn hydrate_keys(providers: &mut [Provider]) {
     for provider in providers {
-        if let Some(key) = keyring_get(&provider.id) {
+        if let Some(key) = keyring_get(&provider.id).or_else(|| memory_get(&provider.id)) {
             provider.key = key;
         }
     }
@@ -834,8 +907,53 @@ mod tests {
     #[test]
     fn views_carry_the_key_storage_whereabouts() {
         let view = ProviderView::from(&provider("sk-1234567890abcdef"));
-        assert_eq!(view.key_storage, KeyStorage::Keyring);
+        assert_eq!(view.key_storage, configured_key_storage());
         assert!(view.has_key);
         assert_eq!(view.key_hint, "sk-12…cdef");
+    }
+
+    #[test]
+    fn mock_or_process_only_persistence_is_never_called_keyring() {
+        assert_eq!(
+            key_storage_for_persistence(keyring::credential::CredentialPersistence::EntryOnly),
+            KeyStorage::Memory
+        );
+        assert_eq!(
+            key_storage_for_persistence(keyring::credential::CredentialPersistence::ProcessOnly),
+            KeyStorage::Memory
+        );
+        assert_eq!(
+            key_storage_for_persistence(keyring::credential::CredentialPersistence::UntilDelete),
+            KeyStorage::Keyring
+        );
+    }
+
+    #[test]
+    fn configured_target_backend_is_persistent() {
+        assert_eq!(configured_key_storage(), KeyStorage::Keyring);
+    }
+
+    #[test]
+    fn memory_fallback_is_available_to_later_provider_loads() {
+        let mut saved = provider("");
+        saved.id = "memory-fallback".into();
+        memory_set(&saved.id, "session-only-secret");
+
+        let mut loaded = vec![saved];
+        hydrate_keys(&mut loaded);
+        assert_eq!(loaded[0].key, "session-only-secret");
+
+        memory_set("memory-fallback", "");
+    }
+
+    #[test]
+    fn views_mark_a_memory_fallback_as_memory() {
+        let mut saved = provider("session-only-secret");
+        saved.id = "memory-view".into();
+        memory_set(&saved.id, &saved.key);
+
+        assert_eq!(ProviderView::from(&saved).key_storage, KeyStorage::Memory);
+
+        memory_set("memory-view", "");
     }
 }

@@ -12,7 +12,7 @@
     "start:system": "sh ./run.sh"
   },
   "keywords": ["llm", "ai", "openai-compatible", "fallback", "routing", "tauri"],
-  "author": "Shane Gross",
+  "author": "Eric Shane Gross",
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {

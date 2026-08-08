@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+env:
+  # Keep OS signing opt-in until paid certificates are available. Tauri
+  # updater signing remains independent and is still required for update files.
+  WINDOWS_OS_SIGNING_ENABLED: ${{ vars.VISUALLLM_WINDOWS_OS_SIGNING_ENABLED || 'false' }}
+  MACOS_OS_SIGNING_ENABLED: ${{ vars.VISUALLLM_MACOS_OS_SIGNING_ENABLED || 'false' }}
+
 jobs:
   # Shared setup to avoid duplication
   setup:
@@ -28,6 +34,42 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+
+  signing_config:
+    name: Resolve OS-signing configuration
+    # Windows/macOS are deferred from v0.6.0. Re-enable with the future
+    # platform release once native builds and certificates are in scope.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    outputs:
+      windows: ${{ steps.resolve.outputs.windows }}
+      macos: ${{ steps.resolve.outputs.macos }}
+    steps:
+      - id: resolve
+        name: Enable signing only when configured and provisioned
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          windows=false
+          macos=false
+          if [[ "$WINDOWS_OS_SIGNING_ENABLED" == "true" && -n "$WINDOWS_CERTIFICATE" && -n "$WINDOWS_CERTIFICATE_PASSWORD" && -n "$TAURI_SIGNING_PRIVATE_KEY" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then
+            windows=true
+          elif [[ "$WINDOWS_OS_SIGNING_ENABLED" == "true" ]]; then
+            echo "Windows signing is a future-release path; it is not part of v0.6.0."
+          fi
+          if [[ "$MACOS_OS_SIGNING_ENABLED" == "true" && -n "$MACOS_CERTIFICATE" && -n "$MACOS_CERTIFICATE_PASSWORD" && -n "$TAURI_SIGNING_PRIVATE_KEY" && -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]]; then
+            macos=true
+          elif [[ "$MACOS_OS_SIGNING_ENABLED" == "true" ]]; then
+            echo "macOS signing is a future-release path; it is not part of v0.6.0."
+          fi
+          echo "windows=$windows" >> "$GITHUB_OUTPUT"
+          echo "macos=$macos" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux release
@@ -67,6 +109,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             libayatana-appindicator3-dev \
+            libdbus-1-dev \
             librsvg2-dev
 
       - run: npm run smoke
@@ -77,6 +120,23 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Create stable Linux artifact aliases
+        working-directory: src-tauri/target/release/bundle
+        run: |
+          set -euo pipefail
+          deb=$(find deb -maxdepth 1 -type f -name '*.deb' -print -quit)
+          appimage=$(find appimage -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+          [[ -n "$deb" && -n "$appimage" ]] || { echo 'Linux bundle missing'; exit 1; }
+          cp "$deb" deb/VisualLLM-linux-x86_64.deb
+          cp "$appimage" appimage/VisualLLM-linux-x86_64.AppImage
+          for source in "$appimage" "$appimage.tar.gz"; do
+            if [[ -f "$source" ]]; then
+              target="$(dirname "$source")/VisualLLM-linux-x86_64$(basename "$source" | sed "s/.*\(\.AppImage.*\)$/\1/")"
+              cp "$source" "$target"
+              [[ ! -f "$source.sig" ]] || cp "$source.sig" "$target.sig"
+            fi
+          done
 
       - name: Generate checksums
         working-directory: src-tauri/target/release/bundle
@@ -93,10 +153,13 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb.sig
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
             src-tauri/target/release/bundle/SHA256SUMS
 
   windows:
     name: Windows release
+    if: ${{ false }}
     needs: setup
     runs-on: windows-latest
     steps:
@@ -126,11 +189,38 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      - name: Create stable Windows artifact aliases
+        working-directory: src-tauri/target/release/bundle
+        shell: pwsh
+        run: |
+          $msi = @(Get-ChildItem msi -File -Filter *.msi | Select-Object -First 1)
+          $nsis = @(Get-ChildItem nsis -File -Filter *.exe | Select-Object -First 1)
+          if ($msi.Count -eq 0 -or $nsis.Count -eq 0) { throw 'Windows bundle missing' }
+          Copy-Item $msi[0].FullName msi/VisualLLM-windows-x86_64.msi
+          Copy-Item $nsis[0].FullName nsis/VisualLLM-windows-x86_64-setup.exe
+          foreach ($item in @($msi[0], $nsis[0])) {
+            $alias = if ($item.Extension -eq '.msi') { 'msi/VisualLLM-windows-x86_64.msi' } else { 'nsis/VisualLLM-windows-x86_64-setup.exe' }
+            if (Test-Path "$($item.FullName).sig") { Copy-Item "$($item.FullName).sig" "$alias.sig" }
+          }
+          $msiZip = @(Get-ChildItem msi -File -Filter *.zip | Select-Object -First 1)
+          $nsisZip = @(Get-ChildItem nsis -File -Filter *.zip | Select-Object -First 1)
+          if ($msiZip.Count -gt 0) {
+            Copy-Item $msiZip[0].FullName msi/VisualLLM-windows-x86_64.msi.zip
+            if (Test-Path "$($msiZip[0].FullName).sig") { Copy-Item "$($msiZip[0].FullName).sig" msi/VisualLLM-windows-x86_64.msi.zip.sig }
+          }
+          if ($nsisZip.Count -gt 0) {
+            Copy-Item $nsisZip[0].FullName nsis/VisualLLM-windows-x86_64.nsis.zip
+            if (Test-Path "$($nsisZip[0].FullName).sig") { Copy-Item "$($nsisZip[0].FullName).sig" nsis/VisualLLM-windows-x86_64.nsis.zip.sig }
+          }
+
       - name: Generate checksums
         working-directory: src-tauri/target/release/bundle
         run: |
-          Get-FileHash -Algorithm SHA256 msi/*.msi, nsis/*.exe | Out-File SHA256SUMS.txt
-          Get-Content SHA256SUMS.txt
+          Get-ChildItem msi/*.msi, nsis/*.exe | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Out-File SHA256SUMS -Encoding ascii
+          Get-Content SHA256SUMS
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -141,10 +231,15 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi.sig
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/*.exe.sig
-            src-tauri/target/release/bundle/SHA256SUMS.txt
+            src-tauri/target/release/bundle/msi/*.zip
+            src-tauri/target/release/bundle/msi/*.zip.sig
+            src-tauri/target/release/bundle/nsis/*.zip
+            src-tauri/target/release/bundle/nsis/*.zip.sig
+            src-tauri/target/release/bundle/SHA256SUMS
 
   macos:
     name: macOS release
+    if: ${{ false }}
     needs: setup
     runs-on: macos-latest
     steps:
@@ -169,6 +264,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      - name: Create stable macOS artifact alias
+        working-directory: src-tauri/target/release/bundle
+        run: |
+          set -euo pipefail
+          dmg=$(find dmg -maxdepth 1 -type f -name '*.dmg' -print -quit)
+          [[ -n "$dmg" ]] || { echo 'macOS bundle missing'; exit 1; }
+          cp "$dmg" dmg/VisualLLM-macos-arm64.dmg
+          [[ ! -f "$dmg.sig" ]] || cp "$dmg.sig" dmg/VisualLLM-macos-arm64.dmg.sig
+
       - name: Generate checksums
         working-directory: src-tauri/target/release/bundle
         run: |
@@ -183,13 +287,15 @@ jobs:
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/dmg/*.dmg.sig
             src-tauri/target/release/bundle/macos/*
+            src-tauri/target/release/bundle/macos/*.tar.gz
+            src-tauri/target/release/bundle/macos/*.tar.gz.sig
             src-tauri/target/release/bundle/SHA256SUMS
 
-  macos-sign:
+  macos_sign:
     name: Sign macOS artifacts
-    needs: macos
+    if: ${{ false }}
+    needs: [macos, signing_config]
     runs-on: macos-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
       - name: Download macOS artifacts
@@ -204,23 +310,40 @@ jobs:
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
       - name: Sign DMG
         run: |
-          for dmg in artifacts/*.dmg; do
+          while IFS= read -r -d '' dmg; do
             codesign --sign "Developer ID Application: VisualLLM" \
               --timestamp \
               --options runtime \
               "$dmg"
-          done
+          done < <(find artifacts -type f -name '*.dmg' -print0)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Re-sign final macOS updater payloads
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          found=false
+          while IFS= read -r -d '' payload; do
+            found=true
+            rm -f "$payload.sig"
+            npx tauri signer sign "$payload"
+          done < <(find artifacts -type f \( -name '*.app.tar.gz' -o -name '*.tar.gz' \) -print0)
+          [[ "$found" == true ]] || { echo 'No macOS updater payload found'; exit 1; }
       - name: Upload signed artifacts
         uses: actions/upload-artifact@v4
         with:
           name: visualllm-macos-signed
-          path: artifacts/*.dmg
+          path: artifacts
 
-  windows-sign:
+  windows_sign:
     name: Sign Windows artifacts
-    needs: windows
+    if: ${{ false }}
+    needs: [windows, signing_config]
     runs-on: windows-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
       - name: Download Windows artifacts
@@ -235,27 +358,46 @@ jobs:
       - name: Sign MSI and NSIS
         run: |
           $certPass = "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}"
-          signtool sign /f certificate.pfx /p $certPass /tr http://timestamp.digicert.com /td sha256 /fd sha256 artifacts/*.msi
-          signtool sign /f certificate.pfx /p $certPass /tr http://timestamp.digicert.com /td sha256 /fd sha256 artifacts/*.exe
+          Get-ChildItem -Path artifacts -Recurse -Include *.msi,*.exe | ForEach-Object {
+            signtool sign /f certificate.pfx /p $certPass /tr http://timestamp.digicert.com /td sha256 /fd sha256 $_.FullName
+          }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Re-sign final Windows updater payloads
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $payloads = @(Get-ChildItem -Path artifacts -Recurse -Include *.zip)
+          if ($payloads.Count -eq 0) { throw 'No Windows updater payload found' }
+          foreach ($payload in $payloads) {
+            Remove-Item "$($payload.FullName).sig" -ErrorAction SilentlyContinue
+            npx tauri signer sign $payload.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Updater signing failed for $($payload.Name)" }
+          }
       - name: Upload signed artifacts
         uses: actions/upload-artifact@v4
         with:
           name: visualllm-windows-signed
-          path: artifacts/*.msi
+          path: artifacts
 
   release:
     name: Create GitHub Release
-    needs: [linux, windows, macos]
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux]
+    if: >-
+      startsWith(github.ref, 'refs/tags/') && needs.linux.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          name: visualllm-linux
+          path: artifacts/linux
 
       - name: Show downloaded files
         run: |
@@ -273,23 +415,28 @@ jobs:
           base = f"https://github.com/CreativeSystemDesign/visualllm/releases/download/{tag}"
 
           platforms = {}
+          platform_names = {}
           for sig in sorted(glob.glob("artifacts/**/*.sig", recursive=True)):
               name = os.path.basename(sig)[:-4]
               with open(sig) as f:
                   signature = f.read().strip()
-              if name.endswith(".AppImage"):
+              if name.endswith(".AppImage.tar.gz"):
+                  key = "linux-x86_64-appimage"
+              elif name.endswith(".AppImage"):
                   key = "linux-x86_64-appimage"
               elif name.endswith(".deb"):
                   key = "linux-x86_64-deb"
-              elif name.endswith(".msi"):
-                  key = "windows-x86_64-msi"
-              elif name.endswith("-setup.exe"):
-                  key = "windows-x86_64-nsis"
-              elif name.endswith(".app.tar.gz"):
-                  arch = "aarch64" if "aarch64" in name else "x86_64"
-                  key = f"darwin-{arch}"
               else:
                   continue
+              # Prefer a stable alias, then prefer an updater archive over a
+              # raw installer signature when both are present.
+              candidate_score = (name.startswith("VisualLLM-"), name.endswith((".tar.gz", ".zip")))
+              prior_name = platform_names.get(key)
+              if prior_name:
+                  prior_score = (prior_name.startswith("VisualLLM-"), prior_name.endswith((".tar.gz", ".zip")))
+                  if candidate_score <= prior_score:
+                      continue
+              platform_names[key] = name
               platforms[key] = {
                   "signature": signature,
                   "url": f"{base}/{name}",
@@ -306,17 +453,25 @@ jobs:
           PY
           cat artifacts/latest.json
 
+      - name: Verify release artifacts and updater manifest
+        run: node tools/verify-release.js artifacts artifacts/latest.json
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body: |
+            ## VisualLLM ${{ github.ref_name }}
+
+            Linux x86_64 is the supported v0.6.0 distribution. Windows and
+            macOS packages are deferred and are not included in this release.
+
+            Tauri updater signatures are separate from Windows Authenticode
+            and Apple code signing. See the installation guidance and checksums
+            below before downloading.
           files: |
             artifacts/**/*.deb
             artifacts/**/*.AppImage
-            artifacts/**/*.msi
-            artifacts/**/*.exe
-            artifacts/**/*.dmg
-            artifacts/**/*.app.tar.gz
             artifacts/**/*.sig
             artifacts/**/SHA256SUMS*
             artifacts/latest.json
@@ -324,8 +479,10 @@ jobs:
   # Create tar.gz for Homebrew/AUR/Flatpak
   create-tarball:
     name: Create tarball
-    needs: [linux, windows, macos, release]
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux, release]
+    # Deferred: the old tarball was a Linux AppImage mislabeled for channels
+    # that require a macOS cask or a native package.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -359,7 +516,8 @@ jobs:
     name: Homebrew tap
     needs: [linux, windows, macos, release, create-tarball]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    # Deferred until a signed/notarized macOS DMG can back a proper cask.
+    if: ${{ false }}
     permissions:
       contents: write
     env:
@@ -466,7 +624,9 @@ jobs:
     name: Flatpak package
     needs: [linux, windows, macos, release, create-tarball]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    # Deferred until the manifest, runtime, metadata, and publication path are
+    # independently verified.
+    if: ${{ false }}
     steps:
       - uses: actions/checkout@v4
       - name: Download tarball for sha256

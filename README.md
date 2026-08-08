@@ -26,7 +26,8 @@ VisualLLM is a **visual fallback router** for AI models. It's a desktop applicat
 - **Reorder models within a lane by dragging** — the rightmost model answers first; everything to its left is a fallback
 - **Expose lanes as local OpenAI-compatible endpoints** that your tools can connect to
 - **Integrate a lane into your editor** (VS Code, VS Code Insiders, Windsurf) with one click — it shows up in the editor's own model picker
-- **Self-update from GitHub** — the app checks for a new signed release at startup and offers to restart when one is ready
+- **Signed self-update where published** — Linux checks the signed updater
+  manifest; Windows and macOS packages are deferred from v0.6.0
 
 When a request comes in, the rightmost model answers first. If it fails, can't serve the request, or returns unusable content, VisualLLM automatically tries the next model in line — and explains exactly what happened at each step.
 
@@ -90,7 +91,10 @@ Everything is arranged visually. No configuration files to edit, no YAML to lear
 
 ### 🔒 Secure by Design
 - **API keys never leave the Rust backend** — the webview has no network or filesystem access
-- **Keys are stored in the OS keychain** (Linux native), not in plaintext files
+- **Keys are stored in the native OS credential store** (Secret Service on Linux,
+  Windows Credential Manager, or macOS Keychain), not in plaintext files; if
+  that store is unavailable, the UI warns that the key is memory-only until
+  restart
 - **All network requests flow through Rust** — the renderer only receives state, never credentials
 - **Bound to loopback (127.0.0.1)** — your endpoints are local-only by default
 
@@ -123,31 +127,28 @@ Every response includes headers telling you:
 
 ### For Users (Pre-built)
 
-Ready-to-run installers are published to [GitHub Releases](https://github.com/CreativeSystemDesign/visualllm/releases):
-- `.deb` for Debian/Ubuntu
-- AppImage for any Linux distribution
-- `.msi` / `.exe` for Windows
-- `.dmg` for macOS
+Ready-to-run Linux installers are published to [GitHub Releases](https://github.com/CreativeSystemDesign/visualllm/releases):
+- **Linux x86_64 (supported):** [`.deb`](https://github.com/CreativeSystemDesign/visualllm/releases/latest/download/VisualLLM-linux-x86_64.deb) or [AppImage](https://github.com/CreativeSystemDesign/visualllm/releases/latest/download/VisualLLM-linux-x86_64.AppImage)
+- **Windows and macOS:** deferred; no v0.6.0 packages are published
+- Intel macOS, Homebrew, AUR, and Flatpak are not offered in v0.6.0.
 
-**VisualLLM updates itself.** A few seconds after launch it checks GitHub for a
-newer release, downloads it in the background, and offers to restart — every
-download is signature-verified against the key embedded in the app. No manual
-reinstall needed.
+**Updates are platform-specific.** Linux checks GitHub shortly after launch,
+downloads a Tauri-signature-verified update when a matching manifest entry
+exists, and offers to restart. Windows and macOS updates are deferred with
+their packages.
 
-### 🧪 Calling All Testers!
+### 🧪 Calling Linux Testers!
 
-**We're actively looking for testers on all platforms!** VisualLLM is Linux-first, but we want to ensure it works well on macOS and Windows too. If you can help test:
+**We're actively looking for Linux testers** for the v0.6.0 packages:
 
-- **macOS** — Test the `.dmg` installer, notarization, and code signing
-- **Windows** — Test the `.msi` and `.exe` installers, code signing, and WebView2 integration
-- **Linux** — Test `.deb`, AppImage, and Flatpak on various distributions
+- **Linux** — Test `.deb` and AppImage on supported distributions
 
 **How to help:**
 1. Download the latest release artifacts from [GitHub Releases](https://github.com/CreativeSystemDesign/visualllm/releases)
 2. Install and run VisualLLM on your platform
 3. Report any issues at [GitHub Issues](https://github.com/CreativeSystemDesign/visualllm/issues) with:
    - Your OS and version
-   - The artifact you tested (.dmg, .msi, .exe, .deb, AppImage, Flatpak)
+   - The artifact you tested (.dmg, .msi, .exe, .deb, or AppImage)
    - Steps to reproduce any problems
    - Screenshots if applicable
 
@@ -210,7 +211,8 @@ Click **Providers** in the sidebar, then **Add Provider**. Enter:
 - **Name** — a friendly name for this provider
 - **Kind** — `openrouter`, `openai`, `anthropic`, or `generic`
 - **Base URL** — the API endpoint (defaults based on kind)
-- **API Key** — your secret key (stored securely in the OS keychain)
+- **API Key** — your secret key (stored securely in the native OS credential
+  store)
 
 ### 2. Browse Models
 
@@ -622,10 +624,9 @@ Before tagging a release:
 7. Bump the version to match in `src-tauri/Cargo.toml`,
    `src-tauri/tauri.conf.json`, and `package.json` — the CI release pipeline
    refuses a tag whose version doesn't match the source.
-8. Tag the release (`git tag vX.Y.Z && git push origin vX.Y.Z`). The pipeline
-   builds and signs the `.deb`, AppImage, `.msi`, `.exe`, and `.dmg`, uploads
-   their `.sig` files and a fresh `latest.json`, and publishes the GitHub
-   Release — which is also what the in-app auto-updater checks against.
+8. Tag the release only after approval (`git tag vX.Y.Z`). The pipeline builds
+   Linux x86_64 artifacts only and publishes updater metadata only for verified
+   payloads; Windows and macOS are deferred.
 
 ## Version policy
 
@@ -642,7 +643,8 @@ The first public release will be `1.0.0` once the release criteria in
 
 ## Credits
 
-VisualLLM is built by [Creative Systems Development](https://github.com/CreativeSystemDesign).
+VisualLLM was created and is developed by
+[Eric Shane Gross](https://github.com/CreativeSystemDesign), its sole developer.
 
 ---
 
