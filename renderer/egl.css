@@ -1699,6 +1699,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round
   position: fixed;
   left: 50%;
   bottom: 66px;
+  /* Stay above the transformed stage and its backdrop-filter glass slabs. */
+  z-index: 650;
   transform: translate(-50%, 14px);
   padding: 12px 24px;
   border-radius: 100px;
