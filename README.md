@@ -8,8 +8,6 @@
 
 ![VisualLLM demo — arrange models into visible fallback lanes](docs/demo/visualllm-demo.gif)
 
-<video src="https://raw.githubusercontent.com/CreativeSystemDesign/visualllm/main/docs/demo/visualllm-demo.mp4" controls muted playsinline width="100%"></video>
-
 [Download the full 24-second demo video](https://raw.githubusercontent.com/CreativeSystemDesign/visualllm/main/docs/demo/visualllm-demo.mp4) · [Download the latest release](https://github.com/CreativeSystemDesign/visualllm/releases)
 
 ![VisualLLM — endpoints and the model vault](docs/screenshots/main-endpoints.png)
