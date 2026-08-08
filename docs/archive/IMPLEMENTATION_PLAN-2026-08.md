@@ -80,7 +80,7 @@ VS Code call through `chatLanguageModels.json`.
 ### Release posture
 Version is `0.4.0` (Cargo.toml, tauri.conf.json, package.json). No public
 release has shipped. The product is pre-1.0; see `ROADMAP.md` (workstream plan,
-release criteria) and `RELEASE_ROADMAP.md` (1.0 editor-integration work).
+release criteria) and `RELEASE_ROADMAP-v0.x.md` (1.0 editor-integration work).
 
 ---
 
@@ -92,7 +92,7 @@ release criteria) and `RELEASE_ROADMAP.md` (1.0 editor-integration work).
   gh account out; removed stale `branch.<name>.vscode-merge-base` git-config
   keys; verified via API that no visualllm artifacts remain under the dev
   account.
-- Added `docs/IMPLEMENTATION_PLAN.md` (this file).
+- Added `IMPLEMENTATION_PLAN-2026-08.md` (this file).
 
 ---
 
@@ -186,7 +186,7 @@ notarized bundle. As shipped, macOS "auto-update" would be broken.
 not pretend to auto-update:
 - Gate the macOS release job to manual (`workflow_dispatch`) OR make it skip
   the updater artifacts so the app doesn't advertise an update channel.
-- Update `RELEASE_ROADMAP.md` with an explicit "macOS distribution deferred"
+- Update `RELEASE_ROADMAP-v0.x.md` with an explicit "macOS distribution deferred"
   note (needs Apple Developer ID + notarization before auto-update is real).
 - Keep Linux + Windows updater paths (they need only the minisign artifacts the
   workflow already emits; Windows shows SmartScreen without signing — document,
@@ -195,7 +195,7 @@ not pretend to auto-update:
 workflow-only change.
 
 **Status: done (2026-08-06).** macOS distribution deferred and documented in
-`RELEASE_ROADMAP.md` §7; macOS stays out of the supported update channel and
+`RELEASE_ROADMAP-v0.x.md` §7; macOS stays out of the supported update channel and
 the macOS jobs remain in `release.yml` for manual runs.
 
 ---
@@ -695,14 +695,14 @@ node tools/preview.js          # + open the output once for the touched UI
 ```
 
 Then update `ROADMAP.md` (check off finished items, add new workstreams for the
-phases above) and `RELEASE_ROADMAP.md` (macOS note from 1.5, feature timeline
+phases above) and `RELEASE_ROADMAP-v0.x.md` (macOS note from 1.5, feature timeline
 from Phase 3). Commit on `ide-integration` in small, reviewable pieces; the
 release guard compares tags to tauri.conf.json only.
 
 ---
 
 ## Session handoff note
-If this is a fresh session: read `README.md` for the product pitch, `handoff.md`
+If this is a fresh session: read `README.md` for the product pitch, `handoff-2026-08.md`
 for operational state, and this plan. The codebase review (which produced all
 findings above) was delivered against `5f404c7`; if HEAD has moved since,
 re-verify each referenced line before editing. The `graphify-out/` knowledge

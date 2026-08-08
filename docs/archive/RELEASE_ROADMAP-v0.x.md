@@ -150,7 +150,7 @@ Add a section documenting the editor integrations:
 
 As items are completed, check them off and add notes about any changes to the approach.
 
-**Files to change:** `RELEASE_ROADMAP.md` (this file)
+**Files to change:** `docs/archive/RELEASE_ROADMAP-v0.x.md` (this historical file)
 
 ### 4.3 Add integration guide to docs/
 
@@ -226,7 +226,7 @@ channel. Linux (deb + AppImage) and Windows (NSIS) are the supported matrix.
 
 To re-enable properly later: sign the `.app` bundle (not just the DMG),
 notarize it via `xcrun notarytool`, staple, and confirm the updater on a clean
-macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
+macOS VM. The historical implementation plan is in `IMPLEMENTATION_PLAN-2026-08.md` §1.5.
 
 ---
 
@@ -258,7 +258,7 @@ macOS VM. Track in `docs/IMPLEMENTATION_PLAN.md` §1.5.
 
 ## 9. Post-1.0 feature candidates (Phase 3, ranked)
 
-Carried over from `docs/IMPLEMENTATION_PLAN.md` Phase 3. Items 1–4 shipped
+Carried over from `IMPLEMENTATION_PLAN-2026-08.md` Phase 3. Items 1–4 shipped
 2026-08-06; the rest are not committed work. Re-confirm priority with the user
 before starting.
 

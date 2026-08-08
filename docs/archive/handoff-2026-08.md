@@ -9,7 +9,7 @@
 
 ## Read this first: implementation plan
 
-**`docs/IMPLEMENTATION_PLAN.md`** is the pickup document for the next session.
+**`IMPLEMENTATION_PLAN-2026-08.md`** is the historical pickup document for that session.
 It contains a full codebase review summary (confirmed issues, real gaps,
 feature ideas) plus phased, step-by-step work with exact file/line references
 and a Definition of Done. Read it before starting any code change.
@@ -196,7 +196,7 @@ ab192b1  UX: silence capability-skip alerts, surface trail/served-by, undo, z-or
 
 ## Known issues / next work
 
-> The current, ordered work plan is `docs/IMPLEMENTATION_PLAN.md` — Phase 1
+> The ordered work plan for that session was `IMPLEMENTATION_PLAN-2026-08.md` — Phase 1
 > (confirmed issues), Phase 2 (trust/testability gaps), Phase 3 (ranked
 > features). Below is the older roadmap tracking for historical context.
 
@@ -577,4 +577,4 @@ The current code produces an entry like:
 
 ### Full analysis
 
-See `RELEASE_ROADMAP.md` for the complete major release plan covering all editor integrations, UI changes, testing, and documentation.
+See `RELEASE_ROADMAP-v0.x.md` for the historical major release plan covering all editor integrations, UI changes, testing, and documentation.

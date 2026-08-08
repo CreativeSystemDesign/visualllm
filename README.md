@@ -375,10 +375,15 @@ visualllm/
 │   └── preview.js          # Browser preview harness
 ├── README.md               # This file
 ├── ROADMAP.md              # Public release plan
+├── docs/STATUS.md           # Current architecture and documentation entry point
 ├── CONTRIBUTING.md         # Development guidelines
 ├── SECURITY.md             # Security policy
 └── LICENSE                 # MIT License
 ```
+
+Historical planning and session handoff documents are retained in
+[`docs/archive/`](docs/archive/). They provide context but may describe
+superseded designs; use `ROADMAP.md` and `docs/STATUS.md` for the current state.
 
 ### How a Request Flows
 

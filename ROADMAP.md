@@ -208,7 +208,7 @@ logic is under test, and version drift fails CI instead of shipping.
 - [x] **Version is a single source of truth.** `tools/check-version.js` fails on
   any mismatch between Cargo.toml, tauri.conf.json, and package.json; wired into
   CI and the release tag pre-flight.
-- [x] **macOS auto-update not pretended.** Documented in `RELEASE_ROADMAP.md`
+- [x] **macOS auto-update not pretended.** Documented in `docs/archive/RELEASE_ROADMAP-v0.x.md`
   §7: macOS distribution deferred (needs Apple Developer ID + notarization);
   Linux + Windows remain the supported update matrix.
 - [x] **Frontend hygiene.** The dead theme toggle is gone; the active skin is
