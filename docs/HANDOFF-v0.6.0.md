@@ -110,8 +110,9 @@ Eric Shane Gross <eshanegross@gmail.com>
 ```
 
 With `.mailmap`, `git shortlog -sne main` currently reports one canonical
-author with 140 commits. GitHub contributor presentation still needs to be
-verified after the user requests a commit and push.
+author. Pushed commit `946f3ac` is displayed by GitHub as authored and
+committed by Eric Shane Gross <eshanegross@gmail.com>; full rendered
+contributor-page verification remains pending.
 
 ## Workstream 1 implementation completed
 
