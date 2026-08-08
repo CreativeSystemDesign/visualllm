@@ -82,78 +82,13 @@ use serde_json::{json, Value};
 use tokio::sync::{oneshot, watch};
 
 // `crate::` means "from this program", as opposed to an external library.
-use crate::{incidents, lanes, loopwatch, providers};
+use crate::{engine::activity, incidents, lanes, loopwatch, providers};
 
-/// Now, as unix seconds. Every timestamp in this engine — incidents, activity,
-/// budget hits, the usage ledger — is wall-clock time, so a restart can never
-/// invent a duration. A clock that can't be read (the pre-epoch corner) is
-/// zero, which is fine: the engine mostly compares timestamps to each other.
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// One line of live lane activity, for the canvas.
-///
-/// Fallback is the product, and it was invisible while it happened: the UI
-/// learned about a request only when it failed hard enough to become an
-/// incident, seconds later. This is the live feed — one JSON line per phase
-/// of a request, appended to `activity.jsonl`. The renderer tails it to show
-/// "trying X…" and then "answered by Y · N passed over" on the lane itself.
-///
-/// A plain text append, not a JSON document: it is written on the hot path,
-/// read by polling, and trimmed by size rather than parsed.
-fn note_activity(dir: &std::path::Path, lane: &str, member: &str, phase: &str, detail: &str) {
-    let at = unix_now();
-    // Sanitize for a single line: details can carry provider error text.
-    let scrub = |s: &str| s.replace(['\n', '\r'], " ");
-    let line = format!(
-        "{{\"at\":{at},\"lane\":\"{lane}\",\"member\":\"{member}\",\"phase\":\"{phase}\",\"detail\":\"{}\"}}\n",
-        scrub(detail)
-    );
-    let path = dir.join("activity.jsonl");
-    if std::fs::create_dir_all(dir).is_err() {
-        return;
-    }
-    use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = file.write_all(line.as_bytes());
-    }
-    // Trim to the newest ~64KiB so the file cannot grow unbounded. Reads
-    // tolerate a torn first line; the renderer skips unparseable entries.
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > 64 * 1024 {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                let keep: String = text
-                    .lines()
-                    .rev()
-                    .take(500)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let _ = std::fs::write(&path, keep + "\n");
-            }
-        }
-    }
-}
-
-/// Read the newest activity lines, for the renderer. The renderer polls this;
-/// unparseable lines (a torn trim boundary) are skipped.
 pub fn activity_read(dir: &std::path::Path, since: u64) -> Vec<Value> {
-    let text = std::fs::read_to_string(dir.join("activity.jsonl")).unwrap_or_default();
-    text.lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|entry| entry["at"].as_u64().unwrap_or(0) >= since)
-        .collect()
+    activity::read(dir, since)
 }
+
+use activity::{note_activity, unix_now};
 
 /// Record one failure with its receipts, so the canvas can explain it later.
 /// The note given here is the same text the trail and the log carry — one set
