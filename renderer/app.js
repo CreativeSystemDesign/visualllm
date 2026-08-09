@@ -540,7 +540,7 @@ function laneFoot(hall) {
   const body = parts.length
     ? parts.join('<span class="foot-sep">·</span>')
     : '<span class="foot-quiet">No recent activity — this endpoint is ready.</span>'
-  return `<span class="lane-activity" title="Open this endpoint's trail">${body}</span>`
+  return `<button type="button" class="lane-activity" title="Open this endpoint's trail" aria-label="Open ${attr(hall.name)} endpoint trail">${body}</button>`
 }
 
 /** The lane footer's Integrate button: one entry point per lane, not one
@@ -628,6 +628,16 @@ function laneEl(hall) {
   // it into an editor. The clone stays editor-free, so the two buttons stay
   // neighbours without implying they are one action.
   foot.innerHTML = `${laneFoot(hall)}<button class="hall-act lane-clone" title="Duplicate this endpoint — same members, dials, criteria and toggles, no editor integration">${ICON.duplicate} Duplicate</button>${laneIdeButton(hall)}`
+
+  // Bind the trail action to the lane as it is created. The document-level
+  // handler still handles the criteria link inside the button, but a direct
+  // listener means the primary action cannot be lost among unrelated
+  // delegated handlers or a refresh that rebuilds the footer.
+  foot.querySelector('.lane-activity').addEventListener('click', (event) => {
+    if (event.target.closest('.foot-criteria')) return
+    event.stopPropagation()
+    openNotifications(hall.slug)
+  })
 
   el.append(head, procession, foot)
   return el
